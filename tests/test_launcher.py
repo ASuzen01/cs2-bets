@@ -60,11 +60,16 @@ def test_group_start_text() -> None:
     assert "баланс" in text.lower()
 
 
-def test_start_text_has_balance_and_no_buttons_hint() -> None:
+def test_start_text_has_balance_and_no_meta_phrases() -> None:
     text = texts.START.format(name="Антон", balance=texts.money(1250))
     assert "Антон" in text
     assert "1\u202f250" in text
-    assert "приложени" in text.lower()
+    # приветствие короткое: без объяснений «всё внутри приложения» и «тир-1»
+    lowered = text.lower()
+    assert "всё внутри приложения" not in lowered
+    assert "все внутри приложения" not in lowered
+    assert "кнопки в чате" not in lowered
+    assert "тир-1" not in lowered
 
 
 def test_rules_mention_fonbet_and_express_limit() -> None:
