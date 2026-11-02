@@ -159,7 +159,7 @@ TEST_DATABASE_URL='postgresql://...' pytest -q   # тот же набор на P
 TIER1_INCLUDE=IEM,ESL Pro League,ESL One,BLAST Premier,BLAST Rivals,BLAST Bounty,BLAST Open,PGL,Major,World Cup
 TIER1_EXCLUDE=Qualifier,Квалификац,Academy,Women,H2H,1x1,2x2,Showmatch,CCT
 ODDS_MODE=real          # real | fair
-SYNC_INTERVAL=90
+SYNC_INTERVAL=45
 LIVE_BETTING=true       # ставки по ходу матча (false — приём только до старта)
 ```
 
@@ -236,7 +236,7 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 | `FONBET_BASE_URL` | `https://line-lb51.bk6bba-resources.com` | хост линии |
 | `TIER1_INCLUDE` / `TIER1_EXCLUDE` | см. выше | фильтр турниров |
 | `ODDS_MODE` | `real` | `real` (с маржой) или `fair` (без маржи) |
-| `SYNC_INTERVAL` | 90 | период обновления линии, сек |
+| `SYNC_INTERVAL` | 45 | период обновления линии, сек (в лайве кэфы свежее) |
 | `LIVE_BETTING` | `true` | `true` — ставки по ходу матча, `false` — только до старта |
 | `RUN_MODE` | `polling` | `polling` или `webhook` |
 | `WEBHOOK_BASE_URL` / `WEBHOOK_PATH` / `WEBHOOK_SECRET` | — | для webhook |

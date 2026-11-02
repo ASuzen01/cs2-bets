@@ -71,7 +71,14 @@ def build_app(db: Database, bot_token: str | None = None) -> web.Application:
 
 
 async def health(_: web.Request) -> web.Response:
-    return web.json_response({"ok": True, "service": "cs2-bets-miniapp", "time": int(time.time())})
+    return web.json_response({
+        "ok": True,
+        "service": "cs2-bets-miniapp",
+        "time": int(time.time()),
+        # по этим полям видно, с какими настройками реально крутится сервис
+        "sync_interval": settings.sync_interval,
+        "live_betting": settings.live_betting,
+    })
 
 
 # ------------------------------------------------------------------ интерфейс

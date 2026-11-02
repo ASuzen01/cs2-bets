@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
     # real — кэфы как у букмекера; fair — без маржи (маржа убирается, банк живёт дольше)
     odds_mode: Literal["real", "fair"] = "real"
-    sync_interval: int = 90              # период обновления линии, сек
+    sync_interval: int = 45              # период обновления линии, сек (лайв — кэфы свежее)
     # ставки по ходу матча: кэф берётся текущий, приём идёт до конца игры
     live_betting: bool = True
     autopost_matches: bool = True        # постить новые матчи в чаты
