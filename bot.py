@@ -19,7 +19,13 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    MenuButtonWebApp,
+    WebAppInfo,
+)
 
 from app.config import settings
 from app.db import Database
@@ -31,10 +37,12 @@ from app.services.sync import MatchSyncer
 log = logging.getLogger(__name__)
 
 USER_COMMANDS: list[tuple[str, str]] = [
-    ("start", "Меню и ставки"),
-    ("help", "Меню и правила"),
+    ("start", "Открыть приложение"),
+    ("help", "Правила и выплаты"),
 ]
 ADMIN_COMMANDS: list[tuple[str, str]] = [
+    ("results", "Подтвердить исходы"),
+    ("stats", "Статистика"),
     ("grant", "Начислить монеты игроку"),
 ]
 
@@ -118,6 +126,17 @@ async def _set_commands(bot: Bot) -> None:
         [BotCommand(command=name, description=text) for name, text in USER_COMMANDS],
         scope=BotCommandScopeDefault(),
     )
+    # постоянная кнопка «Ставки» слева в строке ввода — открывает приложение
+    from app import keyboards
+
+    url = keyboards.app_url()
+    if url:
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="Ставки", web_app=WebAppInfo(url=url))
+            )
+        except TelegramAPIError as exc:
+            log.warning("Не удалось поставить меню-кнопку приложения: %s", exc)
     for admin_id in settings.admin_ids_set:
         try:
             await bot.set_my_commands(

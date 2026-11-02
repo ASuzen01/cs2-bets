@@ -28,7 +28,7 @@ async def main() -> None:
     dp = create_dispatcher(db, MatchSyncer(bot, db))
 
     routers = [r.name for r in dp.sub_routers]
-    assert {"admin", "common", "ui"} <= set(routers), routers
+    assert {"admin", "common", "misc"} <= set(routers), routers
 
     await db.connect()
     await db.upsert_user(42, "smoke", "Smoke Test")

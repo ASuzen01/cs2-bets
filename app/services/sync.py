@@ -131,7 +131,7 @@ class MatchSyncer:
                 stats["updated"] += 1
 
     async def _post_card(self, match: Any, chats: list[Any]) -> None:
-        markup = keyboards.match_kb(match)
+        markup = keyboards.app_kb()
         for index, chat in enumerate(chats):
             try:
                 message = await self.bot.send_message(
@@ -221,7 +221,7 @@ class MatchSyncer:
                 chat_id=chat_id,
                 message_id=int(row["posted_message_id"]),
                 text=texts.match_card(row),
-                reply_markup=keyboards.match_kb(row),
+                reply_markup=keyboards.app_kb(),
             )
         except TelegramAPIError as exc:
             log.debug("Карточка матча #%s не обновилась: %s", match_id, exc)

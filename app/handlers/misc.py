@@ -4,14 +4,16 @@ from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.types import Message
 
+from app import keyboards
+
 router = Router(name="misc")
 
 
 @router.message(F.text, ~F.text.startswith("/"), F.chat.type == ChatType.PRIVATE)
 async def private_fallback(message: Message) -> None:
-    """В личке отвечаем на непонятный текст, в группе — молчим, чтобы не спамить."""
+    """Текст больше ни для чего не нужен: всё делается в приложении."""
     await message.answer(
-        "Я не читаю текст — всё делается кнопками 🙂\n"
-        "Жми /start, и дальше только нажатия.\n"
-        "Текст нужен лишь для своей суммы (кнопка «✏️ Своя сумма»)."
+        "Ставки, экспрессы, баланс и история — в приложении 🙂\n"
+        "Кнопка ниже или «Ставки» слева внизу в строке ввода.",
+        reply_markup=keyboards.app_kb(),
     )
