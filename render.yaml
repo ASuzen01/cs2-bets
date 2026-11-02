@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: cs2-bets-bot
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: RUN_MODE
+        value: webhook
+      - key: WEBHOOK_BASE_URL
+        fromService:
+          type: web
+          name: cs2-bets-bot
+          property: host
+      - key: WEBHOOK_PATH
+        value: /webhook
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: START_BALANCE
+        value: "1000"
+      - key: DAILY_BONUS
+        value: "250"
+      - key: MIN_BET
+        value: "10"
+      - key: DB_PATH
+        value: data/bot.db
+      # чтобы балансы не терялись при перезапуске бесплатного сервиса —
+      # вставьте Connection string из Neon (Postgres, free)
+      - key: DATABASE_URL
+        sync: false
+      # мини-приложение живёт в этом же сервисе (см. run_webhook) — один адрес и одна база
+      - key: MINIAPP_URL
+        fromService:
+          type: web
+          name: cs2-bets-bot
+          property: host

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>CS2 BETS — экраны бота</title>
+<style>
+  :root { --bg:#0e1621; --panel:#17212b; --bubble:#182533; --accent:#4a9eff; --text:#e9eef4; --muted:#7d8b99; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 24px 48px; background:radial-gradient(1200px 600px at 10% -10%, #1b3550 0%, #0b1118 60%); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
+  header { max-width:1180px; margin:0 auto 28px; }
+  h1 { font-size:26px; margin:0 0 8px; letter-spacing:-.02em; }
+  header p { margin:0; color:var(--muted); font-size:15px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:22px; max-width:1180px; margin:0 auto; }
+  .phone { background:var(--panel); border:1px solid #21303f; border-radius:18px; overflow:hidden;
+           box-shadow:0 18px 40px rgba(0,0,0,.35); display:flex; flex-direction:column; }
+  .bar { padding:12px 16px; font-size:13px; font-weight:600; color:#9fb3c8; background:#1b2735; border-bottom:1px solid #21303f;
+         text-transform:uppercase; letter-spacing:.06em; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#3ddc84; margin-right:6px; }
+  .chat { padding:14px; display:flex; flex-direction:column; gap:10px; flex:1; }
+  .bubble { background:var(--bubble); border-radius:14px 14px 14px 4px; padding:12px 14px; font-size:13.5px; line-height:1.55; }
+  .bubble.ok { background:#15321f; }
+  .bubble b { color:#fff; }
+  .kb { display:flex; flex-direction:column; gap:6px; }
+  .krow { display:flex; gap:6px; }
+  .btn { flex:1; text-align:center; padding:9px 6px; font-size:12.5px; line-height:1.3; color:#7cc0ff; background:#1f2f3f;
+         border-radius:8px; border:1px solid #24384b; }
+  footer { max-width:1180px; margin:30px auto 0; color:var(--muted); font-size:13.5px; line-height:1.6; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1f2f3f; color:#7cc0ff; font-size:12px; }
+</style></head>
+<body>
+<header>
+  <h1>🎯 CS2 BETS — интерфейс на кнопках</h1>
+  <p>Реальные кэфы Fonbet из линии 02.11 · только турниры тир-1 · ставки виртуальными монетами</p>
+</header>
+<div class="grid">
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 1 · /start</div>
+      <div class="chat">
+        <div class="bubble ">🎯 <b>CS2 BETS</b><br>Антон, баланс: <b>1 250 🪙</b><br><br>Реальные матчи и кэфы Fonbet, только турниры тир-1.<br>Ставки — виртуальными монетами.<br><br>Выбирай действие кнопкой 👇</div>
+        <div class='kb'><div class='krow'><span class='btn'>🎮 Матчи и кэфы</span></div><div class='krow'><span class='btn'>💰 Баланс</span><span class='btn'>🎁 Бонус</span></div><div class='krow'><span class='btn'>🎟 Мой экспресс</span><span class='btn'>🏆 Топ</span></div><div class='krow'><span class='btn'>📜 История</span><span class='btn'>📖 Правила</span></div><div class='krow'><span class='btn'>🔄 Обновить линию</span></div><div class='krow'><span class='btn'>📊 Статистика</span></div><div class='krow'><span class='btn'>⚙️ Автопост</span></div></div>
+      </div>
+    </section>
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 2 · Матчи тир-1</div>
+      <div class="chat">
+        <div class="bubble ">🎮 <b>Матчи тир-1</b> · стр. 1/3<br><br>🕐 03.11 02:00 · IEM Пекин · Групповой этап<br>   <b>Aurora</b> 1.65 — 2.25 <b>G2 Esports</b><br>🕐 03.11 02:00 · IEM Пекин · Групповой этап<br>   <b>Team Liquid</b> 2.20 — 1.67 <b>PARIVISION</b><br>🕐 03.11 04:30 · IEM Пекин · Групповой этап<br>   <b>BB Team</b> 3.10 — 1.37 <b>MOUZ</b><br>🕐 03.11 04:30 · IEM Пекин · Групповой этап<br>   <b>9z Team</b> 1.44 — 2.80 <b>TYLOO</b><br><br>Жми на матч — покажу карточку с кэфами.</div>
+        <div class='kb'><div class='krow'><span class='btn'>Aurora 1.65 — 2.25 G2 Esports</span></div><div class='krow'><span class='btn'>Team Liquid 2.20 — 1.67 PARIVISION</span></div><div class='krow'><span class='btn'>BB Team 3.10 — 1.37 MOUZ</span></div><div class='krow'><span class='btn'>9z Team 1.44 — 2.80 TYLOO</span></div><div class='krow'><span class='btn'>🧩 Ещё 2 матча</span><span class='btn'>Вперёд ➡️</span></div><div class='krow'><span class='btn'>🎟 Мой экспресс</span></div><div class='krow'><span class='btn'>⬅️ В меню</span></div></div>
+      </div>
+    </section>
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 3 · Карточка матча</div>
+      <div class="chat">
+        <div class="bubble ">🎮 <b>IEM Пекин · Групповой этап</b> · матч #1 · 🟢 приём ставок<br><br>🔵 <b>Aurora</b> — кэф <b>1.65</b><br>🟠 <b>G2 Esports</b> — кэф <b>2.25</b><br>🕐 Начало: 03.11 02:00<br><br>Ставка: <code>/bet 1 сумма 1|2</code> или кнопкой ниже</div>
+        <div class='kb'><div class='krow'><span class='btn'>1️⃣ Aurora · 1.65</span></div><div class='krow'><span class='btn'>2️⃣ G2 Esports · 2.25</span></div><div class='krow'><span class='btn'>🎟 1 в экспресс · 1.65</span><span class='btn'>🎟 2 в экспресс · 2.25</span></div><div class='krow'><span class='btn'>⬅️ К матчам</span><span class='btn'>🎟 Экспресс</span></div></div>
+      </div>
+    </section>
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 4 · Выбор суммы</div>
+      <div class="chat">
+        <div class="bubble ">💸 Ставка на <b>Aurora</b> · кэф <b>1.65</b><br>IEM Пекин · Групповой этап · матч #1 · начало 03.11 02:00<br><br>Баланс: 1 250 🪙<br>Минимум: 10 🪙<br><br>Выбери сумму 👇</div>
+        <div class='kb'><div class='krow'><span class='btn'>50 🪙</span><span class='btn'>100 🪙</span><span class='btn'>250 🪙</span></div><div class='krow'><span class='btn'>500 🪙</span><span class='btn'>1 000 🪙</span></div><div class='krow'><span class='btn'>💥 Всё</span><span class='btn'>✏️ Своя сумма</span></div><div class='krow'><span class='btn'>⬅️ Назад</span></div></div>
+      </div>
+    </section>
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 5 · Корзина экспресса</div>
+      <div class="chat">
+        <div class="bubble ">🎟 <b>Экспресс</b><br><br>1. Aurora · кэф <b>1.65</b><br>   IEM Пекин · Групповой этап · матч #1<br>2. TYLOO · кэф <b>2.80</b><br>   IEM Пекин · Групповой этап · матч #4<br><br>Исходов: 2 · итоговый кэф: <b>4.62</b><br>Баланс: 1 250 🪙 · потолок кэфа: 40<br><br>Выбери сумму ставки 👇</div>
+        <div class='kb'><div class='krow'><span class='btn'>✅ Поставить 50 🪙</span><span class='btn'>✅ Поставить 100 🪙</span></div><div class='krow'><span class='btn'>✅ Поставить 250 🪙</span><span class='btn'>✅ Поставить 500 🪙</span></div><div class='krow'><span class='btn'>✅ Поставить 1 000 🪙</span></div><div class='krow'><span class='btn'>➕ Добавить исход</span><span class='btn'>🗑 Очистить</span></div><div class='krow'><span class='btn'>✏️ Своя сумма</span><span class='btn'>💥 Всё</span></div><div class='krow'><span class='btn'>⬅️ В меню</span></div></div>
+      </div>
+    </section>
+    <section class="phone">
+      <div class="bar"><span class="dot"></span> 6 · Ставка принята</div>
+      <div class="chat">
+        <div class="bubble ok">✅ <b>Ставка принята</b><br>Матч #1 · Aurora vs G2 Esports<br>Исход: <b>Aurora</b> · кэф <b>1.65</b><br>Ставка: 250 🪙 → возможный выигрыш <b>413 🪙</b><br>Баланс: <b>1 000 🪙</b></div>
+        <div class='kb'><div class='krow'><span class='btn'>🎮 Матчи</span><span class='btn'>💰 Баланс</span></div><div class='krow'><span class='btn'>🎟 Мой экспресс</span></div><div class='krow'><span class='btn'>⬅️ В меню</span></div></div>
+      </div>
+    </section></div>
+<footer>
+  <span class="pill">Ни одной команды по пути</span> — от /start до подтверждения ставки всё нажатиями.
+  Текстом вводится только произвольная сумма (кнопка «✏️ Своя сумма»). В группах экраны приходят отдельными
+  сообщениями, чтобы общая карточка матча не перезаписывалась. Команды (/bet, /express, /win …) остались резервом.
+</footer>
+</body></html>

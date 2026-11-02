@@ -1,0 +1,214 @@
+"""Точка входа: long polling локально, webhook в облаке.
+
+Локально:   cp .env.example .env && python bot.py
+В облаке:   RUN_MODE=webhook + WEBHOOK_BASE_URL + WEBHOOK_SECRET
+"""
+
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import logging
+import os
+from functools import partial
+from pathlib import Path
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
+from aiogram.fsm.storage.base import BaseStorage
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+
+from app.config import settings
+from app.db import Database
+from app.handlers import setup_handlers
+from app.logging import setup_logging
+from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
+from app.services.sync import MatchSyncer
+
+log = logging.getLogger(__name__)
+
+USER_COMMANDS: list[tuple[str, str]] = [
+    ("start", "Меню и ставки"),
+    ("help", "Меню и правила"),
+]
+ADMIN_COMMANDS: list[tuple[str, str]] = [
+    ("grant", "Начислить монеты игроку"),
+]
+
+
+# ------------------------------------------------------------------ фабрики
+def build_storage() -> BaseStorage:
+    """Redis-хранилище FSM включается автоматически, если задан REDIS_URL."""
+    redis_url = settings.redis_url
+    if redis_url:
+        try:
+            from aiogram.fsm.storage.redis import RedisStorage
+
+            log.info("FSM: Redis")
+            return RedisStorage.from_url(redis_url)
+        except ImportError:
+            log.warning("REDIS_URL задан, но пакет redis не установлен — беру MemoryStorage")
+    return MemoryStorage()
+
+
+def create_bot() -> Bot:
+    return Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+
+def create_dispatcher(db: Database, syncer: MatchSyncer) -> Dispatcher:
+    dp = Dispatcher(storage=build_storage())
+
+    # доступно во всех хендлерах как аргументы db=... и syncer=...
+    dp["db"] = db
+    dp["syncer"] = syncer
+
+    dp.update.outer_middleware(UserSyncMiddleware(db))
+    dp.message.outer_middleware(
+        ThrottlingMiddleware(settings.throttle_seconds, settings.admin_ids_set)
+    )
+
+    setup_handlers(dp)
+
+    # allowed_updates передаём в startup через partial: если положить его в workflow data,
+    # он конфликтует с параметром allowed_updates у start_polling
+    dp.startup.register(
+        partial(on_startup, allowed_updates=dp.resolve_used_update_types())
+    )
+    dp.shutdown.register(on_shutdown)
+    return dp
+
+
+# ------------------------------------------------------------------ startup
+async def on_startup(
+    bot: Bot, db: Database, syncer: MatchSyncer, allowed_updates: list[str]
+) -> None:
+    await db.connect()
+    syncer.start()
+
+    me = await bot.get_me()
+    log.info("Запущен @%s (id %s), режим: %s", me.username, me.id, settings.run_mode)
+
+    await _set_commands(bot)
+
+    if settings.run_mode == "webhook":
+        await bot.set_webhook(
+            url=settings.webhook_url,
+            secret_token=settings.webhook_secret,
+            drop_pending_updates=settings.drop_pending_updates,
+            allowed_updates=allowed_updates,
+        )
+        log.info("Webhook установлен: %s", settings.webhook_url)
+
+
+async def on_shutdown(bot: Bot, db: Database, syncer: MatchSyncer) -> None:
+    log.info("Остановка бота")
+    await syncer.stop()
+    await db.close()
+    await bot.session.close()
+
+
+async def _set_commands(bot: Bot) -> None:
+    await bot.set_my_commands(
+        [BotCommand(command=name, description=text) for name, text in USER_COMMANDS],
+        scope=BotCommandScopeDefault(),
+    )
+    for admin_id in settings.admin_ids_set:
+        try:
+            await bot.set_my_commands(
+                [BotCommand(command=name, description=text) for name, text in USER_COMMANDS + ADMIN_COMMANDS],
+                scope=BotCommandScopeChat(chat_id=admin_id),
+            )
+        except TelegramAPIError as exc:
+            log.warning("Не удалось выставить команды админу %s: %s", admin_id, exc)
+
+
+# ---------------------------------------------------------------------- run
+async def run_polling(bot: Bot, dp: Dispatcher) -> None:
+    await bot.delete_webhook(drop_pending_updates=settings.drop_pending_updates)
+    await dp.start_polling(
+        bot,
+        allowed_updates=dp.resolve_used_update_types(),
+        polling_timeout=settings.polling_timeout,
+    )
+
+
+def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
+    from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+    from aiohttp import web
+
+    from app.web.server import MIDDLEWARES, register_routes
+
+    app = web.Application(middlewares=list(MIDDLEWARES))
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=settings.webhook_secret,
+    ).register(app, path=settings.webhook_path)
+
+    async def health(_: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "mode": "webhook"})
+
+    app.router.add_get("/health", health)
+
+    # мини-приложение в том же процессе: один адрес, одна база
+    if db is not None:
+        register_routes(app, db, serve_health=False, index_path="/")
+        log.info("Мини-приложение доступно по адресу %s/", settings.webhook_base_url or "/")
+
+    setup_application(app, dp, bot=bot)
+    log.info("HTTP-сервер: %s:%s%s", settings.host, settings.port, settings.webhook_path)
+    web.run_app(app, host=settings.host, port=settings.port, print=None)
+
+
+_lock_handle = None
+
+
+def acquire_single_instance_lock() -> None:
+    """Не даём запустить второй polling: Telegram отдаёт 409 и бот «молчит»."""
+    global _lock_handle
+    lock_path = Path(settings.db_file).parent / "bot.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch(exist_ok=True)
+
+    handle = lock_path.open("r+")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log.error(
+            "Уже запущен другой экземпляр бота (%s). Второй polling получит 409 — выходим.",
+            lock_path,
+        )
+        raise SystemExit(2)
+
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    _lock_handle = handle
+
+
+def main() -> None:
+    setup_logging()
+    settings.validate_for_run()
+    acquire_single_instance_lock()
+
+    bot = create_bot()
+    db = Database(settings.db_file, start_balance=settings.start_balance, url=settings.database_url, schema=settings.database_schema)
+    syncer = MatchSyncer(bot, db)
+    dp = create_dispatcher(db, syncer)
+
+    if settings.run_mode == "webhook":
+        run_webhook(bot, dp, db)
+    else:
+        asyncio.run(run_polling(bot, dp))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+aiogram>=3.22,<4
+aiosqlite>=0.20
+pydantic-settings>=2.4
+aiohttp>=3.9
+
+# Опционально: Redis как FSM-хранилище (нужно, если запускаете больше одного
+# инстанса бота). Раскомментируйте и задайте REDIS_URL в .env
+# aiogram[redis]>=3.22,<4
+# Postgres/Neon (хостинг). Локально не нужен — работает SQLite.
+psycopg[binary,pool]>=3.2

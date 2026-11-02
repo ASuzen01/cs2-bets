@@ -1,0 +1,19 @@
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+
+# локальные секреты и мусор
+.env.*
+!.env.example
+*.log
+.cache/
