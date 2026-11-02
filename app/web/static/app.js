@@ -365,6 +365,13 @@
       });
     }
 
+    host.append(el("h2", null, "История операций"));
+    const historyHost = el("div");
+    historyHost.id = "history";
+    historyHost.append(el("div", "skeleton"));
+    host.append(historyHost);
+    loadHistory();
+
     const rules = el("div", "card");
     rules.append(el("h2", null, "Правила"));
     rules.append(el("div", "hint",
@@ -633,7 +640,6 @@
     });
     if (tab === "bets") loadBets();
     if (tab === "top") loadTop();
-    if (tab === "history") loadHistory();
     if (tab === "me") renderMe();
     if (tab === "express") renderExpress();
     haptic("light");
@@ -773,12 +779,14 @@
   }
 
   async function loadHistory() {
+    const host = $("#history");
+    if (!host) return;  // блок истории живёт внутри профиля
     try {
       const data = await api("/api/history");
       renderHistory(data.items);
     } catch (err) {
-      $("#history").textContent = "";
-      $("#history").append(el("div", "empty", err.message));
+      host.textContent = "";
+      host.append(el("div", "empty", err.message));
     }
   }
 
