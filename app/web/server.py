@@ -149,6 +149,7 @@ def register_routes(
     app.router.add_post("/api/bonus", api_bonus)
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
+    app.router.add_get("/api/bets", api_bets)
     app.router.add_get("/api/health", health)
     return app
 
@@ -338,6 +339,125 @@ async def api_top(request: web.Request) -> web.Response:
                 }
                 for index, row in enumerate(rows)
             ],
+        }
+    )
+
+
+def _legs_word(count: int) -> str:
+    """1 исход · 2 исхода · 5 исходов."""
+    tail = count % 100
+    if 11 <= tail <= 14:
+        return "исходов"
+    tail = count % 10
+    if tail == 1:
+        return "исход"
+    if 2 <= tail <= 4:
+        return "исхода"
+    return "исходов"
+
+
+async def api_bets(request: web.Request) -> web.Response:
+    """История ставок: что ещё в игре и что уже рассчитано (одиночные + экспрессы)."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+
+    single_rows = await db.user_bets_all(user_id, 50)
+    express_rows = await db.user_expresses_all(user_id, 20)
+    legs = await db.express_legs_many([int(row["id"]) for row in express_rows])
+
+    legs_by_express: dict[int, list[dict[str, Any]]] = {}
+    for leg in legs:
+        legs_by_express.setdefault(int(leg["express_id"]), []).append(
+            {
+                "match_id": int(leg["match_id"]),
+                "side": str(leg["side"]),
+                "odds": float(leg["odds"]),
+                "team": str(leg["team_a"] if leg["side"] == "a" else leg["team_b"]),
+                "match": f"{leg['team_a']} — {leg['team_b']}",
+                "result": str(leg["result"]),
+                "match_status": str(leg["match_status"]),
+            }
+        )
+
+    open_items: list[dict[str, Any]] = []
+    settled_items: list[dict[str, Any]] = []
+
+    for row in single_rows:
+        side = str(row["side"])
+        team = str(row["team_a"] if side == "a" else row["team_b"])
+        amount = int(row["amount"])
+        odds_value = float(row["odds"])
+        payout = row["payout"]
+        match_status = str(row["match_status"])
+        item = {
+            "kind": "single",
+            "id": int(row["id"]),
+            "match_id": int(row["match_id"]),
+            "title": f"{row['team_a']} — {row['team_b']}",
+            "subtitle": f"Ставка на {team}",
+            "tournament": str(row["tournament"]),
+            "stake": amount,
+            "odds": round(odds_value, 2),
+            "potential": round(amount * odds_value),
+            "team": team,
+            "at": int(row["created_at"]),
+            "start_time": int(row["start_time"]),
+            "legs": [],
+        }
+        if match_status in ("open", "live", "awaiting"):
+            item["status"] = "live" if match_status == "live" else "open"
+            item["match_status"] = match_status
+            open_items.append(item)
+        else:
+            paid = int(payout or 0)
+            item["match_status"] = match_status
+            item["payout"] = paid
+            item["result"] = "void" if match_status == "cancelled" else ("won" if paid > 0 else "lost")
+            if match_status == "cancelled":
+                item["payout"] = paid or amount
+            settled_items.append(item)
+
+    for row in express_rows:
+        express_id = int(row["id"])
+        legs_list = legs_by_express.get(express_id, [])
+        stake = int(row["stake"])
+        odds_value = float(row["odds"])
+        item = {
+            "kind": "express",
+            "id": express_id,
+            "title": f"Экспресс · {len(legs_list)} {_legs_word(len(legs_list))}",
+            "subtitle": " + ".join(leg["team"] for leg in legs_list),
+            "tournament": "",
+            "stake": stake,
+            "odds": round(odds_value, 2),
+            "potential": round(stake * odds_value),
+            "at": int(row["created_at"]),
+            "legs": legs_list,
+        }
+        status = str(row["status"])
+        if status == "open":
+            item["status"] = "open"
+            open_items.append(item)
+        else:
+            item["status"] = "settled"
+            item["result"] = status  # won / lost / void
+            item["payout"] = int(row["payout"] or 0)
+            settled_items.append(item)
+
+    open_items.sort(key=lambda item: item.get("start_time") or item["at"])
+    settled_items.sort(key=lambda item: item["at"], reverse=True)
+
+    return web.json_response(
+        {
+            "ok": True,
+            "open": open_items,
+            "settled": settled_items[:30],
+            "counts": {
+                "open": len(open_items),
+                "settled": len(settled_items),
+                "won": sum(1 for item in settled_items if item.get("result") == "won"),
+                "lost": sum(1 for item in settled_items if item.get("result") == "lost"),
+            },
         }
     )
 

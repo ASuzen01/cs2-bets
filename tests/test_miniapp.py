@@ -178,3 +178,74 @@ async def test_index_page_renders(client: TestClient) -> None:
     assert response.status == 200
     assert "CS2 BETS" in html
     assert "window.__BOOT__" in html
+
+
+# --------------------------------------------------------------- история ставок
+async def test_bets_endpoint_empty(client: TestClient) -> None:
+    response = await client.get("/api/bets")
+    assert response.status == 200
+    body = await response.json()
+    assert body["open"] == [] and body["settled"] == []
+    assert body["counts"] == {"open": 0, "settled": 0, "won": 0, "lost": 0}
+
+
+async def test_bets_endpoint_marks_open_bet(client: TestClient, match) -> None:
+    placed = await client.post(
+        "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 100}
+    )
+    assert placed.status == 200
+
+    body = await (await client.get("/api/bets")).json()
+    assert len(body["open"]) == 1 and body["settled"] == []
+    item = body["open"][0]
+    assert item["kind"] == "single"
+    assert item["status"] == "open"
+    assert item["team"] == "Aurora"
+    assert item["stake"] == 100
+    assert item["potential"] == 165
+    assert "Aurora" in item["title"]
+
+
+async def test_bets_endpoint_moves_settled_bet(client: TestClient, db: Database, match) -> None:
+    await client.post("/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 100})
+    await db.settle_match(int(match["id"]), "a", source="manual")
+
+    body = await (await client.get("/api/bets")).json()
+    assert body["open"] == []
+    assert len(body["settled"]) == 1
+    item = body["settled"][0]
+    assert item["result"] == "won"
+    assert item["payout"] == 165
+    assert body["counts"]["won"] == 1
+
+
+async def test_bets_endpoint_express(client: TestClient, db: Database, match) -> None:
+    other, _ = await db.upsert_match(
+        fonbet_id=556,
+        tournament="Counter-Strike. BLAST Rivals. Групповой этап. Bo3",
+        team_a="MOUZ",
+        team_b="Team Vitality",
+        start_time=int(time.time()) + 7200,
+        odds_a=2.0,
+        odds_b=1.8,
+    )
+    response = await client.post(
+        "/api/express",
+        json={
+            "amount": 50,
+            "legs": [
+                {"match_id": int(match["id"]), "side": "a"},
+                {"match_id": int(other["id"]), "side": "a"},
+            ],
+        },
+    )
+    assert response.status == 200
+
+    body = await (await client.get("/api/bets")).json()
+    assert len(body["open"]) == 1
+    item = body["open"][0]
+    assert item["kind"] == "express"
+    assert len(item["legs"]) == 2
+    assert {leg["team"] for leg in item["legs"]} == {"Aurora", "MOUZ"}
+    assert item["stake"] == 50
+    assert item["potential"] == round(50 * 1.65 * 2.0)

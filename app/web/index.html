@@ -113,6 +113,29 @@
 
   .empty{text-align:center;color:var(--muted);padding:34px 12px;font-size:13.5px}
 
+  /* ---- история ставок ---- */
+  .betcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:8px}
+  .betcard.live{border-color:#2d4b69}
+  .betcard.won{border-color:#2a5236}
+  .betcard.lost{opacity:.82}
+  .bet-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .bet-head .grow{flex:1;min-width:0}
+  .bet-head b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bet-head span{font-size:11px;color:var(--muted)}
+  .tag{font-size:10.5px;font-weight:800;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
+  .tag.live{background:#3d2a12;color:#ffc078;border:1px solid #5c3f16}
+  .tag.open{background:#12283d;color:#8ecbff;border:1px solid #23384f}
+  .tag.won{background:#16301f;color:#69db7c;border:1px solid #21492e}
+  .tag.lost{background:#33191b;color:#ff8787;border:1px solid #4d2528}
+  .tag.void{background:#232a33;color:#adb5bd;border:1px solid #333c47}
+  .bet-meta{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);
+    border-top:1px dashed #223143;padding-top:7px;margin-top:2px}
+  .bet-meta b{color:var(--text);font-variant-numeric:tabular-nums}
+  .bet-legs{font-size:11.5px;color:#9fb3c8;margin-bottom:6px;line-height:1.5}
+  .bet-sub{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+  .section-title{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+  .section-title:first-child{margin-top:2px}
+
   .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;
     border-radius:14px;background:linear-gradient(180deg,#3d8fd8,#2f7fd1);color:#fff;font-weight:700;
     font-size:15px;box-shadow:0 6px 18px rgba(47,127,209,.28)}
@@ -197,13 +220,18 @@
     <div id="express"></div>
   </section>
 
+  <section class="screen" id="screen-bets">
+    <h2>История ставок</h2>
+    <div id="bets"><div class="skeleton"></div><div class="skeleton"></div></div>
+  </section>
+
   <section class="screen" id="screen-top">
     <h2>Топ по балансу</h2>
     <div id="top"><div class="skeleton"></div><div class="skeleton"></div></div>
   </section>
 
   <section class="screen" id="screen-history">
-    <h2>История операций</h2>
+    <h2>История операций с балансом</h2>
     <div id="history"><div class="skeleton"></div></div>
   </section>
 
@@ -224,8 +252,9 @@
 <nav class="tabs">
   <button class="active" data-tab="matches"><span class="ic">🎮</span>Матчи</button>
   <button data-tab="express" id="tabExpress"><span class="ic">🎟</span>Экспресс<span class="dot" id="cartDot">0</span></button>
+  <button data-tab="bets" id="tabBets"><span class="ic">🎯</span>Ставки<span class="dot" id="betsDot">0</span></button>
   <button data-tab="top"><span class="ic">🏆</span>Топ</button>
-  <button data-tab="history"><span class="ic">📜</span>История</button>
+  <button data-tab="history"><span class="ic">📜</span>Деньги</button>
   <button data-tab="me"><span class="ic">💰</span>Я</button>
 </nav>
 
@@ -699,6 +728,7 @@
           haptic("ok");
           toast(`Ставка принята · кэф ${oddsText(data.odds)} · выигрыш ${money(data.potential)}`, "ok");
           refreshState();
+          loadBets();
         } catch (err) {
           haptic("bad");
           toast(err.message, "bad");
@@ -774,6 +804,7 @@
           toast(`Экспресс #${data.express_id} принят · кэф ${oddsText(data.odds)}`, "ok");
           renderCartBar();
           refreshState();
+          loadBets();
           switchTab("express");
         } catch (err) {
           haptic("bad");
@@ -865,11 +896,135 @@
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tab === tab);
     });
+    if (tab === "bets") loadBets();
     if (tab === "top") loadTop();
     if (tab === "history") loadHistory();
     if (tab === "me") renderMe();
     if (tab === "express") renderExpress();
     haptic("light");
+  }
+
+  // ------------------------------------------------------- история ставок
+  function betStatusTag(item) {
+    if (item.kind === "express") {
+      if (item.status === "open") return ["live", "в игре"];
+    }
+    if (item.status === "open") return ["open", "ждёт старта"];
+    if (item.status === "live") return ["live", "матч идёт"];
+    if (item.result === "won") return ["won", "зашла"];
+    if (item.result === "lost") return ["lost", "не зашла"];
+    if (item.result === "void") return ["void", "возврат"];
+    return ["open", "—"];
+  }
+
+  function betTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function renderBetCard(item) {
+    const [cls, label] = betStatusTag(item);
+    const card = el("div", "betcard " + cls);
+
+    const head = el("div", "bet-head");
+    const grow = el("div", "grow");
+    grow.append(el("b", null, item.title));
+    const sub = item.kind === "express"
+      ? `${item.stake ? money(item.stake) : ""} · кэф ${oddsText(item.odds)}`
+      : `${item.subtitle} · кэф ${oddsText(item.odds)}`;
+    grow.append(el("span", null, sub));
+    head.append(grow, el("span", "tag " + cls, label));
+    card.append(head);
+
+    if (item.legs && item.legs.length) {
+      const legsBox = el("div", "bet-legs");
+      item.legs.forEach((leg) => {
+        const mark = leg.result === "won" ? "✅" : leg.result === "lost" ? "❌" : leg.result === "void" ? "⚪️" : "•";
+        legsBox.append(el("div", null, `${mark} ${leg.team} · кэф ${oddsText(leg.odds)}`));
+      });
+      card.append(legsBox);
+    }
+
+    const meta = el("div", "bet-meta");
+    const left = el("span", null, "");
+    left.append(document.createTextNode("Ставка "));
+    left.append(el("b", null, money(item.stake)));
+    meta.append(left);
+
+    const right = el("span", null, "");
+    if (item.status === "open" || item.status === "live") {
+      right.append(document.createTextNode("Возможная выплата "));
+      right.append(el("b", null, money(item.potential)));
+    } else {
+      const paid = Number(item.payout || 0);
+      const net = paid - Number(item.stake || 0);
+      if (item.result === "lost") {
+        right.append(document.createTextNode("Проигрыш"));
+      } else {
+        right.append(document.createTextNode(item.result === "void" ? "Возврат " : "Выплата "));
+        right.append(el("b", null, money(paid)));
+      }
+      if (item.result !== "void") {
+        right.append(el("span", "money " + (net >= 0 ? "plus" : "minus"),
+          ` ${net >= 0 ? "+" : "−"}${money(Math.abs(net))}`));
+      }
+    }
+    meta.append(right);
+    card.append(meta);
+    return card;
+  }
+
+  function renderBets(data) {
+    const host = $("#bets");
+    host.textContent = "";
+    const open = (data && data.open) || [];
+    const settled = (data && data.settled) || [];
+
+    if (!open.length && !settled.length) {
+      host.append(el("div", "empty", "Ставок пока нет. Матчи → кэф → сумма."));
+      return;
+    }
+
+    const openTitle = el("div", "section-title");
+    openTitle.append(el("h2", null, "В игре"));
+    openTitle.append(el("span", "tag open", String(open.length)));
+    host.append(openTitle);
+    if (!open.length) {
+      host.append(el("div", "empty", "Нет активных ставок."));
+    } else {
+      open.forEach((item) => host.append(renderBetCard(item)));
+    }
+
+    const settledTitle = el("div", "section-title");
+    settledTitle.append(el("h2", null, "Рассчитанные"));
+    if (data && data.counts) {
+      settledTitle.append(el("span", "tag won", `зашло ${data.counts.won} · не зашло ${data.counts.lost}`));
+    }
+    host.append(settledTitle);
+    if (!settled.length) {
+      host.append(el("div", "empty", "Пока ничего не рассчитано."));
+    } else {
+      settled.forEach((item) => host.append(renderBetCard(item)));
+    }
+  }
+
+  async function loadBets() {
+    const host = $("#bets");
+    if (!host) return;
+    try {
+      const data = await api("/api/bets");
+      state.betsHistory = data;
+      renderBets(data);
+      const dot = $("#betsDot");
+      if (dot) {
+        const openCount = (data.open || []).length;
+        dot.textContent = openCount ? String(openCount) : "0";
+        dot.parentElement.classList.toggle("badge", openCount > 0);
+      }
+    } catch (err) {
+      host.textContent = "";
+      host.append(el("div", "empty", err.message));
+    }
   }
 
   async function loadTop() {
@@ -952,6 +1107,7 @@
     }
 
     refreshState();
+    loadBets();   // заодно ставит бейдж с числом ставок в игре
   }
 
   document.addEventListener("DOMContentLoaded", init);

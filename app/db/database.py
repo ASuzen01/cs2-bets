@@ -597,6 +597,53 @@ class Database:
             (user_id,),
         )
 
+    # --------------------------------------------------- история ставок игрока
+    async def user_bets_all(self, user_id: int, limit: int = 50) -> list[Any]:
+        """Все одиночные ставки игрока + матч, новые сверху."""
+        return await self._fetchall(
+            """
+            SELECT b.id, b.match_id, b.side, b.amount, b.odds, b.payout, b.created_at,
+                   m.tournament, m.team_a, m.team_b, m.start_time,
+                   m.status AS match_status, m.winner, m.finished_at
+            FROM bets b
+            JOIN matches m ON m.id = b.match_id
+            WHERE b.user_id = ?
+            ORDER BY b.id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+
+    async def user_expresses_all(self, user_id: int, limit: int = 20) -> list[Any]:
+        """Все экспрессы игрока, новые сверху."""
+        return await self._fetchall(
+            """
+            SELECT id, stake, odds, status, payout, created_at, settled_at
+            FROM expresses
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+
+    async def express_legs_many(self, express_ids: Sequence[int]) -> list[Any]:
+        """Ноги экспрессов одним запросом (для списка истории ставок)."""
+        if not express_ids:
+            return []
+        placeholders = ",".join("?" for _ in express_ids)
+        return await self._fetchall(
+            f"""
+            SELECT i.express_id, i.match_id, i.side, i.odds, i.result,
+                   m.team_a, m.team_b, m.status AS match_status, m.winner
+            FROM express_items i
+            JOIN matches m ON m.id = i.match_id
+            WHERE i.express_id IN ({placeholders})
+            ORDER BY i.id
+            """,
+            tuple(int(item) for item in express_ids),
+        )
+
     async def settle_match(
         self, match_id: int, winner: str, source: str = "manual"
     ) -> dict[str, Any]:
