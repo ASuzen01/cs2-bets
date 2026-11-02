@@ -15,7 +15,11 @@
     tab: "matches",
     live: false,
     pending: null,
+    oddsPrev: {},      // кэфы, которые уже показали: нужно, чтобы заметить сдвиг линии
+    matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
   };
+
+  const POLL_MS = 40000;  // как часто подтягиваем свежие кэфы, пока приложение открыто
 
   // ---------------------------------------------------------------- утилиты
   const $ = (sel) => document.querySelector(sel);
@@ -164,7 +168,7 @@
       return;
     }
     if (!state.matches.length) {
-      host.append(el("div", "empty", "Сейчас нет матчей с открытыми ставками.\nЛиния тир-1 обновляется каждые 90 секунд."));
+      host.append(el("div", "empty", "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."));
       return;
     }
     for (const match of state.matches) {
@@ -180,8 +184,22 @@
         const row = el("div", "team");
         const btn = el("button", "odd");
         btn.type = "button";
+        const raw = side === "a" ? match.odds_a : match.odds_b;
         const name = el("span", "name", side === "a" ? match.team_a : match.team_b);
-        const val = el("span", "val", oddsText(side === "a" ? match.odds_a : match.odds_b));
+        const val = el("span", "val", oddsText(raw));
+        const prev = state.oddsPrev[match.id + ":" + side];
+        if (prev !== undefined && Number(prev) !== Number(raw)) {
+          // линия сдвинулась: мягко подсвечиваем — вверх зелёным, вниз красным
+          const grew = Number(raw) > Number(prev);
+          const arrow = el("span", "arrow", grew ? "▲" : "▼");
+          val.classList.add(grew ? "up" : "down");
+          val.append(arrow);
+          setTimeout(() => {
+            val.classList.remove("up", "down");
+            arrow.remove();
+          }, 1400);
+        }
+        state.oddsPrev[match.id + ":" + side] = raw;
         btn.append(name, val);
         btn.addEventListener("click", () => openAmountSheet(match, side));
         row.append(btn);
@@ -800,17 +818,27 @@
     }
   }
 
-  async function refreshState() {
+  async function refreshState(options) {
+    const silent = Boolean(options && options.silent);  // тихий поллинг: без тостов об ошибках
     try {
       const data = await api("/api/state");
+      const matchesJson = JSON.stringify(data.matches);
+      const matchesChanged = matchesJson !== state.matchesJson;
+      const balanceBefore = state.user ? state.user.balance : null;
+
       state.user = data.user;
       state.matches = data.matches;
+      state.matchesJson = matchesJson;
       state.bets = data.bets;
       state.expresses = data.expresses;
       state.limits = data.limits;
       state.live = true;
+
       renderHeader();
-      renderMatches();
+      if (balanceBefore !== null && data.user && Number(data.user.balance) !== Number(balanceBefore)) {
+        setBalance(data.user.balance);   // выплата прилетела, пока экран открыт
+      }
+      if (matchesChanged) renderMatches();  // без изменений не перерисовываем: не мешаем читать
       renderCartBar();
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
@@ -821,6 +849,7 @@
         renderMatches();
         return;
       }
+      if (silent) return;  // фоновая попытка не должна ругаться на экране
       // если сервер недоступен, но данные пришли вместе со страницей — не стираем экран
       if (state.user && state.matches.length) {
         toast("Превью-режим: показан снимок данных, ставки требуют сервера", "bad");
@@ -861,6 +890,17 @@
 
     refreshState();
     loadBets();   // заодно ставит бейдж с числом ставок в игре
+
+    // автообновление: кэфы и статусы матчей подтягиваются без перезахода
+    setInterval(() => {
+      if (document.hidden) return;   // в фоне не дёргаем сервер
+      refreshState({ silent: true });
+    }, POLL_MS);
+
+    // вернулись в приложение — сразу свежая линия
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshState({ silent: true });
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);
