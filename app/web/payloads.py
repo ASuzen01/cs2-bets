@@ -21,6 +21,13 @@ def short_tournament(name: str, limit: int = 42) -> str:
 
 
 def match_payload(row: Any) -> dict[str, Any]:
+    status = str(row["status"])
+    # sqlite3.Row итерируется значениями, поэтому проверяем именно ключи
+    score_a = row["score_a"] if "score_a" in row.keys() else None  # noqa: SIM118
+    score_b = row["score_b"] if "score_b" in row.keys() else None  # noqa: SIM118
+    score = None
+    if score_a is not None and score_b is not None:
+        score = f"{int(score_a)}:{int(score_b)}"
     return {
         "id": int(row["id"]),
         "tournament": str(row["tournament"]),
@@ -30,7 +37,11 @@ def match_payload(row: Any) -> dict[str, Any]:
         "odds_a": float(row["odds_a"]),
         "odds_b": float(row["odds_b"]),
         "start_time": int(row["start_time"]),
-        "status": str(row["status"]),
+        "status": status,
+        "live": status == "live",
+        "score": score,
+        "score_a": int(score_a) if score_a is not None else None,
+        "score_b": int(score_b) if score_b is not None else None,
     }
 
 

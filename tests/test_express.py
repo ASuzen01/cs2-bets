@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from app.config import settings
 from app.db import Database, InsufficientFunds, InvalidBet, MatchNotOpen
 
 
@@ -156,7 +157,9 @@ async def test_express_insufficient_funds(db):
     assert await db.get_balance(1) == 1000
 
 
-async def test_express_legs_must_be_open(db):
+async def test_express_legs_must_be_open(db, monkeypatch):
+    """С выключенными live-ставками нога экспресса не может быть в идущем матче."""
+    monkeypatch.setattr(settings, "live_betting", False)
     m1 = await make_match(db, 1, start_in=-60)
     m2 = await make_match(db, 2)
     with pytest.raises(MatchNotOpen):
@@ -164,6 +167,18 @@ async def test_express_legs_must_be_open(db):
             1, -100, 100,
             [{"match_id": int(m1["id"]), "side": "a"}, {"match_id": int(m2["id"]), "side": "a"}],
         )
+
+
+async def test_express_can_take_live_leg(db):
+    """А с включёнными — можно собрать экспресс из матча в эфире."""
+    m1 = await make_match(db, 1, start_in=-600)
+    await db.set_status(int(m1["id"]), "live")
+    m2 = await make_match(db, 2)
+    express_id, odds, balance = await db.place_express(
+        1, -100, 100,
+        [{"match_id": int(m1["id"]), "side": "a"}, {"match_id": int(m2["id"]), "side": "a"}],
+    )
+    assert express_id > 0 and odds > 1 and balance == 900
 
 
 async def test_single_and_express_on_same_match(db):

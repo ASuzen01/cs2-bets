@@ -8,6 +8,8 @@
   const state = {
     user: boot.user || null,
     matches: boot.matches || [],
+    liveMatches: boot.live || [],   // матчи в эфире (state.live — флаг «данные загружены»)
+    segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
     limits: { min_bet: 10, max_legs: 6, max_odds: 40, daily_bonus: 250 },
@@ -151,9 +153,95 @@
     $("#balancePill").textContent = "— 🪙";
   }
 
+  function renderSegments() {
+    document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.segment === state.segment);
+    });
+    const count = state.liveMatches.length;
+    const liveBtn = document.querySelector('#matchSegments .seg[data-segment="live"]');
+    if (liveBtn) liveBtn.classList.toggle("on", count > 0);
+    const badge = $("#liveCount");
+    if (badge) badge.textContent = count ? String(count) : "";
+  }
+
+  function liveTag(text, kind) {
+    const tag = el("span", "live-tag");
+    if (kind === "live") tag.append(el("i"));
+    if (kind === "wait") tag.style.color = "var(--warn)";
+    tag.append(document.createTextNode(text));
+    return tag;
+  }
+
+  function renderCard(match) {
+    const isLive = match.status === "live";
+    const isWaiting = match.status === "awaiting";
+    const card = el("div", "card" + (isLive || isWaiting ? " live" : ""));
+
+    const top = el("div", "top");
+    if (isLive) top.append(liveTag("LIVE", "live"));
+    else if (isWaiting) top.append(liveTag("⏳ ждём результат", "wait"));
+    top.append(el("span", "tour", match.short_tournament));
+    top.append(el("span", "kick", timeText(match.start_time)));
+    card.append(top);
+
+    if (match.score) {
+      // табло: счёт по картам, чтобы было видно, как идёт матч
+      const board = el("div", "scoreline");
+      board.append(el("span", "conf", isWaiting ? "счёт в линии" : "счёт по картам"));
+      const big = el("span", "big", match.score);
+      if (match.status === "finished") big.classList.add("win");
+      board.append(big);
+      card.append(board);
+    }
+
+    const teams = el("div", "teams");
+    ["a", "b"].forEach((side) => {
+      const row = el("div", "team");
+      const btn = el("button", "odd");
+      btn.type = "button";
+      const raw = side === "a" ? match.odds_a : match.odds_b;
+      const name = el("span", "name", side === "a" ? match.team_a : match.team_b);
+      const val = el("span", "val", oddsText(raw));
+      const prev = state.oddsPrev[match.id + ":" + side];
+      if (prev !== undefined && Number(prev) !== Number(raw)) {
+        // линия сдвинулась: мягко подсвечиваем — вверх зелёным, вниз красным
+        const grew = Number(raw) > Number(prev);
+        const arrow = el("span", "arrow", grew ? "▲" : "▼");
+        val.classList.add(grew ? "up" : "down");
+        val.append(arrow);
+        setTimeout(() => {
+          val.classList.remove("up", "down");
+          arrow.remove();
+        }, 1400);
+      }
+      state.oddsPrev[match.id + ":" + side] = raw;
+      if (isWaiting || match.status === "finished" || match.status === "cancelled") {
+        btn.disabled = true;  // исход уже разыгран — ставить не на что
+      }
+      btn.append(name, val);
+      btn.addEventListener("click", () => openAmountSheet(match, side));
+      row.append(btn);
+      teams.append(row);
+    });
+    card.append(teams);
+
+    const actions = el("div", "custom");
+    actions.style.margin = "9px 0 0";
+    const add = el("button", "chip", "🎟 В экспресс");
+    add.type = "button";
+    add.addEventListener("click", () => addLeg(match));
+    if (isWaiting) add.disabled = true;
+    actions.append(add);
+    card.append(actions);
+
+    return card;
+  }
+
   function renderMatches() {
     const host = $("#matches");
     host.textContent = "";
+    renderSegments();
+
     if (!state.user) {
       const message = boot.error && /Откройте/i.test(boot.error)
         ? "Откройте приложение кнопкой в боте — тогда появятся матчи и баланс."
@@ -167,56 +255,18 @@
       host.append(card);
       return;
     }
-    if (!state.matches.length) {
-      host.append(el("div", "empty", "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."));
+
+    const liveMode = state.segment === "live";
+    const list = liveMode ? state.liveMatches : state.matches;
+
+    if (!list.length) {
+      host.append(emptyWithMascot(liveMode
+        ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
+        : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."));
       return;
     }
-    for (const match of state.matches) {
-      const card = el("div", "card");
 
-      const top = el("div", "top");
-      top.append(el("span", "tour", match.short_tournament));
-      top.append(el("span", "kick", timeText(match.start_time)));
-      card.append(top);
-
-      const teams = el("div", "teams");
-      ["a", "b"].forEach((side) => {
-        const row = el("div", "team");
-        const btn = el("button", "odd");
-        btn.type = "button";
-        const raw = side === "a" ? match.odds_a : match.odds_b;
-        const name = el("span", "name", side === "a" ? match.team_a : match.team_b);
-        const val = el("span", "val", oddsText(raw));
-        const prev = state.oddsPrev[match.id + ":" + side];
-        if (prev !== undefined && Number(prev) !== Number(raw)) {
-          // линия сдвинулась: мягко подсвечиваем — вверх зелёным, вниз красным
-          const grew = Number(raw) > Number(prev);
-          const arrow = el("span", "arrow", grew ? "▲" : "▼");
-          val.classList.add(grew ? "up" : "down");
-          val.append(arrow);
-          setTimeout(() => {
-            val.classList.remove("up", "down");
-            arrow.remove();
-          }, 1400);
-        }
-        state.oddsPrev[match.id + ":" + side] = raw;
-        btn.append(name, val);
-        btn.addEventListener("click", () => openAmountSheet(match, side));
-        row.append(btn);
-        teams.append(row);
-      });
-      card.append(teams);
-
-      const actions = el("div", "custom");
-      actions.style.margin = "9px 0 0";
-      const add = el("button", "chip", "🎟 В экспресс");
-      add.type = "button";
-      add.addEventListener("click", () => addLeg(match));
-      actions.append(add);
-      card.append(actions);
-
-      host.append(card);
-    }
+    for (const match of list) host.append(renderCard(match));
   }
 
   function cartOdds() {
@@ -403,8 +453,8 @@
     const rules = el("div", "card");
     rules.append(el("h2", null, "Правила"));
     rules.append(el("div", "hint",
-      "Матчи и кэфы — реальная линия Fonbet, только турниры тир-1 (IEM, ESL Pro League, BLAST, PGL, мейджоры). " +
-      "Кэф фиксируется в момент ставки, приём закрывается со стартом матча. " +
+      "Кэф фиксируется в момент ставки. Ставить можно и до матча, и по ходу игры — " +
+      "если линия сдвинулась после ставки, она не пересчитывается. " +
       `Выплата = ставка × кэф. Экспресс: 2–${state.limits.max_legs} исходов, кэфы перемножаются, ` +
       `потолок ${state.limits.max_odds}. Отменённый матч считается с кэфом 1.0. ` +
       "Монеты виртуальные, вывести их нельзя."));
@@ -822,12 +872,14 @@
     const silent = Boolean(options && options.silent);  // тихий поллинг: без тостов об ошибках
     try {
       const data = await api("/api/state");
-      const matchesJson = JSON.stringify(data.matches);
+      const liveMatches = data.live || [];
+      const matchesJson = JSON.stringify([data.matches, liveMatches]);
       const matchesChanged = matchesJson !== state.matchesJson;
       const balanceBefore = state.user ? state.user.balance : null;
 
       state.user = data.user;
       state.matches = data.matches;
+      state.liveMatches = liveMatches;
       state.matchesJson = matchesJson;
       state.bets = data.bets;
       state.expresses = data.expresses;
@@ -870,6 +922,15 @@
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+    document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (state.segment === btn.dataset.segment) return;
+        state.segment = btn.dataset.segment;
+        haptic("light");
+        renderMatches();
+        if (state.segment === "live") refreshState({ silent: true });  // свежий счёт сразу
+      });
     });
     $("#cartOpen").addEventListener("click", () => switchTab("express"));
     $("#sheetWrap").addEventListener("click", (event) => {

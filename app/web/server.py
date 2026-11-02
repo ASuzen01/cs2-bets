@@ -105,7 +105,7 @@ async def static_file(request: web.Request) -> web.Response:
 
 async def index(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
-    boot: dict[str, Any] = {"user": None, "matches": [], "dev": False, "error": None}
+    boot: dict[str, Any] = {"user": None, "matches": [], "live": [], "dev": False, "error": None}
 
     try:
         user = await resolve_user(request)
@@ -121,6 +121,7 @@ async def index(request: web.Request) -> web.Response:
         }
         boot["dev"] = user["dev"]
         boot["matches"] = [match_payload(row) for row in await db.open_matches(limit=60)]
+        boot["live"] = [match_payload(row) for row in await db.live_matches(limit=40)]
 
     return web.Response(text=render_index(boot), content_type="text/html")
 
@@ -145,6 +146,7 @@ async def api_state(request: web.Request) -> web.Response:
                 "dev": user["dev"],
             },
             "matches": [match_payload(row) for row in await db.open_matches(limit=60)],
+            "live": [match_payload(row) for row in await db.live_matches(limit=40)],
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "limits": {

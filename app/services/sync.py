@@ -121,6 +121,8 @@ class MatchSyncer:
                 start_time=match.start_time,
                 odds_a=odds_a,
                 odds_b=odds_b,
+                score_a=match.score_a,   # счёт по картам: нужен для live-табло
+                score_b=match.score_b,
             )
             if created:
                 stats["created"] += 1
@@ -146,6 +148,7 @@ class MatchSyncer:
                 log.warning("Не смог запостить матч #%s в чат %s: %s", match["id"], chat["chat_id"], exc)
 
     async def _close_started(self, stats: dict[str, Any]) -> None:
+        # матч переезжает из линии в live; при live_betting приём ставок при этом не закрывается
         for match in await self.db.close_started_matches():
             stats["closed"] += 1
             await self._edit_card(int(match["id"]))

@@ -15,11 +15,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from app.config import settings
 from app.db.backends import (
     SCHEMA_POSTGRES,
     SCHEMA_SQLITE,
     PostgresBackend,
     SQLiteBackend,
+)
+
+# колонки, добавленные после первых деплоев: дорисовываем их в старых базах
+MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("matches", "score_a", "ALTER TABLE matches ADD COLUMN score_a INTEGER"),
+    ("matches", "score_b", "ALTER TABLE matches ADD COLUMN score_b INTEGER"),
 )
 
 
@@ -73,6 +80,7 @@ class Database:
         if self._url.startswith(("postgres://", "postgresql://")):
             backend = await PostgresBackend.open(self._url, schema=self._schema)
             await backend.executescript(SCHEMA_POSTGRES)
+            await self._migrate(backend)
             self._backend = backend
             return
 
@@ -81,8 +89,20 @@ class Database:
         if await self._has_incompatible_matches(backend):
             await backend.executescript("DROP TABLE IF EXISTS bets; DROP TABLE IF EXISTS matches;")
         await backend.executescript(SCHEMA_SQLITE)
+        await self._migrate(backend)
         await backend.commit()
         self._backend = backend
+
+    @staticmethod
+    async def _migrate(backend: SQLiteBackend | PostgresBackend) -> None:
+        """Добавляет колонки, которых нет в старой базе (счёт по картам и т.п.)."""
+        for table, column, sql in MIGRATIONS:
+            if not await backend.has_table(table):
+                continue
+            if column in await backend.table_columns(table):
+                continue
+            await backend.execute(sql)
+        await backend.commit()
 
     @staticmethod
     async def _has_incompatible_matches(backend: SQLiteBackend) -> bool:
@@ -236,6 +256,8 @@ class Database:
         start_time: int,
         odds_a: float | None,
         odds_b: float | None,
+        score_a: int | None = None,
+        score_b: int | None = None,
     ) -> tuple[Any, bool]:
         """Возвращает (матч, создан_ли_сейчас)."""
         now = int(time.time())
@@ -244,10 +266,11 @@ class Database:
             await self.conn.execute(
                 """
                 INSERT INTO matches (fonbet_id, tournament, team_a, team_b, start_time,
-                                     odds_a, odds_b, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                                     odds_a, odds_b, score_a, score_b, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
-                (fonbet_id, tournament, team_a, team_b, start_time, odds_a, odds_b, now),
+                (fonbet_id, tournament, team_a, team_b, start_time, odds_a, odds_b,
+                 score_a, score_b, now),
             )
             await self.conn.commit()
             created = await self._fetchone(
@@ -256,15 +279,34 @@ class Database:
             assert created is not None
             return created, True
 
-        # у открытого матча обновляем кэфы (ставки уже сделанные сохраняют свой кэф)
-        if existing["status"] == "open":
+        # у матча с открытым приёмом (линия и live) обновляем кэфы:
+        # ставки, уже сделанные, сохраняют свой кэф
+        new_score_a = score_a if score_a is not None else existing["score_a"]
+        new_score_b = score_b if score_b is not None else existing["score_b"]
+
+        if existing["status"] in ("open", "live"):
             await self.conn.execute(
-                "UPDATE matches SET odds_a = ?, odds_b = ?, start_time = ? WHERE id = ?",
-                (odds_a, odds_b, start_time, existing["id"]),
+                """
+                UPDATE matches SET odds_a = ?, odds_b = ?, start_time = ?,
+                                   score_a = ?, score_b = ?
+                WHERE id = ?
+                """,
+                (odds_a, odds_b, start_time, new_score_a, new_score_b, existing["id"]),
             )
             await self.conn.commit()
             refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
             return refreshed or existing, False
+
+        if existing["status"] == "awaiting" and (score_a is not None or score_b is not None):
+            # матч доигран, ждём подтверждения исхода — обновляем хотя бы счёт
+            await self.conn.execute(
+                "UPDATE matches SET score_a = ?, score_b = ? WHERE id = ?",
+                (new_score_a, new_score_b, existing["id"]),
+            )
+            await self.conn.commit()
+            refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
+            return refreshed or existing, False
+
         return existing, False
 
     async def get_match(self, match_id: int) -> Any | None:
@@ -273,6 +315,16 @@ class Database:
     async def open_matches(self, limit: int = 10) -> list[Any]:
         return await self._fetchall(
             "SELECT * FROM matches WHERE status = 'open' ORDER BY start_time LIMIT ?", (limit,)
+        )
+
+    async def live_matches(self, limit: int = 40) -> list[Any]:
+        """Матчи, которые идут прямо сейчас или ждут подтверждения исхода."""
+        return await self._fetchall(
+            """
+            SELECT * FROM matches WHERE status IN ('live', 'awaiting')
+            ORDER BY start_time DESC LIMIT ?
+            """,
+            (limit,),
         )
 
     async def matches_by_status(self, statuses: Sequence[str]) -> list[Any]:
@@ -329,6 +381,18 @@ class Database:
         )
 
     # ------------------------------------------------------------------- bets
+    @staticmethod
+    def _betting_refusal(match: Any, now: int) -> str | None:
+        """None — ставку принять можно; иначе текст отказа для игрока."""
+        status = str(match["status"])
+        if status == "live":
+            return None if settings.live_betting else "Матч уже начался — ставки не принимаются"
+        if status == "open":
+            if settings.live_betting or int(match["start_time"]) > now:
+                return None
+            return "Матч уже начался — ставки не принимаются"
+        return "Ставки по этому матчу закрыты"
+
     async def place_bet(
         self, match_id: int, user_id: int, chat_id: int | None, side: str, amount: int
     ) -> tuple[int, float]:
@@ -344,10 +408,9 @@ class Database:
                 match = await cur.fetchone()
             if match is None:
                 raise MatchNotFound("Матч не найден")
-            if match["status"] != "open":
-                raise MatchNotOpen("Ставки по этому матчу закрыты")
-            if int(match["start_time"]) <= now:
-                raise MatchNotOpen("Матч уже начался — ставки не принимаются")
+            refusal = self._betting_refusal(match, now)
+            if refusal:
+                raise MatchNotOpen(refusal)
 
             odds = match["odds_a"] if side == "a" else match["odds_b"]
             if not odds:
@@ -411,10 +474,9 @@ class Database:
                     match = await cur.fetchone()
                 if match is None:
                     raise MatchNotFound(f"Матч #{leg['match_id']} не найден")
-                if match["status"] != "open":
-                    raise MatchNotOpen(f"Ставки на матч #{match['id']} закрыты")
-                if int(match["start_time"]) <= now:
-                    raise MatchNotOpen(f"Матч #{match['id']} уже начался")
+                refusal = self._betting_refusal(match, now)
+                if refusal:
+                    raise MatchNotOpen(f"Матч #{match['id']}: {refusal.lower()}")
                 odds = match["odds_a"] if side == "a" else match["odds_b"]
                 if not odds:
                     raise InvalidBet(f"На матч #{match['id']} нет кэфа на этот исход")

@@ -64,7 +64,12 @@
 
 <main>
   <section class="screen active" id="screen-matches">
-    <h2>Матчи</h2>
+    <div class="segments" id="matchSegments">
+      <button class="seg active" type="button" data-segment="line">Линия</button>
+      <button class="seg" type="button" data-segment="live">
+        <span class="seg-dot"></span>Live<span class="seg-count" id="liveCount"></span>
+      </button>
+    </div>
     <div id="matches"></div>
   </section>
 

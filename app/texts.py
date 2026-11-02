@@ -16,6 +16,16 @@ def money(amount: int) -> str:
 def odds(value: float | None) -> str:
     return f"{value:.2f}" if value else "—"
 
+def score_text(match: Mapping[str, Any]) -> str | None:
+    """Счёт по картам, если он уже есть в базе."""
+    keys = match.keys() if hasattr(match, "keys") else ()
+    if "score_a" not in keys or "score_b" not in keys:
+        return None
+    score_a, score_b = match["score_a"], match["score_b"]
+    if score_a is None or score_b is None:
+        return None
+    return f"{int(score_a)}:{int(score_b)}"
+
 def fmt_time(ts: int) -> str:
     """02.11 21:00 — по времени сервера."""
     return datetime.fromtimestamp(ts).strftime("%d.%m %H:%M")
@@ -57,7 +67,8 @@ def rules_text() -> str:
         "(IEM, ESL Pro League, BLAST, PGL, мейджоры, Esports World Cup). "
         "Квалифайеры, академии, 2x2 и прочий мусор отфильтрованы.\n"
         "2. Кэф фиксируется в момент ставки. Если линия сдвинулась — ваша ставка уже не меняется.\n"
-        "3. Ставки принимаются до времени начала матча. После старта приём закрывается автоматически.\n"
+        "3. Ставки принимаются и до матча, и по ходу игры. В лайве кэфы двигаются быстрее — "
+        "кэф фиксируется в момент нажатия, сдвиг линии после этого ставку не меняет.\n"
         f"4. Выплата: <code>ставка × кэф</code> при угаданном исходе, 0 при ошибке. "
         f"Минимальная ставка — {money(settings.min_bet)}.\n"
         "5. Результат бот берёт из счёта линии. Если счёт не удалось получить однозначно, "
@@ -75,9 +86,10 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
     team_b = escape(str(match["team_b"]))
     status = str(match["status"])
 
+    live_open = settings.live_betting
     head = {
         "open": "🟢 приём ставок",
-        "live": "🔴 идёт матч, ставки закрыты",
+        "live": "🔴 live · приём ставок открыт" if live_open else "🔴 идёт матч, ставки закрыты",
         "awaiting": "⏳ ждём результат",
         "finished": "🏁 рассчитан",
         "cancelled": "⚪️ отменён",
@@ -91,13 +103,17 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
         f"🕐 Начало: {fmt_time(int(match['start_time']))}",
     ]
 
+    score = score_text(match)
+    if score and status in ("live", "awaiting"):
+        lines.append(f"📊 Счёт по картам: <b>{score}</b>")
+
     if status == "finished" and match["winner"]:
         winner = team_a if match["winner"] == "a" else team_b
         lines.append(f"Победитель: <b>{winner}</b>")
 
     if with_bets:
         lines.append("")
-        if status == "open":
+        if status == "open" or (status == "live" and live_open):
             lines.append("Ставки — в приложении, кнопка ниже 👇")
         else:
             lines.append("Приём ставок закрыт · результат подтянется в приложение автоматически")

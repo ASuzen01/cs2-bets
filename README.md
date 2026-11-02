@@ -160,6 +160,7 @@ TIER1_INCLUDE=IEM,ESL Pro League,ESL One,BLAST Premier,BLAST Rivals,BLAST Bounty
 TIER1_EXCLUDE=Qualifier,Квалификац,Academy,Women,H2H,1x1,2x2,Showmatch,CCT
 ODDS_MODE=real          # real | fair
 SYNC_INTERVAL=90
+LIVE_BETTING=true       # ставки по ходу матча (false — приём только до старта)
 ```
 
 Отсекаются, например: `Counter-Strike. H2H CS. 2X2. Москва. Bo1`, `Counter-Strike. European Pro
@@ -236,6 +237,7 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 | `TIER1_INCLUDE` / `TIER1_EXCLUDE` | см. выше | фильтр турниров |
 | `ODDS_MODE` | `real` | `real` (с маржой) или `fair` (без маржи) |
 | `SYNC_INTERVAL` | 90 | период обновления линии, сек |
+| `LIVE_BETTING` | `true` | `true` — ставки по ходу матча, `false` — только до старта |
 | `RUN_MODE` | `polling` | `polling` или `webhook` |
 | `WEBHOOK_BASE_URL` / `WEBHOOK_PATH` / `WEBHOOK_SECRET` | — | для webhook |
 | `MINIAPP_URL` | пусто | публичный https-адрес приложения (кнопка и меню-кнопка) |

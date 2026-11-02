@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from app.config import settings
 from app.db import Database, InsufficientFunds, MatchAlreadySettled, MatchNotOpen
 
 
@@ -87,8 +88,19 @@ async def test_cannot_bet_more_than_balance(db):
     assert await db.get_balance(1) == 1000
 
 
-async def test_bets_blocked_after_start(db):
-    match = await _match(db, start_in=-60)  # матч уже начался
+async def test_live_match_accepts_bets(db):
+    """Live-ставки включены: матч уже начался, но приём идёт и кэф берётся текущий."""
+    match = await _match(db, start_in=-600)
+    await db.set_status(int(match["id"]), "live")
+    balance, odds = await db.place_bet(int(match["id"]), 1, -100, "a", 100)
+    assert balance == 900
+    assert odds == 1.65
+
+
+async def test_live_bets_blocked_when_disabled(db, monkeypatch):
+    monkeypatch.setattr(settings, "live_betting", False)
+    match = await _match(db, start_in=-600)
+    await db.set_status(int(match["id"]), "live")
     with pytest.raises(MatchNotOpen):
         await db.place_bet(int(match["id"]), 1, -100, "a", 100)
 
@@ -132,7 +144,7 @@ async def test_daily_bonus_cooldown(db):
     assert ok is False and wait > 0 and balance == 1250
 
 
-async def test_upsert_match_updates_odds_only_for_open(db):
+async def test_upsert_match_updates_odds_for_open_and_live(db):
     match = await _match(db)
     row, created = await db.upsert_match(
         fonbet_id=123456, tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
@@ -146,9 +158,27 @@ async def test_upsert_match_updates_odds_only_for_open(db):
     row2, _ = await db.upsert_match(
         fonbet_id=123456, tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
         team_a="Aurora", team_b="G2 Esports", start_time=int(time.time()) + 3600,
-        odds_a=1.2, odds_b=4.0,
+        odds_a=1.2, odds_b=4.0, score_a=1, score_b=0,
     )
-    assert row2["odds_a"] == 1.5  # у закрытого матча кэфы не трогаем
+    assert row2["odds_a"] == 1.2   # в лайве кэфы двигаются
+    assert row2["score_a"] == 1    # и счёт по картам сохраняется
+
+    await db.set_status(int(match["id"]), "finished")
+    row3, _ = await db.upsert_match(
+        fonbet_id=123456, tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
+        team_a="Aurora", team_b="G2 Esports", start_time=int(time.time()) + 3600,
+        odds_a=1.01, odds_b=30.0,
+    )
+    assert row3["odds_a"] == 1.2  # у рассчитанного матча кэфы не трогаем
+
+
+async def test_live_matches_list(db):
+    match = await _match(db)
+    assert await db.live_matches() == []
+
+    await db.set_status(int(match["id"]), "live")
+    live = await db.live_matches()
+    assert [int(row["id"]) for row in live] == [int(match["id"])]
 
 
 async def test_chat_autopost_toggle(db):
