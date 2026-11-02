@@ -197,6 +197,28 @@ class Database:
             await self._ledger(conn, user_id, amount, "ежедневный бонус", now)
             return True, 0, int(row["balance"]) + amount
 
+    async def find_user(self, ident: str) -> Any | None:
+        """Ищет игрока по id, @username или username — чтобы админу не переписывать цифры."""
+        ident = ident.strip().lstrip("@")
+        if not ident:
+            return None
+        if ident.lstrip("-").isdigit():
+            row = await self._fetchone("SELECT * FROM users WHERE user_id = ?", (int(ident),))
+            if row is not None:
+                return row
+        return await self._fetchone(
+            "SELECT * FROM users WHERE lower(username) = lower(?) ORDER BY last_seen_at DESC LIMIT 1",
+            (ident,),
+        )
+
+    async def recent_users(self, limit: int = 20) -> list[Any]:
+        """Последние активные игроки — удобно для начисления бонусов."""
+        return await self._fetchall(
+            "SELECT user_id, username, full_name, balance FROM users "
+            "ORDER BY last_seen_at DESC, user_id LIMIT ?",
+            (limit,),
+        )
+
     async def top_users(self, limit: int = 10) -> list[Any]:
         return await self._fetchall(
             "SELECT user_id, username, full_name, balance FROM users ORDER BY balance DESC, user_id LIMIT ?",

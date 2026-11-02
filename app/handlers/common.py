@@ -19,6 +19,7 @@ from aiogram.types import Message
 
 from app import keyboards, texts
 from app.assets import MASCOT_PATH
+from app.config import settings
 from app.db import Database
 from app.services.notify import send_with_mascot
 
@@ -62,6 +63,26 @@ async def cmd_start(message: Message, db: Database) -> None:
         await send_with_mascot(message.bot, message.chat.id, text, keyboards.app_kb())
         return
     await message.answer(text, reply_markup=keyboards.app_kb())
+
+
+@router.message(Command("me", "whoami", "id"))
+async def cmd_me(message: Message) -> None:
+    """Свой id и статус админа — по нему видно, доходят ли права."""
+    user = message.from_user
+    if user is None:
+        return
+    is_admin = user.id in settings.admin_ids_set
+    lines = [f"🆔 Твой id: <code>{user.id}</code>"]
+    if is_admin:
+        lines.append("Права админа: <b>есть</b> ✅")
+        lines.append("")
+        lines.append("Начислить монеты: <code>/grant " + str(user.id) + " 500</code>")
+        lines.append("Кому начислять: /players")
+    else:
+        lines.append("Права админа: <b>нет</b>")
+        lines.append("")
+        lines.append("Монеты начисляет админ — пришли ему свой id.")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("help", "menu", "rules"))

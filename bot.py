@@ -174,7 +174,13 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
     ).register(app, path=settings.webhook_path)
 
     async def health(_: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "mode": "webhook"})
+        # по этим полям видно, с какими настройками реально работает сервис
+        return web.json_response({
+            "ok": True,
+            "mode": "webhook",
+            "sync_interval": settings.sync_interval,
+            "live_betting": settings.live_betting,
+        })
 
     app.router.add_get("/health", health)
 

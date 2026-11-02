@@ -3,7 +3,8 @@
 В боте больше нет кнопочного меню: игроки всё делают в мини-приложении.
 У админа остаются только служебные команды и подтверждение исходов:
 
-    /grant 123456789 500   — начислить монеты
+    /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
+    /players               — список игроков с id, чтобы знать кому начислять
     /results               — матчи, которые ждут подтверждения исхода
     /stats                 — короткая сводка по базе
 
@@ -41,21 +42,53 @@ router.message.filter(IsAdmin())
 
 @router.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject, db: Database) -> None:
+    """Начислить монеты: /grant 123456789 500, /grant @nick 500 или /grant nick 500."""
     tokens = (command.args or "").split()
-    if len(tokens) != 2 or not all(token.lstrip("-").isdigit() for token in tokens):
-        await message.reply("Формат: <code>/grant 123456789 500</code>")
+    amount_token = tokens[-1] if tokens else ""
+    if len(tokens) != 2 or not amount_token.lstrip("-").isdigit():
+        await message.reply(
+            "Формат: <code>/grant 123456789 500</code> — id игрока и сумма.\n"
+            "Можно и по нику: <code>/grant @nick 500</code>.\n"
+            "Список игроков с id: /players"
+        )
         return
 
-    user_id, amount = int(tokens[0]), int(tokens[1])
-    if await db.get_user(user_id) is None:
-        await message.reply("Такого игрока ещё нет в базе — он должен сначала открыть приложение.")
+    ident, amount = tokens[0], int(amount_token)
+    user = await db.find_user(ident)
+    if user is None:
+        await message.reply(
+            f"Игрок <code>{ident}</code> не найден в базе.\n"
+            "Пусть друг откроет приложение через бота — тогда он появится в списке /players. "
+            "Свой id он может узнать командой /me."
+        )
         return
 
+    user_id = int(user["user_id"])
     balance = await db.add_coins(user_id, amount, "начисление админом")
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else f"id{user_id}")
     await message.reply(
-        f"Начислено {texts.money(amount)} игроку <code>{user_id}</code>. "
-        f"Его баланс: {texts.money(balance)}"
+        f"Начислено {texts.money(amount)} игроку <b>{name}</b> (<code>{user_id}</code>).\n"
+        f"Его баланс: <b>{texts.money(balance)}</b>"
     )
+
+
+@router.message(Command("players"))
+async def cmd_players(message: Message, db: Database) -> None:
+    """Кому начислять: последние активные игроки с id."""
+    rows = await db.recent_users(limit=25)
+    if not rows:
+        await message.answer("В базе пока нет игроков — пусть друзья откроют приложение.")
+        return
+
+    lines = ["<b>Игроки</b> (кого видел бот последним):", ""]
+    for row in rows:
+        name = row["full_name"] or (f"@{row['username']}" if row["username"] else "без имени")
+        lines.append(
+            f"<code>{int(row['user_id'])}</code> · {name} · {texts.money(int(row['balance']))}"
+        )
+    lines.append("")
+    lines.append("Начислить: <code>/grant 123456789 500</code>")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("results"))

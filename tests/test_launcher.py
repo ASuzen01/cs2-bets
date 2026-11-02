@@ -72,10 +72,14 @@ def test_start_text_has_balance_and_no_meta_phrases() -> None:
     assert "тир-1" not in lowered
 
 
-def test_rules_mention_fonbet_and_express_limit() -> None:
-    rules = texts.rules_text()
-    assert "Fonbet" in rules
+def test_rules_are_only_about_express() -> None:
+    """Правила короткие: только экспрессы, без лишней теории про линию."""
+    rules = texts.rules_text().lower()
+    assert "экспресс" in rules
     assert str(settings.max_express_legs) in rules
+    assert "fonbet" not in rules
+    assert "тир-1" not in rules
+    assert "кэф фиксируется" not in rules
 
 
 def test_confirm_result_kb_admin_callbacks() -> None:

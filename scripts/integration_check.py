@@ -171,7 +171,7 @@ async def check(bot, db, dp) -> None:
     assert buttons[0].web_app and buttons[0].web_app.url.endswith("example.onrender.com"), buttons[0]
 
     await dp.feed_update(bot, message_update(2, "/help"))
-    assert "Правила" in sent[-1], sent[-1][:80]
+    assert "Экспресс" in sent[-1], sent[-1][:80]  # /help теперь только про экспрессы
 
     await dp.feed_update(bot, message_update(3, "привет, как поставить?"))
     assert "приложении" in sent[-1], sent[-1][:80]
