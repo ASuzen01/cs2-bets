@@ -34,6 +34,10 @@ def _fake_message(text: str, chat_id: int = 777) -> Message:
 
 async def _fake_call(self: Bot, method, *args, **kwargs):
     name = type(method).__name__
+    if name == "SendPhoto":
+        sent.append(getattr(method, "caption", "") or "")
+        markups.append(getattr(method, "reply_markup", None))
+        return _fake_message(getattr(method, "caption", "") or "", int(getattr(method, "chat_id", 777)))
     if name == "SendMessage":
         sent.append(getattr(method, "text", ""))
         markups.append(getattr(method, "reply_markup", None))

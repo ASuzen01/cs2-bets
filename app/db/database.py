@@ -653,15 +653,27 @@ class Database:
             total_stake = sum(int(bet["amount"]) for bet in bets)
             paid = 0
             payouts: dict[int, int] = {}
+            settlements: list[dict[str, Any]] = []
 
             for bet in bets:
                 amount = int(bet["amount"])
-                if bet["side"] == winner:
-                    payout = round(amount * float(bet["odds"]))
+                win = bet["side"] == winner
+                payout = round(amount * float(bet["odds"])) if win else 0
+                if win:
                     paid += payout
                     payouts[int(bet["user_id"])] = payouts.get(int(bet["user_id"]), 0) + payout
-                else:
-                    payout = 0
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "chat_id": int(bet["chat_id"]) if bet["chat_id"] else None,
+                        "side": str(bet["side"]),
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": payout,
+                        "won": win,
+                    }
+                )
                 await conn.execute(
                     "UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"])
                 )
@@ -690,6 +702,9 @@ class Database:
             "bets": len(bets),
             "winners": len(payouts),
             "payouts": payouts,
+            "settlements": settlements,
+            "team_a": str(match["team_a"]),
+            "team_b": str(match["team_b"]),
             "expresses": expresses,
         }
 
@@ -708,9 +723,22 @@ class Database:
                 bets = list(await cur.fetchall())
 
             refunded = 0
+            settlements: list[dict[str, Any]] = []
             for bet in bets:
                 amount = int(bet["amount"])
                 refunded += amount
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "chat_id": int(bet["chat_id"]) if bet["chat_id"] else None,
+                        "side": str(bet["side"]),
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": amount,
+                        "won": False,
+                    }
+                )
                 await conn.execute(
                     "UPDATE bets SET payout = ? WHERE id = ?", (amount, bet["id"])
                 )
@@ -727,7 +755,14 @@ class Database:
 
             expresses = await self._resolve_expresses(conn, match_id, None)
 
-        return {"refunded": refunded, "bets": len(bets), "expresses": expresses}
+        return {
+            "refunded": refunded,
+            "bets": len(bets),
+            "settlements": settlements,
+            "team_a": str(match["team_a"]),
+            "team_b": str(match["team_b"]),
+            "expresses": expresses,
+        }
 
     # ------------------------------------------------------------------ stats
     async def stats(self) -> dict[str, int]:

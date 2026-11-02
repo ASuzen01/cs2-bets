@@ -62,6 +62,8 @@
   .money.plus{color:#69db7c}.money.minus{color:#ff8787}
 
   .empty{text-align:center;color:var(--muted);padding:34px 12px;font-size:13.5px}
+  .empty .mascot-empty{display:block;width:84px;height:84px;margin:0 auto 10px;opacity:.9;
+    filter:drop-shadow(0 6px 16px rgba(0,0,0,.45))}
 
   /* ---- история ставок ---- */
   .betcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:8px}

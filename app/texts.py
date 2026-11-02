@@ -126,6 +126,48 @@ def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
 
 # ------------------------------------------------------------------ экспрессы
 
+def bet_result(
+    *,
+    won: bool,
+    void: bool,
+    team_a: str,
+    team_b: str,
+    picked: str,
+    amount: int,
+    odds_value: float,
+    payout: int,
+    balance: int,
+    score: str | None = None,
+) -> str:
+    """Персональное сообщение игроку по его одиночной ставке."""
+    score_part = f" · {score}" if score else ""
+    head = f"{escape(str(team_a))} — {escape(str(team_b))}{score_part}"
+    stake_line = f"Ставка {money(amount)} на <b>{escape(str(picked))}</b> · кэф {odds_value:.2f}"
+
+    if void:
+        return (
+            "⚪️ <b>Ставка возвращена.</b>\n"
+            f"{head}\n"
+            "Матч отменён, ставка не считается.\n"
+            f"Возврат <b>{money(payout)}</b> · баланс <b>{money(balance)}</b>"
+        )
+
+    if won:
+        return (
+            "✅ <b>Ставка сыграла!</b>\n"
+            f"{head}\n"
+            f"{stake_line}\n"
+            f"Выплата <b>{money(payout)}</b> · баланс <b>{money(balance)}</b>"
+        )
+
+    return (
+        "❌ <b>Ставка не зашла.</b>\n"
+        f"{head}\n"
+        f"{stake_line}\n"
+        f"Ставка сгорела · баланс <b>{money(balance)}</b>"
+    )
+
+
 def express_result(express: Mapping[str, Any]) -> str:
     express_id = express["express_id"]
     stake = money(int(express["stake"]))

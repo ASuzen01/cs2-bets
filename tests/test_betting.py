@@ -157,3 +157,27 @@ async def test_chat_autopost_toggle(db):
 
     await db.set_autopost(-1001, False)
     assert await db.list_autopost_chats() == []
+
+
+async def test_settle_returns_per_bet_settlements(db) -> None:
+    """Для персональных уведомлений нужен итог по каждой ставке."""
+    await db.upsert_user(1, "a", "Первый")
+    await db.upsert_user(2, "b", "Второй")
+    match, _ = await db.upsert_match(
+        fonbet_id=900,
+        tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
+        team_a="Aurora",
+        team_b="G2 Esports",
+        start_time=int(time.time()) + 3600,
+        odds_a=1.65,
+        odds_b=2.25,
+    )
+    await db.place_bet(int(match["id"]), 1, None, "a", 100)
+    await db.place_bet(int(match["id"]), 2, None, "b", 200)
+
+    result = await db.settle_match(int(match["id"]), "a", source="manual")
+
+    settlements = {item["user_id"]: item for item in result["settlements"]}
+    assert settlements[1]["won"] is True and settlements[1]["payout"] == 165
+    assert settlements[2]["won"] is False and settlements[2]["payout"] == 0
+    assert result["team_a"] == "Aurora" and result["team_b"] == "G2 Esports"

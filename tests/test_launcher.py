@@ -90,3 +90,23 @@ def test_routers_have_no_button_ui() -> None:
     names = {router.name for router in dp.sub_routers}
     assert names == {"admin", "common", "misc"}
     assert "ui" not in names
+
+
+def test_bet_result_texts() -> None:
+    common = {
+        "team_a": "Aurora",
+        "team_b": "G2 Esports",
+        "picked": "Aurora",
+        "amount": 200,
+        "odds_value": 1.65,
+        "balance": 1580,
+        "score": "2:0",
+    }
+    won = texts.bet_result(won=True, void=False, payout=330, **common)
+    assert "Ставка сыграла" in won and "330" in won and "1\u202f580" in won
+
+    lost = texts.bet_result(won=False, void=False, payout=0, **common)
+    assert "не зашла" in lost and "сгорела" in lost
+
+    void = texts.bet_result(won=False, void=True, payout=200, **common)
+    assert "возвращена" in void and "200" in void

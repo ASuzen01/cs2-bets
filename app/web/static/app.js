@@ -120,6 +120,16 @@
     $("#balancePill").textContent = state.user ? money(state.user.balance) : "— 🪙";
   }
 
+  function emptyWithMascot(text) {
+    // пустые состояния показываем с маскотом — приложение не выглядит «сломанным»
+    const box = el("div", "empty");
+    const img = el("img", "mascot-empty");
+    img.src = "/static/mascot.png";
+    img.alt = "";
+    box.append(img, document.createTextNode(text));
+    return box;
+  }
+
   function renderFatal(message) {
     const host = $("#matches");
     host.textContent = "";
@@ -722,7 +732,7 @@
     const settled = (data && data.settled) || [];
 
     if (!open.length && !settled.length) {
-      host.append(el("div", "empty", "Ставок пока нет. Матчи → кэф → сумма."));
+      host.append(emptyWithMascot("Ставок пока нет. Матчи → кэф → сумма."));
       return;
     }
 
@@ -731,7 +741,7 @@
     openTitle.append(el("span", "tag open", String(open.length)));
     host.append(openTitle);
     if (!open.length) {
-      host.append(el("div", "empty", "Нет активных ставок."));
+      host.append(emptyWithMascot("Нет активных ставок."));
     } else {
       open.forEach((item) => host.append(renderBetCard(item)));
     }

@@ -23,6 +23,7 @@ from aiogram.types import CallbackQuery, Message
 from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
+from app.services.notify import notify_bettors
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +146,8 @@ async def cb_admin_void(callback: CallbackQuery, db: Database) -> None:
         return
 
     await callback.answer("Матч отменён")
+    if callback.bot is not None:
+        await notify_bettors(callback.bot, db, result, void=True)
     await _render(
         callback,
         f"⚪️ Матч #{match_id} отменён. Возвращено {texts.money(result['refunded'])} "

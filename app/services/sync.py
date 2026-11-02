@@ -15,6 +15,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import Database
 from app.services.fonbet import FonbetClient, FonbetMatch
+from app.services.notify import notify_bettors
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +189,9 @@ class MatchSyncer:
         chats = await self.db.chat_ids_with_bets(int(row["id"]))
         for chat_id in chats:
             await self._safe_send(chat_id, text)
+
+        # персонально каждому игроку: зашла его ставка или нет
+        await notify_bettors(self.bot, self.db, result, score=score)
 
         for express in result.get("expresses") or []:
             target = express.get("chat_id") or (chats[0] if chats else None)

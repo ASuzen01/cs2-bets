@@ -18,7 +18,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from app import keyboards, texts
+from app.assets import MASCOT_PATH
 from app.db import Database
+from app.services.notify import send_with_mascot
 
 router = Router(name="common")
 
@@ -54,10 +56,12 @@ async def cmd_start(message: Message, db: Database) -> None:
         return
 
     balance = await db.get_balance(message.from_user.id)  # заодно создаёт игрока
-    await message.answer(
-        texts.START.format(name=_name(message), balance=texts.money(balance)),
-        reply_markup=keyboards.app_kb(),
-    )
+    text = texts.START.format(name=_name(message), balance=texts.money(balance))
+    if MASCOT_PATH.is_file() and message.bot is not None:
+        # приветствие приходит картинкой с маскотом; если фото не ушло — текстом
+        await send_with_mascot(message.bot, message.chat.id, text, keyboards.app_kb())
+        return
+    await message.answer(text, reply_markup=keyboards.app_kb())
 
 
 @router.message(Command("help", "menu", "rules"))
