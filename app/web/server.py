@@ -1,10 +1,10 @@
 """HTTP-сервер мини-приложения (Telegram WebApp).
 
-Тот же SQLite, что у бота: одно состояние, разные интерфейсы.
-Запуск:  python miniapp.py   (порт MINIAPP_PORT, по умолчанию 8081)
+Только маршруты и обработчики: авторизация живёт в `auth.py`, сборка JSON — в `payloads.py`,
+разметка — в `index.html`, стили и скрипт — в `static/`.
 
-Авторизация — подписанный Telegram initData. Для локальной разработки можно задать
-MINIAPP_DEV_USER=<telegram_id>, и приложение будет работать без Telegram.
+Запуск отдельно:  python miniapp.py   (порт MINIAPP_PORT, по умолчанию 8081)
+В облаке тот же сервер поднимает бот в webhook-режиме — одна база, один процесс.
 """
 
 from __future__ import annotations
@@ -18,131 +18,40 @@ from typing import Any
 from aiohttp import web
 
 from app.config import settings
-from app.db import BettingError, Database
-from app.services.miniapp import AuthError, validate_init_data
+from app.db import Database
+from app.services.miniapp import AuthError
+from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
+from app.web.payloads import (
+    bet_payload,
+    bets_history,
+    display_name,
+    express_payload,
+    match_payload,
+)
 
 log = logging.getLogger(__name__)
 
-DB_KEY = web.AppKey("db", Database)
-USER_KEY = web.AppKey("user", dict)
-
 WEB_DIR = Path(__file__).resolve().parent
 INDEX_PATH = WEB_DIR / "index.html"
+STATIC_DIR = WEB_DIR / "static"
+
+BOOTSTRAP_MARKER = "<!-- BOOTSTRAP -->"
+ALLOWED_STATIC = {"app.css", "app.js"}
 
 
-# --------------------------------------------------------------- сериализация
-def match_payload(row: Any) -> dict[str, Any]:
-    return {
-        "id": int(row["id"]),
-        "tournament": str(row["tournament"]),
-        "short_tournament": str(row["tournament"]).split(".")[1].strip()[:42]
-        if "." in str(row["tournament"])
-        else str(row["tournament"])[:42],
-        "team_a": str(row["team_a"]),
-        "team_b": str(row["team_b"]),
-        "odds_a": float(row["odds_a"]),
-        "odds_b": float(row["odds_b"]),
-        "start_time": int(row["start_time"]),
-        "status": str(row["status"]),
-    }
-
-
-def bet_payload(row: Any) -> dict[str, Any]:
-    return {
-        "match_id": int(row["match_id"]),
-        "side": str(row["side"]),
-        "amount": int(row["amount"]),
-        "odds": float(row["odds"]),
-        "team": row["team_a"] if row["side"] == "a" else row["team_b"],
-        "team_a": row["team_a"],
-        "team_b": row["team_b"],
-        "potential": round(int(row["amount"]) * float(row["odds"])),
-    }
-
-
-def _display_name(user: dict[str, Any], row: Any = None) -> str:
-    if row is not None and row["full_name"]:
-        return str(row["full_name"])
-    if row is not None and row["username"]:
-        return f"@{row['username']}"
-    if user["full_name"]:
-        return str(user["full_name"])
-    if user["username"]:
-        return f"@{user['username']}"
-    return f"id{user['user_id']}"
-
-
-# ---------------------------------------------------------------------- auth
-async def resolve_user(request: web.Request) -> dict[str, Any]:
-    """Возвращает {user_id, username, full_name} или поднимает AuthError."""
-    init_data = (
-        request.headers.get("X-Telegram-Init-Data")
-        or request.query.get("init_data")
-        or ""
-    )
-
-    if init_data:
-        parsed = validate_init_data(init_data, settings.bot_token)
-        if not parsed["user_id"]:
-            raise AuthError("в initData нет пользователя")
-        return {
-            "user_id": parsed["user_id"],
-            "username": parsed["username"],
-            "full_name": parsed["full_name"],
-            "dev": False,
-        }
-
-    if settings.miniapp_dev_user:
-        return {
-            "user_id": settings.miniapp_dev_user,
-            "username": "dev",
-            "full_name": "Локальный игрок",
-            "dev": True,
-        }
-
-    raise AuthError("Откройте приложение кнопкой в Telegram")
-
-
-@web.middleware
-async def auth_middleware(request: web.Request, handler):  # noqa: ANN001, ANN201
-    if not request.path.startswith("/api/"):
-        return await handler(request)
-
-    try:
-        request[USER_KEY] = await resolve_user(request)
-    except AuthError as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=401)
-    return await handler(request)
-
-
-@web.middleware
-async def json_error_middleware(request: web.Request, handler):  # noqa: ANN001, ANN201
-    try:
-        return await handler(request)
-    except web.HTTPException:
-        raise
-    except BettingError as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=400)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Ошибка мини-приложения на %s", request.path)
-        return web.json_response({"ok": False, "error": f"Внутренняя ошибка: {exc}"}, status=500)
-
-
-# -------------------------------------------------------------------- routes
-MIDDLEWARES = [json_error_middleware, auth_middleware]
-
-
+# ------------------------------------------------------------------- маршруты
 def register_routes(
     app: web.Application, db: Database, *, serve_health: bool = True, index_path: str = "/"
 ) -> web.Application:
-    """Вешает API и интерфейс мини-приложения на готовое aiohttp-приложение.
-
-    Нужно, чтобы в webhook-режиме бот и приложение жили в одном процессе и делили одну базу.
-    """
+    """Вешает API и интерфейс на готовое aiohttp-приложение."""
     app[DB_KEY] = db
     if serve_health:
         app.router.add_get("/health", health)
+        app.router.add_get("/api/health", health)
+
     app.router.add_get(index_path, index)
+    app.router.add_get("/static/{name}", static_file)
+
     app.router.add_get("/api/state", api_state)
     app.router.add_post("/api/bet", api_bet)
     app.router.add_post("/api/express", api_express)
@@ -150,7 +59,6 @@ def register_routes(
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
-    app.router.add_get("/api/health", health)
     return app
 
 
@@ -165,12 +73,31 @@ async def health(_: web.Request) -> web.Response:
     return web.json_response({"ok": True, "service": "cs2-bets-miniapp", "time": int(time.time())})
 
 
-def _render_index(boot: dict[str, Any]) -> str:
+# ------------------------------------------------------------------ интерфейс
+def render_index(boot: dict[str, Any]) -> str:
+    """Подставляет стартовые данные прямо в HTML — приложению не нужен лишний запрос."""
     html = INDEX_PATH.read_text(encoding="utf-8")
     payload = json.dumps(boot, ensure_ascii=False).replace("</", "<\\/")
     injection = f"<script>window.__BOOT__ = {payload};</script>"
-    marker = "<!-- BOOTSTRAP -->"
-    return html.replace(marker, injection) if marker in html else html.replace("</head>", injection + "</head>")
+    if BOOTSTRAP_MARKER in html:
+        return html.replace(BOOTSTRAP_MARKER, injection)
+    return html.replace("</head>", injection + "</head>")
+
+
+async def static_file(request: web.Request) -> web.Response:
+    """Отдаём стили и скрипт без кеша: после деплоя клиент сразу видит новую версию."""
+    name = request.match_info["name"]
+    if name not in ALLOWED_STATIC:
+        return _bad("Нет такого файла", 404)
+    path = STATIC_DIR / name
+    if not path.is_file():
+        return _bad("Нет такого файла", 404)
+    content_type = "text/css" if name.endswith(".css") else "application/javascript"
+    return web.Response(
+        text=path.read_text(encoding="utf-8"),
+        content_type=content_type,
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 async def index(request: web.Request) -> web.Response:
@@ -184,48 +111,39 @@ async def index(request: web.Request) -> web.Response:
     else:
         if not user["dev"]:
             await db.upsert_user(user["user_id"], user["username"], user["full_name"])
-        row = await db.get_user(user["user_id"])
         boot["user"] = {
             "id": user["user_id"],
-            "name": _display_name(user, row),
+            "name": display_name(user, await db.get_user(user["user_id"])),
             "balance": await db.get_balance(user["user_id"]),
         }
         boot["dev"] = user["dev"]
         boot["matches"] = [match_payload(row) for row in await db.open_matches(limit=60)]
 
-    return web.Response(text=_render_index(boot), content_type="text/html")
+    return web.Response(text=render_index(boot), content_type="text/html")
 
 
+# ----------------------------------------------------------------------- API
 async def api_state(request: web.Request) -> web.Response:
+    """Всё для главного экрана: игрок, линия, ставки в игре, лимиты."""
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
-    if not user["dev"]:
-        await db.upsert_user(user["user_id"], user["username"], user["full_name"])
+    user_id = int(user["user_id"])
 
-    matches = [match_payload(row) for row in await db.open_matches(limit=60)]
-    bets = [bet_payload(row) for row in await db.user_active_bets(user["user_id"])]
-    expresses = [
-        {
-            "id": int(row["id"]),
-            "stake": int(row["stake"]),
-            "odds": float(row["odds"]),
-            "potential": round(int(row["stake"]) * float(row["odds"])),
-            "legs": int(row["legs"]) if "legs" in row.keys() else None,
-        }
-        for row in await db.user_open_expresses(user["user_id"])
-    ]
+    if not user["dev"]:
+        await db.upsert_user(user_id, user["username"], user["full_name"])
+
     return web.json_response(
         {
             "ok": True,
             "user": {
-                "id": user["user_id"],
-                "name": _display_name(user, await db.get_user(user["user_id"])),
-                "balance": await db.get_balance(user["user_id"]),
+                "id": user_id,
+                "name": display_name(user, await db.get_user(user_id)),
+                "balance": await db.get_balance(user_id),
                 "dev": user["dev"],
             },
-            "matches": matches,
-            "bets": bets,
-            "expresses": expresses,
+            "matches": [match_payload(row) for row in await db.open_matches(limit=60)],
+            "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
+            "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -236,19 +154,33 @@ async def api_state(request: web.Request) -> web.Response:
     )
 
 
+async def _json_body(request: web.Request) -> dict[str, Any]:
+    if not request.can_read_body:
+        return {}
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _bad(message: str, status: int = 400) -> web.Response:
+    return web.json_response({"ok": False, "error": message}, status=status)
+
+
 async def api_bet(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
 
     match_id = int(body.get("match_id") or 0)
     side = str(body.get("side") or "")
     amount = int(body.get("amount") or 0)
     if side not in ("a", "b"):
-        return web.json_response({"ok": False, "error": "Неверный исход"}, status=400)
+        return _bad("Неверный исход")
 
+    balance, odds = await db.place_bet(match_id, int(user["user_id"]), None, side, amount)
     match = await db.get_match(match_id)
-    balance, odds = await db.place_bet(match_id, user["user_id"], None, side, amount)
     return web.json_response(
         {
             "ok": True,
@@ -265,7 +197,7 @@ async def api_bet(request: web.Request) -> web.Response:
 async def api_express(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
 
     amount = int(body.get("amount") or 0)
     raw_legs = body.get("legs") or []
@@ -274,12 +206,13 @@ async def api_express(request: web.Request) -> web.Response:
         for leg in raw_legs
         if isinstance(leg, dict)
     ]
-    if not legs or any(leg["side"] not in ("a", "b") for leg in legs):
-        return web.json_response({"ok": False, "error": "Нужно минимум 2 исхода"}, status=400)
+    if len(legs) < 2 or any(leg["side"] not in ("a", "b") for leg in legs):
+        return _bad("Нужно минимум 2 исхода")
 
     express_id, odds, balance = await db.place_express(
-        user["user_id"], None, amount, legs, max_odds=settings.max_express_odds
+        int(user["user_id"]), None, amount, legs, max_odds=settings.max_express_odds
     )
+
     view_legs = []
     for leg in legs:
         match = await db.get_match(leg["match_id"])
@@ -310,14 +243,14 @@ async def api_express(request: web.Request) -> web.Response:
 async def api_bonus(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
-    ok, wait_seconds, balance = await db.daily_bonus(
-        user["user_id"], settings.daily_bonus, settings.bonus_cooldown_hours * 3600
+    received, wait_seconds, balance = await db.daily_bonus(
+        int(user["user_id"]), settings.daily_bonus, settings.bonus_cooldown_hours * 3600
     )
     return web.json_response(
         {
             "ok": True,
-            "received": ok,
-            "amount": settings.daily_bonus if ok else 0,
+            "received": received,
+            "amount": settings.daily_bonus if received else 0,
             "wait_seconds": wait_seconds,
             "balance": balance,
         }
@@ -326,6 +259,7 @@ async def api_bonus(request: web.Request) -> web.Response:
 
 async def api_top(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
+    me = int(request[USER_KEY]["user_id"])
     rows = await db.top_users(10)
     return web.json_response(
         {
@@ -333,9 +267,9 @@ async def api_top(request: web.Request) -> web.Response:
             "top": [
                 {
                     "rank": index + 1,
-                    "name": row["full_name"] or (f"@{row['username']}" if row["username"] else f"id{row['user_id']}"),
+                    "name": display_name({"user_id": me, "username": None, "full_name": None}, row),
                     "balance": int(row["balance"]),
-                    "me": int(row["user_id"]) == int(request[USER_KEY]["user_id"]),
+                    "me": int(row["user_id"]) == me,
                 }
                 for index, row in enumerate(rows)
             ],
@@ -343,138 +277,26 @@ async def api_top(request: web.Request) -> web.Response:
     )
 
 
-def _legs_word(count: int) -> str:
-    """1 исход · 2 исхода · 5 исходов."""
-    tail = count % 100
-    if 11 <= tail <= 14:
-        return "исходов"
-    tail = count % 10
-    if tail == 1:
-        return "исход"
-    if 2 <= tail <= 4:
-        return "исхода"
-    return "исходов"
-
-
-async def api_bets(request: web.Request) -> web.Response:
-    """История ставок: что ещё в игре и что уже рассчитано (одиночные + экспрессы)."""
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-
-    single_rows = await db.user_bets_all(user_id, 50)
-    express_rows = await db.user_expresses_all(user_id, 20)
-    legs = await db.express_legs_many([int(row["id"]) for row in express_rows])
-
-    legs_by_express: dict[int, list[dict[str, Any]]] = {}
-    for leg in legs:
-        legs_by_express.setdefault(int(leg["express_id"]), []).append(
-            {
-                "match_id": int(leg["match_id"]),
-                "side": str(leg["side"]),
-                "odds": float(leg["odds"]),
-                "team": str(leg["team_a"] if leg["side"] == "a" else leg["team_b"]),
-                "match": f"{leg['team_a']} — {leg['team_b']}",
-                "result": str(leg["result"]),
-                "match_status": str(leg["match_status"]),
-            }
-        )
-
-    open_items: list[dict[str, Any]] = []
-    settled_items: list[dict[str, Any]] = []
-
-    for row in single_rows:
-        side = str(row["side"])
-        team = str(row["team_a"] if side == "a" else row["team_b"])
-        amount = int(row["amount"])
-        odds_value = float(row["odds"])
-        payout = row["payout"]
-        match_status = str(row["match_status"])
-        item = {
-            "kind": "single",
-            "id": int(row["id"]),
-            "match_id": int(row["match_id"]),
-            "title": f"{row['team_a']} — {row['team_b']}",
-            "subtitle": f"Ставка на {team}",
-            "tournament": str(row["tournament"]),
-            "stake": amount,
-            "odds": round(odds_value, 2),
-            "potential": round(amount * odds_value),
-            "team": team,
-            "at": int(row["created_at"]),
-            "start_time": int(row["start_time"]),
-            "legs": [],
-        }
-        if match_status in ("open", "live", "awaiting"):
-            item["status"] = "live" if match_status == "live" else "open"
-            item["match_status"] = match_status
-            open_items.append(item)
-        else:
-            paid = int(payout or 0)
-            item["match_status"] = match_status
-            item["payout"] = paid
-            item["result"] = "void" if match_status == "cancelled" else ("won" if paid > 0 else "lost")
-            if match_status == "cancelled":
-                item["payout"] = paid or amount
-            settled_items.append(item)
-
-    for row in express_rows:
-        express_id = int(row["id"])
-        legs_list = legs_by_express.get(express_id, [])
-        stake = int(row["stake"])
-        odds_value = float(row["odds"])
-        item = {
-            "kind": "express",
-            "id": express_id,
-            "title": f"Экспресс · {len(legs_list)} {_legs_word(len(legs_list))}",
-            "subtitle": " + ".join(leg["team"] for leg in legs_list),
-            "tournament": "",
-            "stake": stake,
-            "odds": round(odds_value, 2),
-            "potential": round(stake * odds_value),
-            "at": int(row["created_at"]),
-            "legs": legs_list,
-        }
-        status = str(row["status"])
-        if status == "open":
-            item["status"] = "open"
-            open_items.append(item)
-        else:
-            item["status"] = "settled"
-            item["result"] = status  # won / lost / void
-            item["payout"] = int(row["payout"] or 0)
-            settled_items.append(item)
-
-    open_items.sort(key=lambda item: item.get("start_time") or item["at"])
-    settled_items.sort(key=lambda item: item["at"], reverse=True)
-
-    return web.json_response(
-        {
-            "ok": True,
-            "open": open_items,
-            "settled": settled_items[:30],
-            "counts": {
-                "open": len(open_items),
-                "settled": len(settled_items),
-                "won": sum(1 for item in settled_items if item.get("result") == "won"),
-                "lost": sum(1 for item in settled_items if item.get("result") == "lost"),
-            },
-        }
-    )
-
-
 async def api_history(request: web.Request) -> web.Response:
+    """Движения баланса: ставки, выплаты, бонусы."""
     db: Database = request.app[DB_KEY]
-    rows = await db.history(request[USER_KEY]["user_id"], 20)
+    rows = await db.history(int(request[USER_KEY]["user_id"]), 20)
     return web.json_response(
         {
             "ok": True,
             "items": [
-                {
-                    "delta": int(row["delta"]),
-                    "reason": str(row["reason"]),
-                    "at": int(row["created_at"]),
-                }
+                {"delta": int(row["delta"]), "reason": str(row["reason"]), "at": int(row["created_at"])}
                 for row in rows
             ],
         }
     )
+
+
+async def api_bets(request: web.Request) -> web.Response:
+    """История ставок: в игре и рассчитанные, одиночные + экспрессы."""
+    db: Database = request.app[DB_KEY]
+    payload = await bets_history(db, int(request[USER_KEY]["user_id"]))
+    return web.json_response({"ok": True, **payload})
+
+
+__all__ = ["DB_KEY", "STATIC_DIR", "USER_KEY", "build_app", "register_routes", "render_index"]

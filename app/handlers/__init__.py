@@ -14,4 +14,4 @@ def setup_handlers(dp: Dispatcher) -> None:
     dp.errors.register(on_error)
 
 
-__all__ = ["setup_handlers", "admin", "common", "misc", "on_error"]
+__all__ = ["admin", "common", "misc", "on_error", "setup_handlers"]

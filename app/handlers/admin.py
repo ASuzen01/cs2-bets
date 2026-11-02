@@ -91,12 +91,12 @@ async def _render(callback: CallbackQuery, text: str, markup: Any = None) -> Non
         return
     try:
         await message.edit_text(text, reply_markup=markup)
-    except Exception as exc:  # noqa: BLE001 — «message is not modified» и прочее не критично
+    except Exception as exc:
         if "not modified" in str(exc).lower():
             return
         try:
             await message.answer(text, reply_markup=markup)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("Не смог отрисовать админский экран: %s", exc)
 
 

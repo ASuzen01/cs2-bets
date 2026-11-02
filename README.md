@@ -95,8 +95,13 @@ telegram-bot/
 │   ├── keyboards.py          # две клавиатуры: кнопка приложения + подтверждение исхода
 │   ├── middlewares.py        # регистрация игроков и групповых чатов, анти-спам
 │   ├── web/
-│   │   ├── server.py         # HTTP/JSON API + отдача интерфейса, авторизация по initData
-│   │   └── index.html        # весь фронтенд: инлайн CSS/JS
+│   │   ├── server.py         # маршруты и обработчики API (тонкий слой)
+│   │   ├── auth.py           # авторизация по initData, единый формат ошибок
+│   │   ├── payloads.py       # сборка JSON для интерфейса
+│   │   ├── index.html        # разметка экранов
+│   │   └── static/
+│   │       ├── app.css       # все стили
+│   │       └── app.js        # вся логика интерфейса
 │   ├── db/
 │   │   ├── database.py       # матчи/ставки/экспрессы/балансы, транзакции
 │   │   └── backends.py       # SQLite и Postgres за одним интерфейсом
@@ -109,7 +114,8 @@ telegram-bot/
 │       ├── admin.py          # /results /stats /grant + подтверждение исхода
 │       ├── misc.py           # фолбэк на текст в личке
 │       └── errors.py
-├── tests/                    # 61 тест: парсер, экономика, экспрессы, API, лаунчер
+├── tests/                    # 69 тестов: парсер, экономика, экспрессы, API, лаунчер
+├── pyproject.toml            # настройки pytest и ruff
 ├── scripts/
 │   ├── smoke_check.py        # быстрая проверка сборки
 │   ├── integration_check.py  # сквозной прогон: бот-лаунчер + HTTP API
@@ -134,10 +140,12 @@ python bot.py             # бот в Telegram: /start → кнопка прил
 
 Для браузера без Telegram задайте `MINIAPP_DEV_USER=<telegram_id>` и `MINIAPP_URL=http://localhost:8081`.
 
-### Тесты
+### Тесты и линтер
 
 ```bash
-pytest -q                                        # 61 тест
+make check                                       # линтер + тесты + smoke + интеграция
+ruff check app bot.py miniapp.py scripts tests   # только линтер
+pytest -q                                        # 69 тестов
 python scripts/smoke_check.py                    # роутеры, БД, карточка матча
 python scripts/integration_check.py              # /start, /results, API, ставка
 TEST_DATABASE_URL='postgresql://...' pytest -q   # тот же набор на Postgres

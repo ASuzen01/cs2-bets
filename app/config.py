@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -113,24 +112,9 @@ class Settings(BaseSettings):
         return value
 
     @property
-    def miniapp_enabled(self) -> bool:
-        return self._normalize_url(self.miniapp_url).startswith("https://")
-
-    @property
-    def webhook_url(self) -> str:
-        base = self.webhook_base_url.strip().rstrip("/")
-        if base and not base.startswith(("http://", "https://")):
-            base = f"https://{base}"
-        return f"{base}{self.webhook_path}"
-
-    @property
     def db_file(self) -> Path:
         path = Path(self.db_path)
         return path if path.is_absolute() else BASE_DIR / path
-
-    @property
-    def use_postgres(self) -> bool:
-        return self.database_url.startswith(("postgres://", "postgresql://"))
 
     def validate_for_run(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:

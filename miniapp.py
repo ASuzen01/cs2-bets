@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from aiohttp import web
@@ -52,7 +53,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())
-    except KeyboardInterrupt:
-        pass

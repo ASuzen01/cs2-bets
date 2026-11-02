@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from html import escape
-from typing import Any, Mapping
+from typing import Any
 
 from app.config import settings
 
@@ -12,26 +13,18 @@ from app.config import settings
 def money(amount: int) -> str:
     return f"{amount:,}".replace(",", "\u202f") + f" {settings.currency}"
 
-
 def odds(value: float | None) -> str:
     return f"{value:.2f}" if value else "—"
-
 
 def fmt_time(ts: int) -> str:
     """02.11 21:00 — по времени сервера."""
     return datetime.fromtimestamp(ts).strftime("%d.%m %H:%M")
-
-
-def fmt_dt(ts: int) -> str:
-    return datetime.fromtimestamp(ts).strftime("%d.%m %H:%M")
-
 
 def short_tournament(name: str) -> str:
     """'Counter-Strike. IEM Пекин. Групповой этап. Bo3' -> 'IEM Пекин · Bo3'."""
     parts = [part.strip() for part in name.split(".") if part.strip()]
     parts = [part for part in parts if part.lower() not in ("counter-strike", "cs2")]
     return " · ".join(parts[:2]) if parts else name
-
 
 START = """🎯 <b>CS2 BETS</b> — ставки виртуальными монетами на реальные матчи CS2.
 
@@ -45,8 +38,6 @@ START = """🎯 <b>CS2 BETS</b> — ставки виртуальными мон
 Открывай приложение — кнопка ниже 👇
 """
 
-
-
 GROUP_START = """🎯 <b>CS2 BETS</b> — ставки на реальные матчи CS2.
 
 {name}, привет! Все матчи, кэфы, экспрессы и баланс — в приложении.
@@ -58,9 +49,6 @@ GROUP_START = """🎯 <b>CS2 BETS</b> — ставки на реальные м�
 GROUP_HINT = "Ставки и баланс — в приложении: жми кнопку ниже, откроется бот с кнопкой приложения."
 
 ERROR_TEXT = "😔 Что-то сломалось на моей стороне. Уже смотрю логи, попробуй ещё раз."
-
-
-
 
 def rules_text() -> str:
     return (
@@ -85,7 +73,6 @@ def rules_text() -> str:
         "Кэфы букмекера включают маржу, поэтому в среднем игра идёт с небольшим минусом — "
         "как в реальном беттинге, только на виртуальные монеты."
     )
-
 
 def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
     team_a = escape(str(match["team_a"]))
@@ -120,8 +107,6 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
             lines.append("Приём ставок закрыт · результат подтянется в приложение автоматически")
     return "\n".join(lines)
 
-
-
 def settled_text(result: Mapping[str, Any], match_id: int, score: str | None = None) -> str:
     score_part = f" ({score})" if score else ""
     return (
@@ -129,7 +114,6 @@ def settled_text(result: Mapping[str, Any], match_id: int, score: str | None = N
         f"Выплачено: {money(int(result['paid']))} · ставок: {result['bets']} · "
         f"угадали: {result['winners']}"
     )
-
 
 def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
     score_part = f"\nСчёт в линии: <b>{score}</b>" if score else ""
@@ -139,7 +123,6 @@ def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
         f"{escape(str(match['team_a']))} 🆚 {escape(str(match['team_b']))}\n"
         "Админ, подтверди исход кнопкой ниже 👇"
     )
-
 
 # ------------------------------------------------------------------ экспрессы
 
@@ -164,16 +147,3 @@ def express_result(express: Mapping[str, Any]) -> str:
         f"🎟 Экспресс #{express_id} возвращён (все матчи отменены).\n"
         f"Возврат: <b>{money(int(express['payout']))}</b>"
     )
-
-
-# ------------------------------------------------------- экраны (кнопочный UI)
-
-
-
-
-
-
-
-
-
-    return "\n".join(lines)

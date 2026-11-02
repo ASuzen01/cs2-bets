@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import aiosqlite
 
@@ -120,7 +121,7 @@ class Query:
         self._runner = runner
         self._rows: Rows | None = None
 
-    async def _resolve(self) -> "Rows":
+    async def _resolve(self) -> Rows:
         if self._rows is None:
             self._rows = await self._runner()
         return self._rows
@@ -128,7 +129,7 @@ class Query:
     def __await__(self):
         return self._resolve().__await__()
 
-    async def __aenter__(self) -> "Rows":
+    async def __aenter__(self) -> Rows:
         return await self._resolve()
 
     async def __aexit__(self, *exc_info: Any) -> bool:
@@ -155,7 +156,7 @@ class Rows:
     async def fetchall(self) -> list[Any]:
         return list(self._rows)
 
-    async def __aenter__(self) -> "Rows":
+    async def __aenter__(self) -> Rows:
         return self
 
     async def __aexit__(self, *exc_info: Any) -> bool:
@@ -177,7 +178,7 @@ class SQLiteBackend:
         self._conn = conn
 
     @classmethod
-    async def open(cls, path: str | Path) -> "SQLiteBackend":
+    async def open(cls, path: str | Path) -> SQLiteBackend:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(path)
         conn.row_factory = aiosqlite.Row
@@ -232,7 +233,7 @@ class PostgresBackend:
         self._conn = conn
 
     @classmethod
-    async def open(cls, dsn: str, *, schema: str = "") -> "PostgresBackend":
+    async def open(cls, dsn: str, *, schema: str = "") -> PostgresBackend:
         import psycopg
         from psycopg.rows import dict_row
 
@@ -302,13 +303,13 @@ class PostgresBackend:
     async def commit(self) -> None:
         try:
             await self._conn.commit()
-        except Exception as exc:  # noqa: BLE001 — autocommit-режим, коммитить нечего
+        except Exception as exc:
             log.debug("commit: %s", exc)
 
     async def rollback(self) -> None:
         try:
             await self._conn.rollback()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("rollback: %s", exc)
 
     async def close(self) -> None:

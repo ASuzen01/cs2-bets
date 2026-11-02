@@ -12,9 +12,10 @@ URL-кнопка на диплинк `https://t.me/<бот>?start=app` — че�
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import settings
@@ -69,4 +70,4 @@ def confirm_result_kb(match: Mapping[str, Any]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-__all__ = ["app_kb", "app_url", "deep_link", "confirm_result_kb"]
+__all__ = ["app_kb", "app_url", "confirm_result_kb", "deep_link"]

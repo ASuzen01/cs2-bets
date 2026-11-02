@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatType

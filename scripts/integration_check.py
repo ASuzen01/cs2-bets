@@ -17,11 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aiogram import Bot  # noqa: E402
-from aiogram.types import Chat, Message, Update  # noqa: E402
-from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
+from aiogram import Bot
+from aiogram.types import Chat, Message, Update
+from aiohttp.test_utils import TestClient, TestServer
 
-from app.config import settings  # noqa: E402
+from app.config import settings
 
 sent: list[str] = []
 edits: list[str] = []
@@ -32,7 +32,7 @@ def _fake_message(text: str, chat_id: int = 777) -> Message:
     return Message.model_construct(message_id=1, date=0, chat=Chat(id=chat_id, type="private"), text=text)
 
 
-async def _fake_call(self: Bot, method, *args, **kwargs):  # noqa: ANN001, ANN002
+async def _fake_call(self: Bot, method, *args, **kwargs):
     name = type(method).__name__
     if name == "SendMessage":
         sent.append(getattr(method, "text", ""))
@@ -118,10 +118,9 @@ async def main() -> None:
     settings.miniapp_startapp = False
     settings.miniapp_dev_user = 0  # dev-режим без initData выключаем, проверяем настоящую авторизацию
 
-    from bot import create_bot, create_dispatcher  # noqa: PLC0415
-    from app.db import Database  # noqa: PLC0415
-    from app.services.sync import MatchSyncer  # noqa: PLC0415
-    from app.web.server import build_app  # noqa: PLC0415
+    from app.db import Database
+    from app.services.sync import MatchSyncer
+    from bot import create_bot, create_dispatcher
 
     Path("data/_integration.db").unlink(missing_ok=True)
     Bot.__call__ = _fake_call  # type: ignore[method-assign]
@@ -144,7 +143,7 @@ async def main() -> None:
             Path(f"data/_integration.db{suffix}").unlink(missing_ok=True)
 
 
-async def check(bot, db, dp) -> None:  # noqa: ANN001
+async def check(bot, db, dp) -> None:
 
     now = int(time.time())
     first, _ = await db.upsert_match(
@@ -194,7 +193,7 @@ async def check(bot, db, dp) -> None:  # noqa: ANN001
     assert any("рассчитан" in text.lower() for text in edits + sent), "исход не подтвердился"
 
     # --- HTTP API мини-приложения ------------------------------------------
-    from app.web.server import build_app  # noqa: PLC0415
+    from app.web.server import build_app
 
     web = build_app(db)
     init = signed_init_data(settings.bot_token, 777, "Антон")

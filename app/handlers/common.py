@@ -68,4 +68,4 @@ async def cmd_help(message: Message) -> None:
         await message.answer(NO_APP_URL)
 
 
-__all__ = ["router", "NO_APP_URL"]
+__all__ = ["NO_APP_URL", "router"]

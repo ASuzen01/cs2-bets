@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [".venv", "data", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",    # длину строк держим на усмотрение
+    "B008",    # вызов функции в дефолте — так устроен aiohttp
+    "RUF001",  # кириллица в строках — это нормально для проекта
+    "RUF002",
+    "RUF003",
+    "SIM108",  # тернарник не всегда читаемее
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"scripts/*" = ["C901"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

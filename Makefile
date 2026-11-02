@@ -1,4 +1,4 @@
-.PHONY: install run miniapp test smoke integration check
+.PHONY: install run miniapp test smoke integration lint check
 
 install:
 	python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
@@ -18,4 +18,8 @@ smoke:
 integration:
 	.venv/bin/python scripts/integration_check.py
 
-check: test smoke integration
+lint:
+	.venv/bin/python -m ruff check app bot.py miniapp.py scripts tests
+	.venv/bin/python -m ruff format --check app bot.py miniapp.py scripts tests || true
+
+check: lint test smoke integration

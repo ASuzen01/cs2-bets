@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import uuid
+
 import pytest
 
 from app.db import Database
@@ -19,9 +20,8 @@ PG_URL = os.getenv("TEST_DATABASE_URL", "").strip()
 def _admin_execute(sql: str) -> None:
     import psycopg
 
-    with psycopg.connect(PG_URL, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
+    with psycopg.connect(PG_URL, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(sql)
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def database_backend(monkeypatch):
 
     original_init = Database.__init__
 
-    def init(self, path=None, *, start_balance: int = 1000, url: str = "", schema_: str = "", **kwargs):  # noqa: ANN001
+    def init(self, path=None, *, start_balance: int = 1000, url: str = "", schema_: str = "", **kwargs):
         original_init(self, path, start_balance=start_balance, url=PG_URL, schema=schema)
 
     # тесты вызывают Database(path, start_balance=...)

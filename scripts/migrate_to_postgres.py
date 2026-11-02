@@ -19,8 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings  # noqa: E402
-from app.db import Database  # noqa: E402
+from app.config import settings
+from app.db import Database
 
 
 def read_sqlite(path: Path) -> tuple[list[sqlite3.Row], list[sqlite3.Row], list[sqlite3.Row]]:

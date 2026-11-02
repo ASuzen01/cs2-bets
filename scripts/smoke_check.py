@@ -12,16 +12,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings  # noqa: E402
-from app.db import Database  # noqa: E402
-from app.texts import match_card  # noqa: E402
+from app.config import settings
+from app.db import Database
+from app.texts import match_card
 
 
 async def main() -> None:
     settings.bot_token = "123456:SMOKE-TEST"
 
-    from bot import create_bot, create_dispatcher  # импорт после подстановки токена
     from app.services.sync import MatchSyncer
+    from bot import create_bot, create_dispatcher  # импорт после подстановки токена
 
     bot = create_bot()
     db = Database(Path("data/_smoke.db"), start_balance=settings.start_balance)

@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence
+from typing import Any
 
 from app.db.backends import (
     SCHEMA_POSTGRES,
@@ -20,6 +21,7 @@ from app.db.backends import (
     PostgresBackend,
     SQLiteBackend,
 )
+
 
 class BettingError(Exception):
     """Игровая ошибка, текст можно показывать пользователю."""
@@ -66,10 +68,6 @@ class Database:
         if self._backend is None:
             raise RuntimeError("Database.connect() не был вызван")
         return self._backend
-
-    @property
-    def backend_name(self) -> str:
-        return self._backend.name if self._backend else "none"
 
     async def connect(self) -> None:
         if self._url.startswith(("postgres://", "postgresql://")):
@@ -214,9 +212,6 @@ class Database:
         )
         await self.conn.commit()
 
-    async def get_chat(self, chat_id: int) -> Any | None:
-        return await self._fetchone("SELECT * FROM chats WHERE chat_id = ?", (chat_id,))
-
     async def set_autopost(self, chat_id: int, enabled: bool) -> None:
         await self.conn.execute(
             """
@@ -274,9 +269,6 @@ class Database:
 
     async def get_match(self, match_id: int) -> Any | None:
         return await self._fetchone("SELECT * FROM matches WHERE id = ?", (match_id,))
-
-    async def get_match_by_fonbet(self, fonbet_id: int) -> Any | None:
-        return await self._fetchone("SELECT * FROM matches WHERE fonbet_id = ?", (fonbet_id,))
 
     async def open_matches(self, limit: int = 10) -> list[Any]:
         return await self._fetchall(
@@ -483,7 +475,7 @@ class Database:
         )
 
     async def _resolve_expresses(
-        self, conn: aiosqlite.Connection, match_id: int, winner: str | None
+        self, conn: Any, match_id: int, winner: str | None
     ) -> list[dict[str, Any]]:
         """Обновляет ноги экспрессов после расчёта матча (winner=None — матч отменён)."""
         async with conn.execute(
@@ -579,12 +571,6 @@ class Database:
             (match_id,),
         )
         return [int(row["chat_id"]) for row in rows]
-
-    async def user_bets_on_match(self, match_id: int, user_id: int) -> list[Any]:
-        return await self._fetchall(
-            "SELECT * FROM bets WHERE match_id = ? AND user_id = ? ORDER BY id",
-            (match_id, user_id),
-        )
 
     async def user_active_bets(self, user_id: int) -> list[Any]:
         return await self._fetchall(

@@ -162,7 +162,8 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
     from aiohttp import web
 
-    from app.web.server import MIDDLEWARES, register_routes
+    from app.web.auth import MIDDLEWARES
+    from app.web.server import register_routes
 
     app = web.Application(middlewares=list(MIDDLEWARES))
 
@@ -205,7 +206,7 @@ def acquire_single_instance_lock() -> None:
             "Уже запущен другой экземпляр бота (%s). Второй polling получит 409 — выходим.",
             lock_path,
         )
-        raise SystemExit(2)
+        raise SystemExit(2) from None
 
     handle.seek(0)
     handle.truncate()

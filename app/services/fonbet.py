@@ -20,8 +20,9 @@ import asyncio
 import gzip
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import aiohttp
 
@@ -52,10 +53,6 @@ class FonbetMatch:
     finished: bool = False
 
     @property
-    def has_odds(self) -> bool:
-        return bool(self.odds_a and self.odds_b)
-
-    @property
     def score_text(self) -> str | None:
         if self.score_a is None or self.score_b is None:
             return None
@@ -72,9 +69,7 @@ def is_tier1(tournament: str, include: Iterable[str], exclude: Iterable[str]) ->
     name = tournament.lower()
     if not any(word.strip().lower() and word.strip().lower() in name for word in include):
         return False
-    if any(word.strip().lower() and word.strip().lower() in name for word in exclude):
-        return False
-    return True
+    return not any(word.strip().lower() and word.strip().lower() in name for word in exclude)
 
 
 class FonbetClient:
@@ -114,10 +109,9 @@ class FonbetClient:
         """Скачивает и распаковывает пакет линии."""
         url = f"{self._base}/events/listBase"
         params = {"scopeMarket": self._scope, "lang": "ru"}
-        async with self._lock:  # не ддосим: один запрос за раз
-            async with self.session.get(url, params=params) as response:
-                response.raise_for_status()
-                raw = await response.read()
+        async with self._lock, self.session.get(url, params=params) as response:
+            response.raise_for_status()  # не ддосим: один запрос за раз
+            raw = await response.read()
         if raw[:2] == b"\x1f\x8b":  # сервер отдаёт gzip без Content-Encoding
             raw = gzip.decompress(raw)
         packet = json.loads(raw)
@@ -141,7 +135,7 @@ class FonbetClient:
         factors = {b["e"]: b.get("factors", []) for b in packet.get("customFactors", []) if "e" in b}
         miscs = {m["id"]: m for m in packet.get("eventMiscs", []) if "id" in m}
         lives = {
-            l["eventId"]: l for l in packet.get("liveEventInfos", []) if "eventId" in l
+            info["eventId"]: info for info in packet.get("liveEventInfos", []) if "eventId" in info
         }
 
         result: list[FonbetMatch] = []
