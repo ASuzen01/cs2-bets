@@ -100,6 +100,7 @@ async def on_startup(
     syncer.start()
 
     me = await bot.get_me()
+    settings.bot_username = me.username or ""   # для ссылок-входов из групповых чатов
     log.info("Запущен @%s (id %s), режим: %s", me.username, me.id, settings.run_mode)
 
     await _set_commands(bot)

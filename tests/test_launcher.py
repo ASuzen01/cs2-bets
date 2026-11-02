@@ -28,6 +28,38 @@ def test_app_kb_without_url(monkeypatch: pytest.MonkeyPatch) -> None:
     assert keyboards.app_kb() is None
 
 
+def test_group_kb_is_url_button(miniapp_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """В группе web_app-кнопка не отрисовывается — отдаём ссылку на бота."""
+    monkeypatch.setattr(settings, "bot_username", "Happy_ludka_bot")
+    monkeypatch.setattr(settings, "miniapp_startapp", False)
+    markup = keyboards.app_kb(group=True)
+    assert markup is not None
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    assert len(buttons) == 1
+    assert buttons[0].web_app is None, "в группе web_app-кнопку Telegram не покажет"
+    assert buttons[0].url == "https://t.me/Happy_ludka_bot?start=app"
+
+
+def test_group_kb_startapp_variant(miniapp_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "bot_username", "Happy_ludka_bot")
+    monkeypatch.setattr(settings, "miniapp_startapp", True)
+    markup = keyboards.app_kb(group=True)
+    assert markup is not None
+    url = markup.inline_keyboard[0][0].url
+    assert url == "https://t.me/Happy_ludka_bot?startapp=app"
+
+
+def test_group_kb_without_username(miniapp_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "bot_username", "")
+    assert keyboards.app_kb(group=True) is None
+
+
+def test_group_start_text() -> None:
+    text = texts.GROUP_START.format(name="Антон")
+    assert "приложени" in text.lower()
+    assert "баланс" in text.lower()
+
+
 def test_start_text_has_balance_and_no_buttons_hint() -> None:
     text = texts.START.format(name="Антон", balance=texts.money(1250))
     assert "Антон" in text

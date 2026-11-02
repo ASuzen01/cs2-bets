@@ -48,14 +48,22 @@ def _user(user_id: int = 777) -> dict:
     return {"id": user_id, "is_bot": False, "first_name": "Антон", "username": "sap", "language_code": "ru"}
 
 
-def message_update(update_id: int, text: str, user_id: int = 777) -> Update:
+def message_update(
+    update_id: int, text: str, user_id: int = 777, chat_type: str = "private"
+) -> Update:
+    chat_id = user_id if chat_type == "private" else -100100
+    chat = {"id": chat_id, "type": chat_type}
+    if chat_type == "private":
+        chat["first_name"] = "Антон"
+    else:
+        chat["title"] = "Дружеский чат"
     return Update.model_validate(
         {
             "update_id": update_id,
             "message": {
                 "message_id": update_id,
                 "date": int(time.time()),
-                "chat": {"id": user_id, "type": "private", "first_name": "Антон"},
+                "chat": chat,
                 "from": _user(user_id),
                 "text": text,
                 "entities": (
@@ -106,6 +114,8 @@ async def main() -> None:
     settings.admin_ids = "777"
     settings.db_path = "data/_integration.db"
     settings.miniapp_url = "https://example.onrender.com"
+    settings.bot_username = "Happy_ludka_bot"
+    settings.miniapp_startapp = False
     settings.miniapp_dev_user = 0  # dev-режим без initData выключаем, проверяем настоящую авторизацию
 
     from bot import create_bot, create_dispatcher  # noqa: PLC0415
@@ -162,6 +172,14 @@ async def check(bot, db, dp) -> None:  # noqa: ANN001
 
     await dp.feed_update(bot, message_update(3, "привет, как поставить?"))
     assert "приложении" in sent[-1], sent[-1][:80]
+
+    # --- группа: web_app-кнопка там не работает, отдаём ссылку на бота --------
+    await dp.feed_update(bot, message_update(30, "/start", user_id=501, chat_type="group"))
+    group_markup = markups[-1]
+    assert group_markup is not None, "в группе нет кнопки входа"
+    group_button = group_markup.inline_keyboard[0][0]
+    assert group_button.web_app is None, "в группе web_app-кнопка не отрисуется"
+    assert group_button.url == "https://t.me/Happy_ludka_bot?start=app", group_button.url
 
     # --- админ: подтверждение исхода кнопкой -------------------------------
     await db.set_status(int(first["id"]), "awaiting")
@@ -223,6 +241,7 @@ async def check(bot, db, dp) -> None:  # noqa: ANN001
         assert index.status == 200 and "<html" in (await index.text()).lower()
 
     print(f"OK: /start отдаёт одну кнопку приложения ({buttons[0].web_app.url})")
+    print(f"OK: в группе вход через {group_button.url}")
     print("OK: /help, фолбэк на текст, /results и подтверждение исхода")
     print(f"OK: API /health, 401 без подписи, /api/state → баланс {balance_before}")
     print(f"OK: ставка 250 · кэф 2.00 → баланс {bet_body['balance']}")

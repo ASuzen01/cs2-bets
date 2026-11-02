@@ -131,7 +131,7 @@ class MatchSyncer:
                 stats["updated"] += 1
 
     async def _post_card(self, match: Any, chats: list[Any]) -> None:
-        markup = keyboards.app_kb()
+        markup = keyboards.app_kb(group=True)  # в группе web_app-кнопка не отрисуется
         for index, chat in enumerate(chats):
             try:
                 message = await self.bot.send_message(
@@ -221,7 +221,7 @@ class MatchSyncer:
                 chat_id=chat_id,
                 message_id=int(row["posted_message_id"]),
                 text=texts.match_card(row),
-                reply_markup=keyboards.app_kb(),
+                reply_markup=keyboards.app_kb(group=True),
             )
         except TelegramAPIError as exc:
             log.debug("Карточка матча #%s не обновилась: %s", match_id, exc)

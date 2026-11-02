@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     miniapp_port: int = 8081
     miniapp_dev_user: int = 0    # локальная разработка: id игрока, если Telegram initData нет
     miniapp_title: str = "CS2 BETS"
+    bot_username: str = ""       # заполняется на старте: нужен для ссылки-входа из групп
+    miniapp_startapp: bool = False  # true → в группах ссылка t.me/бот?startapp=… (нужен Main Mini App в BotFather)
 
     # --- Прочее ---
     db_path: str = "data/bot.db"
