@@ -73,8 +73,8 @@
   .odd .val{font-variant-numeric:tabular-nums;font-weight:800;color:#8ecbff;
     border-radius:8px;padding:1px 5px;margin-right:-5px;transition:color .3s,background .3s}
   /* мягкая вспышка при движении линии: зелёная — кэф вырос, красная — упал */
-  .odd .val.up{animation:odds-up 1.3s ease-out}
-  .odd .val.down{animation:odds-down 1.3s ease-out}
+  .odd .val.up,.rowcard .val.up{animation:odds-up 1.3s ease-out}
+  .odd .val.down,.rowcard .val.down{animation:odds-down 1.3s ease-out}
   @keyframes odds-up{
     0%{background:#1f5a34;color:#c6f6d5}
     55%{background:rgba(55,178,77,.22);color:#8fe3a5}
@@ -97,6 +97,13 @@
   .rowcard .grow{flex:1;min-width:0}
   .rowcard .grow b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rowcard .grow span{font-size:11.5px;color:var(--muted)}
+  /* корзина экспресса: кэф исхода и подсветка, если линия сдвинулась */
+  .rowcard .val{font-variant-numeric:tabular-nums;font-weight:800;font-size:14px;color:#8ecbff;
+    border-radius:8px;padding:2px 6px;transition:color .3s,background .3s}
+  .rowcard .val .arrow{font-size:9.5px;margin-left:3px;vertical-align:1.5px;opacity:.9}
+  .rowcard .was{font-size:11.5px;color:var(--muted);text-decoration:line-through}
+  .rowcard.missing{border-color:#5a2b2b}
+  .rowcard.missing .grow span{color:#ff9e9e}
   .money{font-weight:800;font-variant-numeric:tabular-nums}
   .money.plus{color:#69db7c}.money.minus{color:#ff8787}
 

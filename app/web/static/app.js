@@ -273,6 +273,42 @@
     return state.cart.reduce((acc, leg) => acc * Number(leg.odds), 1);
   }
 
+  function syncCart() {
+    // подтягивает в корзину свежие кэфы: если линия сдвинулась — нога подсветится
+    if (!state.cart.length) return false;
+    const byId = new Map();
+    for (const match of state.matches) byId.set(match.id, match);
+    for (const match of state.liveMatches) byId.set(match.id, match);
+
+    let changed = false;
+    state.cart.forEach((leg) => {
+      const match = byId.get(leg.match_id);
+      if (!match) {
+        // матч ушёл из линии (рассчитан или отменён) — ставить такой экспресс нельзя
+        if (!leg.missing) {
+          leg.missing = true;
+          changed = true;
+        }
+        return;
+      }
+      if (leg.missing) {
+        delete leg.missing;
+        changed = true;
+      }
+      const current = Number(leg.side === "a" ? match.odds_a : match.odds_b);
+      if (!current) return;
+      const previous = Number(leg.odds);
+      if (current !== previous) {
+        leg.odds = current;
+        if (leg.base === undefined) leg.base = previous;
+        leg.flash = { dir: current > previous ? "up" : "down", at: Date.now() };
+        changed = true;
+      }
+    });
+    if (changed) saveCart();
+    return changed;
+  }
+
   function renderCartBar() {
     const bar = $("#cartbar");
     const count = state.cart.length;
@@ -302,12 +338,35 @@
 
     const card = el("div", "card");
     state.cart.forEach((leg, index) => {
-      const row = el("div", "rowcard");
+      const row = el("div", "rowcard" + (leg.missing ? " missing" : ""));
       row.style.margin = "0 0 8px";
       const num = el("div", "rank", String(index + 1));
       const grow = el("div", "grow");
       grow.append(el("b", null, leg.team));
-      grow.append(el("span", null, `${leg.tournament || ""} · кэф ${oddsText(leg.odds)}`));
+
+      const sub = el("span", null, leg.missing
+        ? "матч уже не в линии — убери исход"
+        : (leg.tournament || ""));
+      if (!leg.missing && leg.base !== undefined && Number(leg.base) !== Number(leg.odds)) {
+        // кэф сдвинулся после добавления: показываем, с какого значения
+        sub.append(document.createTextNode(" · было "));
+        sub.append(el("span", "was", oddsText(leg.base)));
+      }
+      grow.append(sub);
+
+      const val = el("span", "val", oddsText(leg.odds));
+      if (leg.flash && Date.now() - leg.flash.at < 1600) {
+        const arrow = el("span", "arrow", leg.flash.dir === "up" ? "▲" : "▼");
+        val.classList.add(leg.flash.dir);
+        val.append(arrow);
+        const flashAt = leg.flash.at;
+        setTimeout(() => {
+          val.classList.remove("up", "down");
+          arrow.remove();
+          if (leg.flash && leg.flash.at === flashAt) delete leg.flash;
+        }, 1400);
+      }
+
       const del = el("button", "chip", "✕");
       del.type = "button";
       del.addEventListener("click", () => {
@@ -315,7 +374,7 @@
         saveCart(); renderExpress(); renderCartBar();
         haptic("light");
       });
-      row.append(num, grow, del);
+      row.append(num, grow, val, del);
       card.append(row);
     });
 
@@ -328,8 +387,14 @@
     }
     card.append(summary);
 
+    const broken = state.cart.some((leg) => leg.missing);
+    if (broken) {
+      summary.append(el("div", "hint", "Один из матчей уже не в линии — убери его, иначе экспресс не собрать."));
+    }
+
     const place = el("button", "btn", "Поставить экспресс");
     place.type = "button";
+    place.disabled = broken;
     place.addEventListener("click", () => openExpressSheet());
     card.append(place);
 
@@ -662,7 +727,8 @@
           match_id: match.id,
           side,
           team,
-          odds: odd,
+          odds: odd,     // текущий кэф исхода
+          base: odd,     // кэф в момент добавления: показываем «было», если линия сдвинулась
           tournament: match.short_tournament,
         });
         saveCart();
@@ -890,6 +956,7 @@
       if (balanceBefore !== null && data.user && Number(data.user.balance) !== Number(balanceBefore)) {
         setBalance(data.user.balance);   // выплата прилетела, пока экран открыт
       }
+      syncCart();  // кэфы в корзине экспресса живут вместе с линией
       if (matchesChanged) renderMatches();  // без изменений не перерисовываем: не мешаем читать
       renderCartBar();
       if (state.tab === "express") renderExpress();
