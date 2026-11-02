@@ -95,3 +95,51 @@ python miniapp.py    # мини-приложение на http://localhost:8081
 pytest -q                                        # 62 теста на SQLite
 TEST_DATABASE_URL='postgresql://...' pytest -q   # те же 62 на Postgres
 ```
+
+---
+
+## Что реально выстрелило при первом деплое (2026-11-03)
+
+Факты по текущему продакшену:
+
+| Параметр | Значение |
+|---|---|
+| Сервис Render | `srv-dbkgctd6e07s73cdomj0`, имя `cs2-bets-bot` |
+| Адрес | https://cs2-bets-bot.onrender.com |
+| Бот | @Happy_ludka_bot (id 9198605694) |
+| База | Neon `neondb`, схема `public`, 7 таблиц |
+| Проверка | `/health` → `{"ok": true, "mode": "webhook"}`, `/api/state` без подписи → 401 |
+
+### Грабли
+
+1. **`fromService: property: host` подставил имя сервиса, а не адрес.**
+   В переменные попало `cs2-bets-bot` вместо `https://cs2-bets-bot.onrender.com`,
+   контейнер падал с «WEBHOOK_BASE_URL пустой».
+   Решение: задать `WEBHOOK_BASE_URL` и `MINIAPP_URL` явными значениями с `https://`.
+
+2. **`generateValue: true` для `WEBHOOK_SECRET` даёт base64 с `=` и `+`.**
+   Telegram разрешает в secret_token только `A-Z a-z 0-9 _ -`, поэтому приложение
+   отказывалось стартовать («WEBHOOK_SECRET может содержать только…»).
+   Решение: задать секрет вручную, например `cs2bets_wh_<16 случайных букв/цифр>`.
+
+3. **Пароль в `DATABASE_URL` был скопирован с опечаткой.**
+   Симптом в логах Render: `password authentication failed for user 'neondb_owner'`
+   плюс бесполезные строки про IPv6 (`Network is unreachable` — это норма,
+   psycopg перебирает адреса, работает IPv4).
+   Решение: вставлять строку целиком из Neon Console → Connect, не перепечатывая.
+
+4. **`update_failed` не значит «сборка упала».**
+   Сборка образа была успешной, падал старт контейнера. Смотреть надо логи типа `app`:
+   `GET https://api.render.com/v1/logs?ownerId=<owner>&resource=<srv-id>&type=app&limit=50`.
+
+5. **Перенос данных в облако** — `DATABASE_URL=<neon dsn> python scripts/migrate_to_postgres.py --source data/bot.db`.
+   Перенесли игрока 5004062791 (1250 🪙) и 1 операцию; локальные матчи не переносятся
+   (они приходят из линии Fonbet заново).
+
+### Мелочи
+
+- Меню-кнопку бота (`setChatMenuButton`, тип `web_app`) поставить не удалось:
+  API отвечает `ok: true`, но `getChatMenuButton` возвращает `commands`.
+  Кнопка «📱 Открыть приложение» при этом есть в `/start` — её достаточно.
+- Бесплатный сервис засыпает через 15 минут простоя, первый заход ~30–50 с.
+  Держать в тонусе: cron-job.org → GET `https://cs2-bets-bot.onrender.com/health` каждые 10 минут.
