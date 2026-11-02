@@ -176,7 +176,7 @@ async def test_index_page_renders(client: TestClient) -> None:
     response = await client.get("/")
     html = await response.text()
     assert response.status == 200
-    assert "CS2 BETS" in html
+    assert "Добрая лудка" in html
     assert "window.__BOOT__" in html
 
 

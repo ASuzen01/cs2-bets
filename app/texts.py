@@ -26,7 +26,7 @@ def short_tournament(name: str) -> str:
     parts = [part for part in parts if part.lower() not in ("counter-strike", "cs2")]
     return " · ".join(parts[:2]) if parts else name
 
-START = """🎯 <b>CS2 BETS</b> — ставки виртуальными монетами на реальные матчи CS2.
+START = """🍀 <b>Добрая лудка</b> — ставки виртуальными монетами на реальные матчи CS2.
 
 Привет, {name}! Баланс: <b>{balance}</b>
 
@@ -38,7 +38,7 @@ START = """🎯 <b>CS2 BETS</b> — ставки виртуальными мон
 Открывай приложение — кнопка ниже 👇
 """
 
-GROUP_START = """🎯 <b>CS2 BETS</b> — ставки на реальные матчи CS2.
+GROUP_START = """🍀 <b>Добрая лудка</b> — ставки на реальные матчи CS2.
 
 {name}, привет! Все матчи, кэфы, экспрессы и баланс — в приложении.
 У каждого свой аккаунт и свой баланс.

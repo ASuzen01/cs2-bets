@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     miniapp_url: str = ""        # публичный https-адрес приложения, напр. https://cs2-bets.onrender.com
     miniapp_port: int = 8081
     miniapp_dev_user: int = 0    # локальная разработка: id игрока, если Telegram initData нет
-    miniapp_title: str = "CS2 BETS"
+    miniapp_title: str = "Добрая лудка"
     bot_username: str = ""       # заполняется на старте: нужен для ссылки-входа из групп
     miniapp_startapp: bool = False  # true → в группах ссылка t.me/бот?startapp=… (нужен Main Mini App в BotFather)
 

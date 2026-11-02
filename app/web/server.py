@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ INDEX_PATH = WEB_DIR / "index.html"
 STATIC_DIR = WEB_DIR / "static"
 
 BOOTSTRAP_MARKER = "<!-- BOOTSTRAP -->"
-ALLOWED_STATIC = {"app.css", "app.js"}
+ALLOWED_STATIC = re.compile(r"^[a-z0-9_-]+\.(css|js|png|svg|ico|webp)$")
 
 
 # ------------------------------------------------------------------- маршруты
@@ -87,17 +88,19 @@ def render_index(boot: dict[str, Any]) -> str:
 async def static_file(request: web.Request) -> web.Response:
     """Отдаём стили и скрипт без кеша: после деплоя клиент сразу видит новую версию."""
     name = request.match_info["name"]
-    if name not in ALLOWED_STATIC:
+    if not ALLOWED_STATIC.match(name):
         return _bad("Нет такого файла", 404)
     path = STATIC_DIR / name
     if not path.is_file():
         return _bad("Нет такого файла", 404)
-    content_type = "text/css" if name.endswith(".css") else "application/javascript"
-    return web.Response(
-        text=path.read_text(encoding="utf-8"),
-        content_type=content_type,
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
+    suffix = Path(name).suffix
+    headers = {"Cache-Control": "no-cache, must-revalidate"}
+    if suffix in {".css", ".js", ".svg"}:
+        content_type = {".css": "text/css", ".js": "application/javascript", ".svg": "image/svg+xml"}[suffix]
+        return web.Response(text=path.read_text(encoding="utf-8"), content_type=content_type, headers=headers)
+
+    content_type = {".png": "image/png", ".ico": "image/x-icon", ".webp": "image/webp"}[suffix]
+    return web.Response(body=path.read_bytes(), content_type=content_type, headers=headers)
 
 
 async def index(request: web.Request) -> web.Response:

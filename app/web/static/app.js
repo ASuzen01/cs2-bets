@@ -112,10 +112,11 @@
 
   // ------------------------------------------------------------------ рендер
   function renderHeader() {
-    $("#userName").textContent = state.user ? state.user.name : "CS2 BETS";
-    $("#userHint").textContent = state.user
-      ? (state.user.dev ? "локальный режим · кэфы Fonbet" : "кэфы Fonbet · тир-1")
-      : "кэфы Fonbet · тир-1";
+    // в шапке всегда бренд; имя игрока живёт в профиле (вкладка «Я»)
+    const dev = state.user && state.user.dev;
+    $("#userHint").textContent = dev
+      ? "локальный режим · виртуальные монеты"
+      : "ставки на CS2 · виртуальные монеты";
     $("#balancePill").textContent = state.user ? money(state.user.balance) : "— 🪙";
   }
 
