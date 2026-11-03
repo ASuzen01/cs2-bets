@@ -15,7 +15,7 @@ from html import escape
 from aiogram import Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import keyboards, texts
 from app.assets import MASCOT_PATH
@@ -65,6 +65,23 @@ async def cmd_start(message: Message, db: Database) -> None:
         await send_with_mascot(message.bot, message.chat.id, text, keyboards.app_kb())
         return
     await message.answer(text, reply_markup=keyboards.app_kb())
+
+
+@router.message(Command("app", "link", "играть"))
+async def cmd_app(message: Message) -> None:
+    """Ссылка на приложение — работает и в общем чате, и в личке."""
+    link = keyboards.deep_link() or keyboards.app_url()
+    if not link:
+        await message.answer(NO_APP_URL)
+        return
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="📱 Открыть приложение", url=link)]]
+    )
+    await message.answer(
+        texts.APP_LINK.format(link=f'<a href="{link}">{link}</a>'),
+        reply_markup=markup,
+        disable_web_page_preview=True,
+    )
 
 
 @router.message(Command("me", "whoami", "id"))

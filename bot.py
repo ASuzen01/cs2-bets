@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 USER_COMMANDS: list[tuple[str, str]] = [
     ("start", "Открыть приложение"),
     ("help", "Правила и выплаты"),
+    ("app", "Ссылка на приложение"),
 ]
 ADMIN_COMMANDS: list[tuple[str, str]] = [
     ("results", "Подтвердить исходы"),
