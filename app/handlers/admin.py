@@ -6,7 +6,8 @@
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
     /players               — список игроков с id, чтобы знать кому начислять
     /maps                  — карты, которые не удалось рассчитать автоматически
-    /cleanup [часов]       — отменить зависшие матчи и вернуть ставки
+    /cleanup [часов]       — рассчитать зависшие матчи, остальные отменить с возвратом
+    /recount ID 1|2        — пересчитать отменённый матч по реальному исходу
     /results               — матчи, которые ждут подтверждения исхода
     /stats                 — короткая сводка по базе
 
@@ -28,6 +29,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
 from app.services.notify import notify_bettors, notify_map_bettors
+from app.services.sync import series_from_maps
 
 log = logging.getLogger(__name__)
 
@@ -118,32 +120,79 @@ async def cmd_results(message: Message, db: Database) -> None:
 
 @router.message(Command("cleanup"))
 async def cmd_cleanup(message: Message, command: CommandObject, db: Database) -> None:
-    """Убрать зависшие матчи руками: /cleanup или /cleanup 2 (часов)."""
+    """Убрать зависшие матчи: /cleanup или /cleanup 3 (часов)."""
     arg = (command.args or "").strip()
-    hours = int(arg) if arg.isdigit() else 3
+    hours = int(arg) if arg.isdigit() else settings.stale_match_hours
     rows = await db.stale_matches(hours)
     if not rows:
         await message.answer(f"Зависших матчей старше {hours} ч нет ✅")
         return
 
+    bot = callback_bot(message)
+    settled = 0
     cancelled = 0
     refunded = 0
     for row in rows:
+        # сначала пытаемся посчитать по факту, и только потом отменяем
+        winner, score = await series_from_maps(db, row)
+        if winner is not None:
+            with contextlib.suppress(BettingError):
+                result = await db.settle_match(int(row["id"]), winner, source="maps")
+                await notify_bettors(bot, db, result, score=score)
+                settled += 1
+                continue
         try:
             result = await db.cancel_match(int(row["id"]))
         except BettingError:
             continue
         cancelled += 1
         refunded += int(result["refunded"])
-        await notify_bettors(callback_bot(message), db, result, void=True)
+        await notify_bettors(bot, db, result, void=True)
         for card in await db.match_maps(int(row["id"])):
             if str(card["status"]) in ("open", "live", "awaiting"):
                 with contextlib.suppress(BettingError):
                     await db.cancel_map(int(card["id"]))
 
     await message.answer(
-        f"Отменил матчей: <b>{cancelled}</b>, вернул игрокам {texts.money(refunded)}.\n"
-        "Ставки больше не висят в приложении."
+        f"Рассчитал по картам: <b>{settled}</b>\n"
+        f"Отменил без результата: <b>{cancelled}</b>, вернул {texts.money(refunded)}.\n"
+        "Если матч отменился, а результат известен — поправь командой "
+        "<code>/recount ID 1</code> (1 — команда A, 2 — команда B)."
+    )
+
+
+@router.message(Command("recount"))
+async def cmd_recount(message: Message, command: CommandObject, db: Database) -> None:
+    """Пересчитать отменённый матч по факту: /recount 42 1."""
+    parts = (command.args or "").split()
+    if len(parts) < 2 or not parts[0].isdigit() or parts[1] not in ("1", "2"):
+        rows = await db.recent_cancelled(8)
+        lines = [
+            f"#{row['id']} {row['team_a']} — {row['team_b']}" for row in rows
+        ] or ["Пока ничего не отменяли."]
+        await message.answer(
+            "<b>Пересчёт отменённого матча</b>\n"
+            + "\n".join(lines)
+            + "\n\nФормат: <code>/recount ID 1</code> — победила первая команда, "
+            "<code>/recount ID 2</code> — вторая."
+        )
+        return
+
+    match_id = int(parts[0])
+    winner = "a" if parts[1] == "1" else "b"
+
+    try:
+        result = await db.recount_match(match_id, winner)
+    except BettingError as exc:
+        await message.answer(f"Не вышло: {exc}")
+        return
+
+    bot = callback_bot(message)
+    await notify_bettors(bot, db, result)
+    await message.answer(
+        f"Пересчитал матч #{match_id}: победила <b>{result['team']}</b>.\n"
+        f"Выплачено {texts.money(result['paid'])}, откатил возвратов "
+        f"{texts.money(result.get('reversed', 0))}."
     )
 
 

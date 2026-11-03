@@ -280,6 +280,15 @@ class Database:
         return await self._fetchall("SELECT chat_id, title FROM chats WHERE autopost = 1")
 
     # --------------------------------------------------------------- matches
+    async def match_by_fonbet(self, fonbet_id: int) -> Any | None:
+        return await self._fetchone("SELECT * FROM matches WHERE fonbet_id = ?", (fonbet_id,))
+
+    async def recent_cancelled(self, limit: int = 10) -> list[Any]:
+        return await self._fetchall(
+            "SELECT * FROM matches WHERE status = 'cancelled' ORDER BY finished_at DESC LIMIT ?",
+            (limit,),
+        )
+
     async def upsert_match(
         self,
         *,
@@ -1171,6 +1180,61 @@ class Database:
             "team_b": str(match["team_b"]),
             "expresses": expresses,
         }
+
+    async def recount_match(self, match_id: int, winner: str) -> dict[str, Any]:
+        """Отменённый матч считаем заново по реальному исходу: откат возвратов + выплаты."""
+        if winner not in ("a", "b"):
+            raise InvalidBet("Победитель должен быть 1 или 2")
+
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if str(match["status"]) != "cancelled":
+                raise BettingError("Пересчитать можно только отменённый матч")
+
+            async with conn.execute(
+                "SELECT COUNT(*) AS c FROM express_items WHERE match_id = ?", (match_id,)
+            ) as cur:
+                in_express = int((await cur.fetchone())["c"])
+            if in_express:
+                raise BettingError("Матч входит в экспресс — такой пересчёт не поддержан")
+
+            async with conn.execute(
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+            ) as cur:
+                bets = list(await cur.fetchall())
+
+            reversed_total = 0
+            for bet in bets:
+                payout = int(bet["payout"] or 0)
+                if not payout:
+                    continue
+                reversed_total += payout
+                async with conn.execute(
+                    "SELECT balance FROM users WHERE user_id = ?", (int(bet["user_id"]),)
+                ) as cur:
+                    user = await cur.fetchone()
+                balance = int(user["balance"]) if user else 0
+                await conn.execute(
+                    "UPDATE users SET balance = ? WHERE user_id = ?",
+                    (max(0, balance - payout), int(bet["user_id"])),
+                )
+                await self._ledger(
+                    conn, int(bet["user_id"]), -payout, f"откат возврата · матч #{match_id}"
+                )
+                await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
+
+            await conn.execute(
+                "UPDATE matches SET status = 'live', winner = NULL, finished_at = NULL, "
+                "result_source = NULL WHERE id = ?",
+                (match_id,),
+            )
+
+        result = await self.settle_match(match_id, winner, source="recount")
+        result["reversed"] = reversed_total
+        return result
 
     # ------------------------------------------------------------------ stats
     async def stats(self) -> dict[str, int]:

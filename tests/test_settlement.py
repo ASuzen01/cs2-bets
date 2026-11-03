@@ -151,8 +151,8 @@ class FakeClient:
         return None
 
 
-def _packet(*, finished: bool, rounds: tuple[int, int] = (13, 9)) -> dict:
-    start = int(time.time()) - 1200
+def _packet(*, finished: bool, rounds: tuple[int, int] = (13, 9), start_offset: int = 1200) -> dict:
+    start = int(time.time()) - start_offset
     livе_info = []
     miscs = []
     if finished:
@@ -285,3 +285,84 @@ async def test_map_bet_stays_open_after_match_finished(db: Database) -> None:
 
     active = await db.user_active_bets(1)
     assert [int(row["map_number"]) for row in active] == [2]
+
+
+async def test_recount_cancelled_match_by_real_result(db: Database) -> None:
+    """Отменили по ошибке — считаем заново по факту: возвраты откатываются, победитель получает выплату."""
+    match = await _match(db)
+    await db.place_bet(int(match["id"]), 1, None, "a", 100)
+    await db.place_bet(int(match["id"]), 2, None, "b", 100)
+    await db.cancel_match(int(match["id"]))
+    assert await db.get_balance(1) == 1000
+    assert await db.get_balance(2) == 1000
+
+    result = await db.recount_match(int(match["id"]), "a")
+
+    assert result["team"] == "Aurora"
+    assert result["reversed"] == 200              # откатили оба возврата
+    assert await db.get_balance(1) == 1000 - 100 + round(100 * 1.65)
+    assert await db.get_balance(2) == 900         # возврат снят, ставка проиграла
+
+    settled = await db.get_match(int(match["id"]))
+    assert settled["status"] == "finished"
+    assert settled["winner"] == "a"
+
+
+async def test_recount_rejects_finished_match(db: Database) -> None:
+    from app.db.database import BettingError
+
+    match = await _match(db)
+    await db.settle_match(int(match["id"]), "a")
+    with pytest.raises(BettingError):
+        await db.recount_match(int(match["id"]), "b")
+
+
+async def test_stale_match_is_settled_not_cancelled_when_maps_known(db: Database) -> None:
+    """Старый матч с известными картами считается по факту, а не отменяется."""
+    row, _ = await db.upsert_match(
+        fonbet_id=999,
+        tournament="Counter-Strike. IEM. Bo3",
+        team_a="Aurora",
+        team_b="G2 Esports",
+        start_time=int(time.time()) - 13 * 3600,
+        odds_a=1.65,
+        odds_b=2.25,
+    )
+    await db.set_status(int(row["id"]), "live")
+    await db.place_bet(int(row["id"]), 1, None, "a", 100)
+    for number in (1, 2):
+        card = await _map(db, int(row["id"]), number)
+        await db.settle_map(int(card["id"]), "a")
+
+    bot = FakeBot()
+    syncer = MatchSyncer(bot, db)
+    stats: dict = {}
+    await syncer._close_stale(stats)
+
+    assert stats.get("settled") == 1
+    assert stats.get("cancelled") in (None, 0)
+    settled = await db.get_match(int(row["id"]))
+    assert settled["status"] == "finished" and settled["winner"] == "a"
+    assert await db.get_balance(1) == 1000 - 100 + round(100 * 1.65)
+
+
+async def test_old_tracked_match_keeps_updating(db: Database) -> None:
+    """Матч, который идёт дольше 6 часов, больше не выпадает из синка."""
+    row, _ = await db.upsert_match(
+        fonbet_id=555,
+        tournament="Counter-Strike. IEM. Групповой этап. Bo3",
+        team_a="Aurora",
+        team_b="G2 Esports",
+        start_time=int(time.time()) - 8 * 3600,
+        odds_a=1.10,
+        odds_b=6.00,
+    )
+    await db.set_status(int(row["id"]), "live")
+
+    syncer = MatchSyncer(FakeBot(), db)
+    syncer.client = FakeClient([_packet(finished=False, start_offset=8 * 3600)])
+    await syncer.tick()
+
+    refreshed = await db.get_match(int(row["id"]))
+    assert float(refreshed["odds_a"]) == pytest.approx(1.65)   # линия продолжает обновляться
+    assert refreshed["status"] == "live"

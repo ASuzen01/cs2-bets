@@ -48,7 +48,8 @@ Fonbet listBase (gzip JSON)
 | `/stats` | админ | сводка по базе |
 | `/players` | админ | последние игроки с id и балансом — кому начислять |
 | `/maps` | админ | карты, которые не рассчитались автоматически (кнопки «кто взял») |
-| `/cleanup [часов]` | админ | отменить зависшие матчи и вернуть ставки (по умолчанию 3 ч) |
+| `/cleanup [часов]` | админ | рассчитать зависшие матчи по картам, остальные отменить с возвратом |
+| `/recount ID 1\|2` | админ | пересчитать отменённый матч по реальному исходу |
 | `/grant <id\|@ник> <сумма>` | админ | начислить монеты игроку (500 или -500) |
 
 Права админа выдаются переменной `ADMIN_IDS` (id через запятую) — на Render это
@@ -167,7 +168,7 @@ TIER1_INCLUDE=IEM,ESL Pro League,ESL One,BLAST Premier,BLAST Rivals,BLAST Bounty
 TIER1_EXCLUDE=Qualifier,Квалификац,Academy,Women,H2H,1x1,2x2,Showmatch,CCT
 ODDS_MODE=real          # real | fair
 SYNC_INTERVAL=45
-STALE_MATCH_HOURS=6
+STALE_MATCH_HOURS=12
 LIVE_BETTING=true       # ставки по ходу матча (false — приём только до старта)
 ```
 
@@ -245,7 +246,7 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 | `TIER1_INCLUDE` / `TIER1_EXCLUDE` | см. выше | фильтр турниров |
 | `ODDS_MODE` | `real` | `real` (с маржой) или `fair` (без маржи) |
 | `SYNC_INTERVAL` | 45 | период обновления линии, сек (в лайве кэфы свежее) |
-| `STALE_MATCH_HOURS` | 6 | через сколько часов без результата матч отменяется с возвратом ставок |
+| `STALE_MATCH_HOURS` | 12 | через сколько часов без результата матч отменяется с возвратом ставок |
 | `LIVE_BETTING` | `true` | `true` — ставки по ходу матча, `false` — только до старта |
 | `RUN_MODE` | `polling` | `polling` или `webhook` |
 | `WEBHOOK_BASE_URL` / `WEBHOOK_PATH` / `WEBHOOK_SECRET` | — | для webhook |

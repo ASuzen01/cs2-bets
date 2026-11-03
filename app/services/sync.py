@@ -20,6 +20,33 @@ from app.services.notify import notify_bettors, notify_map_bettors
 log = logging.getLogger(__name__)
 
 
+def required_maps(tournament: str) -> int:
+    """Сколько карт нужно взять, чтобы выиграть серию."""
+    name = (tournament or "").lower()
+    if "bo5" in name:
+        return 3
+    if "bo1" in name:
+        return 1
+    return 2
+
+
+async def series_from_maps(db: Database, row: Any) -> tuple[str | None, str | None]:
+    """Победитель серии и счёт по картам — из уже рассчитанных карт."""
+    wins = {"a": 0, "b": 0}
+    for card in await db.match_maps(int(row["id"])):
+        if str(card["status"]) == "finished" and card["winner"] in ("a", "b"):
+            wins[str(card["winner"])] += 1
+
+    need = required_maps(str(row["tournament"]))
+    score = f"{wins['a']}:{wins['b']}"
+    if wins["a"] >= need:
+        return "a", score
+    if wins["b"] >= need:
+        return "b", score
+    return None, None
+
+
+
 class MatchSyncer:
     def __init__(self, bot: Bot, db: Database, client: FonbetClient | None = None) -> None:
         self.bot = bot
@@ -122,7 +149,11 @@ class MatchSyncer:
 
         for match in matches:
             if match.start_time and match.start_time < now - 6 * 3600:
-                continue  # старая линия, не нужна
+                # старую линию не берём, но матч, который уже у нас висит незакрытым,
+                # обязаны довести до результата — иначе он уйдёт в отмену
+                tracked = await self.db.match_by_fonbet(match.event_id)
+                if tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"):
+                    continue
             odds_a, odds_b = self._prepare_odds(match)
             row, created = await self.db.upsert_match(
                 fonbet_id=match.event_id,
@@ -227,32 +258,10 @@ class MatchSyncer:
 
     @staticmethod
     def _required_maps(tournament: str) -> int:
-        """Сколько карт нужно взять, чтобы выиграть серию."""
-        name = (tournament or "").lower()
-        if "bo5" in name:
-            return 3
-        if "bo1" in name:
-            return 1
-        return 2
+        return required_maps(tournament)
 
     async def _series_from_maps(self, row: Any) -> tuple[str | None, str | None]:
-        """Победитель серии и счёт по картам — из уже рассчитанных карт.
-
-        Это главный путь: Fonbet в счёте события держит раунды текущей карты,
-        поэтому серию надёжнее считать по тому, кто взял карты.
-        """
-        cards = await self.db.match_maps(int(row["id"]))
-        wins = {"a": 0, "b": 0}
-        for card in cards:
-            if str(card["status"]) == "finished" and card["winner"] in ("a", "b"):
-                wins[str(card["winner"])] += 1
-
-        need = self._required_maps(str(row["tournament"]))
-        if wins["a"] >= need:
-            return "a", f"{wins['a']}:{wins['b']}"
-        if wins["b"] >= need:
-            return "b", f"{wins['a']}:{wins['b']}"
-        return None, None
+        return await series_from_maps(self.db, row)
 
     async def _settle(self, matches: list[FonbetMatch], stats: dict[str, Any]) -> None:
         by_fonbet = {match.event_id: match for match in matches}
@@ -337,8 +346,16 @@ class MatchSyncer:
                 log.info("Карта #%s не игралась — возвращено %s", card["id"], result["refunded"])
 
     async def _close_stale(self, stats: dict[str, Any]) -> None:
-        """Матч сутки висит без результата — возвращаем ставки и убираем из Live."""
+        """Матч давно висит без результата: считаем по картам, иначе возвращаем ставки."""
         for row in await self.db.stale_matches(settings.stale_match_hours):
+            # вдруг результат всё-таки известен по картам — тогда считаем, а не отменяем
+            winner, series_score = await self._series_from_maps(row)
+            if winner is not None:
+                await self._settle_and_announce(row, winner, series_score, source="maps")
+                stats["settled"] = stats.get("settled", 0) + 1
+                log.info("Зависший матч #%s рассчитан по картам (%s)", row["id"], series_score)
+                continue
+
             try:
                 result = await self.db.cancel_match(int(row["id"]))
             except Exception:
