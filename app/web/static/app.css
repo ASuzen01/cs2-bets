@@ -343,3 +343,10 @@
   .tourlist .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hint{font-size:11.5px;color:var(--muted);margin-top:8px}
   .live-hint{color:#ffb3b3}
+
+  /* группа «кубок → стадии» в списке турниров */
+  .tourlist button.group{margin-top:6px;background:#16222e;font-weight:700}
+  .tourlist button.group.active{background:#1b2c3c;border-color:#2f5d85;color:#bfe0ff}
+  .tourlist button.stage{padding:8px 13px 8px 26px;font-size:12.5px;color:#b9c8d7;
+    background:#141f29;border-color:#22303f}
+  .tourlist button.stage .cnt{font-size:11.5px}

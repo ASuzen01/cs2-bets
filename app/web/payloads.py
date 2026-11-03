@@ -82,6 +82,11 @@ def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
         "status": status,
         "live": status == "live",
         "score": score,
+        "live_minute": (
+            int(row["live_minute"])
+            if ("live_minute" in row.keys() and row["live_minute"] is not None)  # noqa: SIM118
+            else None
+        ),
         "score_a": int(score_a) if score_a is not None else None,
         "score_b": int(score_b) if score_b is not None else None,
         # ставки на карты: «Карта 1», «Карта 2»…

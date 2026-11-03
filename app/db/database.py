@@ -32,6 +32,7 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "last_chat_id", "ALTER TABLE users ADD COLUMN last_chat_id INTEGER"),
     ("matches", "sport", "ALTER TABLE matches ADD COLUMN sport TEXT NOT NULL DEFAULT 'cs2'"),
     ("matches", "odds_x", "ALTER TABLE matches ADD COLUMN odds_x REAL"),
+    ("matches", "live_minute", "ALTER TABLE matches ADD COLUMN live_minute INTEGER"),
 )
 
 
@@ -480,6 +481,7 @@ class Database:
         score_b: int | None = None,
         odds_x: float | None = None,
         sport: str = "cs2",
+        live_minute: int | None = None,
     ) -> tuple[Any, bool]:
         """Возвращает (матч, создан_ли_сейчас)."""
         now = int(time.time())
@@ -488,11 +490,12 @@ class Database:
             await self.conn.execute(
                 """
                 INSERT INTO matches (fonbet_id, tournament, team_a, team_b, start_time, sport,
-                                     odds_a, odds_x, odds_b, score_a, score_b, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                                     odds_a, odds_x, odds_b, score_a, score_b, live_minute,
+                                     status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
                 (fonbet_id, tournament, team_a, team_b, start_time, sport, odds_a, odds_x, odds_b,
-                 score_a, score_b, now),
+                 score_a, score_b, live_minute, now),
             )
             await self.conn.commit()
             created = await self._fetchone(
@@ -510,10 +513,11 @@ class Database:
             await self.conn.execute(
                 """
                 UPDATE matches SET odds_a = ?, odds_x = ?, odds_b = ?, start_time = ?,
-                                   score_a = ?, score_b = ?
+                                   score_a = ?, score_b = ?, live_minute = ?
                 WHERE id = ?
                 """,
-                (odds_a, odds_x, odds_b, start_time, new_score_a, new_score_b, existing["id"]),
+                (odds_a, odds_x, odds_b, start_time, new_score_a, new_score_b, live_minute,
+                 existing["id"]),
             )
             await self.conn.commit()
             refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
@@ -541,6 +545,14 @@ class Database:
             )
         return await self._fetchall(
             "SELECT * FROM matches WHERE status = 'open' AND sport = ? ORDER BY start_time LIMIT ?",
+            (sport, limit),
+        )
+
+    async def open_matches_of_sport(self, sport: str, limit: int = 500) -> list[Any]:
+        """Открытая линия одного вида спорта — для чистки и проверок."""
+        return await self._fetchall(
+            "SELECT * FROM matches WHERE status = 'open' AND sport = ? "
+            "ORDER BY start_time LIMIT ?",
             (sport, limit),
         )
 
@@ -1346,9 +1358,10 @@ class Database:
             if match["status"] in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
-            # ставки на конкретные карты рассчитываются отдельно, по своей карте
+            # карты рассчитываются отдельно, по своей карте; всё остальное —
+            # исход матча и футбольные рынки — возвращается здесь
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market != 'map'", (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -1477,9 +1490,10 @@ class Database:
             if match["status"] in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
-            # ставки на конкретные карты рассчитываются отдельно, по своей карте
+            # карты рассчитываются отдельно, по своей карте; всё остальное —
+            # исход матча и футбольные рынки — возвращается здесь
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market != 'map'", (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 

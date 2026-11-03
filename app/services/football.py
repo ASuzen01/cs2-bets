@@ -24,6 +24,7 @@ Fonbet отдаёт по футбольному матчу 400+ коэффици
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -65,6 +66,7 @@ class FootballMatch:
     score_b: int | None = None
     is_live: bool = False
     finished: bool = False
+    minute: int | None = None
 
     @property
     def has_result_odds(self) -> bool:
@@ -103,10 +105,22 @@ def parse_football(
 ) -> list[FootballMatch]:
     """Матчи футбола нужных турниров с исходом 1X2."""
     sports = {s.get("id"): s for s in packet.get("sports", [])}
+    # турниры «Лига Чемпионов» бывают не только футбольными: у хоккея своя Лига
+    # Чемпионов с 1/8 финала, у тенниса — Кубок Чемпионов. Поэтому проверяем
+    # родительский вид спорта, а не только название турнира.
+    football_ids = {
+        sport_id
+        for sport_id, sport in sports.items()
+        if sport.get("kind") == "sport" and "футбол" in str(sport.get("name") or "").lower()
+    }
     segments: dict[int, str] = {}
     for sport_id, sport in sports.items():
         name = str(sport.get("name") or "")
-        if sport.get("kind") == "segment" and _is_football(name, include, exclude):
+        if (
+            sport.get("kind") == "segment"
+            and sport.get("parentId") in football_ids
+            and _is_football(name, include, exclude)
+        ):
             segments[sport_id] = name
     if not segments:
         return []
@@ -150,6 +164,7 @@ def parse_football(
                 score_b=_int_or_none(misc.get("score2")),
                 is_live=event.get("place") == "live" or bool(live),
                 finished=bool(live.get("finished") or misc.get("finished")),
+                minute=_minute_or_none(misc, live),
             )
         )
     return result
@@ -415,6 +430,38 @@ def parse_side(side: str) -> tuple[str, str] | None:
     return parts[1], parts[2]
 
 
+def _minute_or_none(misc: dict[str, Any], live: dict[str, Any]) -> int | None:
+    """Минута матча из таймера Fonbet.
+
+    Фонбет отдаёт снимок таймера: {timerSeconds, timerDirection, timerUpdateTimestampMsec}.
+    timerDirection=1 — таймер идёт: к значению надо добавить время с момента снимка.
+    timerDirection=0 — таймер замер (перерыв, конец), такие значения не берём:
+    у разных видов спорта они означают разное, и минута получится неверной.
+    """
+    seconds = misc.get("timerSeconds", live.get("timerSeconds"))
+    direction = misc.get("timerDirection", live.get("timerDirection"))
+    if seconds is None or direction != 1:
+        return None
+
+    elapsed = 0.0
+    stamp = misc.get("timerUpdateTimestampMsec", live.get("timerUpdateTimestampMsec"))
+    try:
+        stamp = float(stamp) if stamp else 0.0
+    except (TypeError, ValueError):
+        stamp = 0.0
+    if stamp > 1e11:            # миллисекунды
+        stamp /= 1000
+    now = time.time()
+    if 0 < stamp <= now:
+        elapsed = now - stamp
+
+    try:
+        minute = int((float(seconds) + elapsed) // 60)
+    except (TypeError, ValueError):
+        return None
+    return minute if 0 <= minute <= 130 else None
+
+
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
@@ -457,3 +504,27 @@ def markets_of(row: Any) -> list[dict[str, Any]]:
         _CACHE.clear()
     _CACHE[key] = markets
     return markets
+
+
+def non_football_event_ids(packet: dict[str, Any]) -> set[int]:
+    """События из пакета, которые футболом не являются (хоккей, теннис, кибер…).
+
+    Нужно, чтобы вычищать из линии матчи, попавшие туда по ошибке: например,
+    хоккейная «Лига Чемпионов» одно время считалась футбольной.
+    """
+    sports = {s.get("id"): s for s in packet.get("sports", [])}
+    football_ids = {
+        sport_id
+        for sport_id, sport in sports.items()
+        if sport.get("kind") == "sport" and "футбол" in str(sport.get("name") or "").lower()
+    }
+    foreign_segments = {
+        sport_id
+        for sport_id, sport in sports.items()
+        if sport.get("kind") == "segment" and sport.get("parentId") not in football_ids
+    }
+    return {
+        int(event["id"])
+        for event in packet.get("events", [])
+        if event.get("level") == 1 and event.get("sportId") in foreign_segments
+    }
