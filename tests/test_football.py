@@ -64,6 +64,16 @@ def test_knockout_detection() -> None:
     assert not is_knockout("Лига Чемпионов УЕФА. Общий этап")
 
 
+def test_qualify_only_for_single_match_ties() -> None:
+    from app.services.football import has_qualify_market
+
+    assert has_qualify_market("Лига Чемпионов УЕФА. Финал")
+    assert has_qualify_market("Лига Чемпионов. 1/8 финала")      # одноматчевая пара
+    assert not has_qualify_market("Лига Чемпионов. 1/8 финала. Первые матчи")
+    assert not has_qualify_market("Лига Чемпионов. 1/4 финала. Ответные матчи")
+    assert not has_qualify_market("Лига Чемпионов УЕФА. Общий этап")
+
+
 # ------------------------------------------------------------------- модель
 def test_model_matches_book_probabilities() -> None:
     p_home, p_draw, p_away = implied_probabilities(5.3, 4.9, 1.53)

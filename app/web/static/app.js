@@ -11,6 +11,7 @@
     football: boot.football || [],
     sport: "cs2",
     fbOpen: {},          // какие футбольные карточки раскрыты до полной росписи
+    tournaments: {},     // выбранный турнир по каждому виду спорта
     liveMatches: boot.live || [],   // матчи в эфире (state.live — флаг «данные загружены»)
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
@@ -177,11 +178,23 @@
   }
 
   function renderSegments() {
+    const tourBtn = $("#tourFilter");
+    if (tourBtn) {
+      tourBtn.addEventListener("click", () => {
+        const source = state.segment === "live"
+          ? state.liveMatches
+          : (state.sport === "football" ? state.football : state.matches);
+        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+      });
+    }
+    const tourReset = $("#tourReset");
+    if (tourReset) {
+      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
+    }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.sport === btn.dataset.sport) return;
         state.sport = btn.dataset.sport;
-        state.segment = "line";
         haptic("light");
         renderMatches();
         refreshState({ silent: true });
@@ -190,7 +203,8 @@
     document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.segment === state.segment);
     });
-    const count = state.liveMatches.length;
+    // счётчик Live — только по текущему виду спорта, иначе обещает больше, чем есть
+    const count = state.liveMatches.filter((m) => (m.sport || "cs2") === state.sport).length;
     const liveBtn = document.querySelector('#matchSegments .seg[data-segment="live"]');
     if (liveBtn) liveBtn.classList.toggle("on", count > 0);
     const badge = $("#liveCount");
@@ -332,7 +346,97 @@
     return null;
   }
 
+  function tournamentKey() {
+    return "ludka:tour:" + state.sport;
+  }
+
+  function selectedTournament() {
+    if (state.tournaments[state.sport] !== undefined) return state.tournaments[state.sport];
+    try { return localStorage.getItem(tournamentKey()); } catch (err) { return null; }
+  }
+
+  function setTournament(name) {
+    state.tournaments[state.sport] = name;
+    try {
+      if (name) localStorage.setItem(tournamentKey(), name);
+      else localStorage.removeItem(tournamentKey());
+    } catch (err) { /* приватный режим — просто не запоминаем */ }
+  }
+
+  function tournamentsOf(list) {
+    const counts = new Map();
+    list.forEach((match) => {
+      const name = match.short_tournament || match.tournament || "Без турнира";
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }
+
+  function renderTournamentFilter(all) {
+    const button = $("#tourFilter");
+    if (!button) return;
+    const chosen = selectedTournament();
+    const list = tournamentsOf(all);
+    // выбранный турнир мог уйти из линии — тогда тихо показываем «все»
+    if (chosen && !list.some((item) => item.name === chosen)) setTournament(null);
+    const active = selectedTournament();
+    button.textContent = "";
+    button.append(document.createTextNode(active || "Все турниры"));
+    const caret = el("span", "caret", "▼");
+    button.append(caret);
+    button.classList.toggle("active", Boolean(active));
+    const reset = $("#tourReset");
+    if (reset) reset.hidden = !active;
+  }
+
+  function openTournamentSheet(all) {
+    haptic("light");
+    const list = tournamentsOf(all);
+    const active = selectedTournament();
+    openSheet((sheet) => {
+      sheet.append(el("h3", null, "Турниры"));
+      sheet.append(el("div", "sub", `${list.length} турниров · ${all.length} матчей`));
+      const box = el("div", "tourlist");
+      const pick = (name) => {
+        setTournament(name);
+        closeSheet();
+        renderMatches();
+      };
+      const allBtn = el("button", !active ? "active" : "");
+      allBtn.type = "button";
+      allBtn.append(el("span", "nm", "Все турниры"));
+      allBtn.append(el("span", "cnt", String(all.length)));
+      allBtn.addEventListener("click", () => pick(null));
+      box.append(allBtn);
+
+      list.forEach((item) => {
+        const btn = el("button", item.name === active ? "active" : "");
+        btn.type = "button";
+        btn.append(el("span", "nm", item.name));
+        btn.append(el("span", "cnt", String(item.count)));
+        btn.addEventListener("click", () => pick(item.name));
+        box.append(btn);
+      });
+      sheet.append(box);
+    });
+  }
+
   function renderSportSegments() {
+    const tourBtn = $("#tourFilter");
+    if (tourBtn) {
+      tourBtn.addEventListener("click", () => {
+        const source = state.segment === "live"
+          ? state.liveMatches
+          : (state.sport === "football" ? state.football : state.matches);
+        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+      });
+    }
+    const tourReset = $("#tourReset");
+    if (tourReset) {
+      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
+    }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.sport === state.sport);
     });
@@ -340,8 +444,9 @@
 
   function renderFootballCard(match) {
     const isLive = match.status === "live";
-    const closed = isLive || match.status !== "open";
-    // на live-табло счёт живой, а роспись уже не считается — она только для прематча
+    // в live ставим только на исход: кэфы 1X2 идут из линии живьём,
+    // а производные рынки считаются от предматчевых кэфов и закрыты
+    const closed = match.status !== "open" && match.status !== "live";
     const card = el("div", "card" + (isLive ? " live" : ""));
 
     const top = el("div", "top");
@@ -373,9 +478,13 @@
     });
     card.append(three);
 
+    if (isLive) {
+      card.append(el("div", "hint live-hint", "Ставки на исход открыты · роспись — до старта"));
+    }
+
     const markets = (Array.isArray(match.markets) ? match.markets : [])
       .filter((market) => market.key !== "result");
-    if (markets.length && !closed) {
+    if (markets.length && match.status === "open") {
       const open = Boolean(state.fbOpen[match.id]);
       const toggle = el("button", "mkt-toggle" + (open ? " open" : ""));
       toggle.type = "button";
@@ -461,9 +570,25 @@
     const liveMode = state.segment === "live";
     const footballMode = state.sport === "football";
     const source = liveMode ? state.liveMatches : (footballMode ? state.football : state.matches);
-    const list = source.filter((match) => (match.sport || "cs2") === state.sport);
+    const sportOnly = source.filter((match) => (match.sport || "cs2") === state.sport);
+    renderTournamentFilter(sportOnly);
+    const tournament = selectedTournament();
+    const list = tournament
+      ? sportOnly.filter((match) => (match.short_tournament || match.tournament) === tournament)
+      : sportOnly;
 
     if (!list.length) {
+      if (tournament && sportOnly.length) {
+        // турнир выбран, но в нём сейчас пусто — предлагаем снять фильтр
+        const card = el("div", "card");
+        card.append(el("div", "empty", `В турнире «${tournament}» сейчас нет матчей.`));
+        const all = el("button", "btn ghost", "Показать все турниры");
+        all.type = "button";
+        all.addEventListener("click", () => { setTournament(null); renderMatches(); });
+        card.append(all);
+        host.append(card);
+        return;
+      }
       host.append(emptyWithMascot(liveMode
         ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
         : (footballMode
@@ -1557,11 +1682,23 @@
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
+    const tourBtn = $("#tourFilter");
+    if (tourBtn) {
+      tourBtn.addEventListener("click", () => {
+        const source = state.segment === "live"
+          ? state.liveMatches
+          : (state.sport === "football" ? state.football : state.matches);
+        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+      });
+    }
+    const tourReset = $("#tourReset");
+    if (tourReset) {
+      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
+    }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.sport === btn.dataset.sport) return;
         state.sport = btn.dataset.sport;
-        state.segment = "line";
         haptic("light");
         renderMatches();
         refreshState({ silent: true });

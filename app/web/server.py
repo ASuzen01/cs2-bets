@@ -155,7 +155,7 @@ async def index(request: web.Request) -> web.Response:
         boot["matches"] = await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2"))
         boot["live"] = await _line_with_maps(db, await db.live_matches(limit=40))
         boot["football"] = await _line_with_maps(
-            db, await db.open_matches(limit=60, sport="football")
+            db, await db.open_matches(limit=120, sport="football")
         )
 
     return web.Response(text=render_index(boot), content_type="text/html")
@@ -183,7 +183,7 @@ async def api_state(request: web.Request) -> web.Response:
             "matches": await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2")),
             "live": await _line_with_maps(db, await db.live_matches(limit=40)),
             "football": await _line_with_maps(
-                db, await db.open_matches(limit=60, sport="football")
+                db, await db.open_matches(limit=120, sport="football")
             ),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],

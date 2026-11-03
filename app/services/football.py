@@ -40,6 +40,8 @@ MIN_ODDS = 1.05
 
 # турнирные маркеры плей-офф: там есть смысл в рынке «проход дальше»
 KNOCKOUT_MARKERS = ("1/8", "1/4", "1/2", "1/16", "стыков", "плей-офф", "финал", "квал")
+# два матча в паре: один матч не решает, кто прошёл — рынок не предлагаем
+LEG_MARKERS = ("первые матчи", "вторые матчи", "ответные матчи", "1-е матчи", "2-е матчи")
 
 _TOTAL_LINES = (0.5, 1.5, 2.5, 3.5, 4.5)
 _HANDICAPS = (1.5, 0.5, -0.5, -1.5, -2.5)
@@ -79,6 +81,19 @@ def _is_football(tournament: str, include: Iterable[str], exclude: Iterable[str]
 def is_knockout(tournament: str) -> bool:
     name = tournament.lower()
     return any(marker in name for marker in KNOCKOUT_MARKERS)
+
+
+def has_qualify_market(tournament: str) -> bool:
+    """«Проход дальше» — только там, где пара решается одним матчем.
+
+    В двухматчевых парах (1/8, 1/4, полуфиналы) победитель первого матча ещё
+    ничего не значит, поэтому рынок не предлагаем — считать его по счёту одной
+    игры было бы просто неправдой.
+    """
+    name = tournament.lower()
+    if any(marker in name for marker in LEG_MARKERS):
+        return False
+    return is_knockout(tournament)
 
 
 def parse_football(
@@ -306,7 +321,7 @@ def build_markets(match: FootballMatch) -> list[dict[str, Any]]:
         add("exact", f"{goals_a}:{goals_b}", f"{goals_a}:{goals_b}", "Точный счёт", chance)
     add("exact", "other", "Другой", "Точный счёт", max(0.0, 1 - covered))
 
-    if is_knockout(match.tournament):
+    if has_qualify_market(match.tournament):
         # ничья в основное время не решает, кто прошёл: такие ставки возвращаем
         advance = p_home + p_draw * 0.5
         add("qualify", "1", f"Пройти: {match.team_a}", "Проход дальше", advance)

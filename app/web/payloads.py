@@ -13,9 +13,9 @@ from app.db import Database
 from app.services.football import market_label, markets_of, parse_side
 
 _CUPS = (
-    ("лига чемпионов уефа", "ЛЧ"),
-    ("лига европы уефа", "ЛЕ"),
-    ("лига конференций уефа", "ЛК"),
+    ("лига чемпионов", "ЛЧ"),
+    ("лига европы", "ЛЕ"),
+    ("лига конференций", "ЛК"),
 )
 
 
@@ -26,9 +26,9 @@ def short_tournament(name: str, limit: int = 42) -> str:
     'Лига Чемпионов УЕФА. Общий этап' — коротко это «ЛЧ · Общий этап».
     """
     parts = [part.strip() for part in name.split(".") if part.strip()]
-    low = name.lower()
+    head = (parts[0] if parts else "").lower()
     for needle, short in _CUPS:
-        if low.startswith(needle):
+        if head.startswith(needle):
             stage = parts[1] if len(parts) > 1 else ""
             return f"{short} · {stage}"[:limit] if stage else short
     if len(parts) > 1:
