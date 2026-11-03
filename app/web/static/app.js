@@ -172,6 +172,31 @@
     return tag;
   }
 
+  function oddButton(match, side, value, flashKey, onPick, compact) {
+    const btn = el("button", "odd" + (compact ? " small" : ""));
+    btn.type = "button";
+    const name = el("span", "name", side === "a" ? match.team_a : match.team_b);
+    const val = el("span", "val", oddsText(value));
+
+    const prev = state.oddsPrev[flashKey];
+    if (prev !== undefined && Number(prev) !== Number(value)) {
+      // линия сдвинулась: мягко подсвечиваем — вверх зелёным, вниз красным
+      const grew = Number(value) > Number(prev);
+      const arrow = el("span", "arrow", grew ? "▲" : "▼");
+      val.classList.add(grew ? "up" : "down");
+      val.append(arrow);
+      setTimeout(() => {
+        val.classList.remove("up", "down");
+        arrow.remove();
+      }, 1400);
+    }
+    state.oddsPrev[flashKey] = value;
+
+    btn.append(name, val);
+    btn.addEventListener("click", onPick);
+    return btn;
+  }
+
   function renderCard(match) {
     const isLive = match.status === "live";
     const isWaiting = match.status === "awaiting";
@@ -194,36 +219,48 @@
       card.append(board);
     }
 
+    const closed = isWaiting || match.status === "finished" || match.status === "cancelled";
+    const maps = Array.isArray(match.maps) ? match.maps : [];
+
+    if (maps.length) card.append(el("div", "market-title", "Победа в матче"));
+
     const teams = el("div", "teams");
     ["a", "b"].forEach((side) => {
       const row = el("div", "team");
-      const btn = el("button", "odd");
-      btn.type = "button";
-      const raw = side === "a" ? match.odds_a : match.odds_b;
-      const name = el("span", "name", side === "a" ? match.team_a : match.team_b);
-      const val = el("span", "val", oddsText(raw));
-      const prev = state.oddsPrev[match.id + ":" + side];
-      if (prev !== undefined && Number(prev) !== Number(raw)) {
-        // линия сдвинулась: мягко подсвечиваем — вверх зелёным, вниз красным
-        const grew = Number(raw) > Number(prev);
-        const arrow = el("span", "arrow", grew ? "▲" : "▼");
-        val.classList.add(grew ? "up" : "down");
-        val.append(arrow);
-        setTimeout(() => {
-          val.classList.remove("up", "down");
-          arrow.remove();
-        }, 1400);
-      }
-      state.oddsPrev[match.id + ":" + side] = raw;
-      if (isWaiting || match.status === "finished" || match.status === "cancelled") {
-        btn.disabled = true;  // исход уже разыгран — ставить не на что
-      }
-      btn.append(name, val);
-      btn.addEventListener("click", () => openAmountSheet(match, side));
+      const btn = oddButton(
+        match, side, side === "a" ? match.odds_a : match.odds_b,
+        match.id + ":" + side,
+        () => openAmountSheet(match, side),
+      );
+      if (closed) btn.disabled = true;  // исход уже разыгран — ставить не на что
       row.append(btn);
       teams.append(row);
     });
     card.append(teams);
+
+    if (maps.length) {
+      // отдельные рынки: кто заберёт конкретную карту
+      const box = el("div", "maps");
+      maps.forEach((card_market) => {
+        const row = el("div", "maprow");
+        row.append(el("span", "maplabel", `Карта ${card_market.number}`));
+        const closedMap = closed || card_market.status === "finished" ||
+          card_market.status === "cancelled";
+        ["a", "b"].forEach((side) => {
+          const btn = oddButton(
+            match, side,
+            side === "a" ? card_market.odds_a : card_market.odds_b,
+            "m" + card_market.id + ":" + side,
+            () => openAmountSheet(match, side, card_market),
+            true,
+          );
+          if (closedMap) btn.disabled = true;
+          row.append(btn);
+        });
+        box.append(row);
+      });
+      card.append(box);
+    }
 
     const actions = el("div", "custom");
     actions.style.margin = "9px 0 0";
@@ -536,14 +573,21 @@
   }
   function closeSheet() { $("#sheetWrap").classList.remove("show"); }
 
-  function openAmountSheet(match, side) {
+  function openAmountSheet(match, side, map) {
     haptic("light");
     const team = side === "a" ? match.team_a : match.team_b;
-    const odd = side === "a" ? match.odds_a : match.odds_b;
+    const odd = map
+      ? (side === "a" ? map.odds_a : map.odds_b)
+      : (side === "a" ? match.odds_a : match.odds_b);
+    const marketTitle = map ? `Карта ${map.number} · ${team}` : team;
+    const body = map
+      ? { match_id: match.id, side, market: "map", map_id: map.id }
+      : { match_id: match.id, side, market: "match" };
 
     openSheet((sheet) => {
-      sheet.append(el("h3", null, team));
-      sheet.append(el("div", "sub", `${match.short_tournament} · кэф ${oddsText(odd)} · ${timeText(match.start_time)}`));
+      sheet.append(el("h3", null, marketTitle));
+      sheet.append(el("div", "sub",
+        `${match.short_tournament} · ${team} · кэф ${oddsText(odd)} · ${timeText(match.start_time)}`));
 
       const summary = el("div", "summary");
       const sumText = el("div");
@@ -607,7 +651,10 @@
         place.disabled = true;
         place.textContent = "Отправляю…";
         try {
-          const data = await api("/api/bet", { method: "POST", body: { match_id: match.id, side, amount: chosen } });
+          const data = await api("/api/bet", {
+            method: "POST",
+            body: Object.assign({}, body, { amount: chosen }),
+          });
           setBalance(data.balance);
           closeSheet();
           haptic("ok");

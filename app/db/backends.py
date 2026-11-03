@@ -57,6 +57,22 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status, start_time);
 CREATE INDEX IF NOT EXISTS idx_matches_fonbet ON matches(fonbet_id);
 
+CREATE TABLE IF NOT EXISTS match_maps (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id    INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    fonbet_id   INTEGER NOT NULL UNIQUE,
+    map_number  INTEGER NOT NULL,
+    odds_a      REAL,
+    odds_b      REAL,
+    score_a     INTEGER,
+    score_b     INTEGER,
+    status      TEXT    NOT NULL DEFAULT 'open',
+    winner      TEXT,
+    created_at  INTEGER NOT NULL,
+    finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_maps_match ON match_maps(match_id);
+
 CREATE TABLE IF NOT EXISTS bets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     match_id   INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
@@ -66,6 +82,8 @@ CREATE TABLE IF NOT EXISTS bets (
     amount     INTEGER NOT NULL,
     odds       REAL    NOT NULL,
     payout     INTEGER,
+    market     TEXT    NOT NULL DEFAULT 'match',
+    map_id     INTEGER,
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bets_match ON bets(match_id);

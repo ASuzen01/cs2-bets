@@ -7,8 +7,11 @@
     sports[]         — дерево/сегменты турниров (имена вида "Counter-Strike. IEM Пекин...")
     events[]         — события, level=1 — сам матч (level 2/3 — карты и субрынки)
     customFactors[]  — кэфы: {e: eventId, factors: [{f: id, v: значение}]}
-    eventMiscs[]     — счёт: {id: eventId, score1, score2}
+    eventMiscs[]     — счёт: {id: eventId, score1, score2} (до конца карты — раунды)
     liveEventInfos[] — live-детали, в т.ч. finished
+
+Карты матча — это отдельные события level=2 с parentId = id матча и именем «1-я карта».
+У них те же факторы 921/923, то есть кэфы на победителя конкретной карты.
 
 Важно: Fonbet не публикует стабильный контракт API. Все обращения идут через один
 класс, чтобы источник можно было заменить (легальный odds-провайдер) без правок логики.
@@ -20,6 +23,7 @@ import asyncio
 import gzip
 import json
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +40,29 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+
+
+MAP_NUMBER_RE = re.compile(r"(\d+)\s*-?\s*я?\s*карт", re.IGNORECASE)
+
+
+@dataclass(slots=True)
+class FonbetMap:
+    """Отдельная карта матча: кэфы на её победителя и счёт по раундам."""
+
+    event_id: int
+    parent_id: int
+    map_number: int
+    odds_a: float | None
+    odds_b: float | None
+    score_a: int | None = None
+    score_b: int | None = None
+    finished: bool = False
+
+    @property
+    def score_text(self) -> str | None:
+        if self.score_a is None or self.score_b is None:
+            return None
+        return f"{self.score_a}:{self.score_b}"
 
 
 @dataclass(slots=True)
@@ -181,6 +208,69 @@ class FonbetClient:
                 )
             )
         return result
+
+
+def _map_number(name: str, fallback: int) -> int:
+    """«1-я карта» → 1; если номер не разобрали — порядковый номер события."""
+    match = MAP_NUMBER_RE.search(name or "")
+    return int(match.group(1)) if match else fallback
+
+
+def parse_maps(packet: dict[str, Any], client: FonbetClient) -> dict[int, list[FonbetMap]]:
+    """Карты для уже отобранных матчей: parent_id → [1-я карта, 2-я карта, ...]."""
+    matches = client.parse(packet)
+    parents = {match.event_id: match for match in matches}
+    if not parents:
+        return {}
+
+    factors = {b["e"]: b.get("factors", []) for b in packet.get("customFactors", []) if "e" in b}
+    miscs = {m["id"]: m for m in packet.get("eventMiscs", []) if "id" in m}
+    lives = {
+        info["eventId"]: info for info in packet.get("liveEventInfos", []) if "eventId" in info
+    }
+
+    result: dict[int, list[FonbetMap]] = {}
+    for event in packet.get("events", []):
+        if event.get("level") != 2:
+            continue
+        parent_id = event.get("parentId")
+        if parent_id not in parents:
+            continue
+        name = str(event.get("name") or "")
+        if "карта" not in name.lower() or "показател" in name.lower():
+            continue
+
+        odds_a = odds_b = None
+        for factor in factors.get(event["id"], []):
+            value = factor.get("v")
+            if not value:
+                continue
+            if factor.get("f") == FACTOR_TEAM_A:
+                odds_a = float(value)
+            elif factor.get("f") == FACTOR_TEAM_B:
+                odds_b = float(value)
+        if odds_a is None or odds_b is None:
+            continue
+
+        misc = miscs.get(event["id"], {})
+        live = lives.get(event["id"], {})
+        cards = result.setdefault(int(parent_id), [])
+        cards.append(
+            FonbetMap(
+                event_id=int(event["id"]),
+                parent_id=int(parent_id),
+                map_number=_map_number(name, len(cards) + 1),
+                odds_a=odds_a,
+                odds_b=odds_b,
+                score_a=_int_or_none(misc.get("score1")),
+                score_b=_int_or_none(misc.get("score2")),
+                finished=bool(live.get("finished") or misc.get("finished")),
+            )
+        )
+
+    for cards in result.values():
+        cards.sort(key=lambda card: card.map_number)
+    return result
 
 
 def _int_or_none(value: Any) -> int | None:

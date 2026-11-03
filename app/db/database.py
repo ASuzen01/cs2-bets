@@ -27,6 +27,8 @@ from app.db.backends import (
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "score_a", "ALTER TABLE matches ADD COLUMN score_a INTEGER"),
     ("matches", "score_b", "ALTER TABLE matches ADD COLUMN score_b INTEGER"),
+    ("bets", "market", "ALTER TABLE bets ADD COLUMN market TEXT NOT NULL DEFAULT 'match'"),
+    ("bets", "map_id", "ALTER TABLE bets ADD COLUMN map_id INTEGER"),
 )
 
 
@@ -403,6 +405,240 @@ class Database:
         )
 
     # ------------------------------------------------------------------- bets
+    # ------------------------------------------------------------------ карты
+    async def upsert_map(
+        self,
+        *,
+        match_id: int,
+        fonbet_id: int,
+        map_number: int,
+        odds_a: float | None,
+        odds_b: float | None,
+        score_a: int | None = None,
+        score_b: int | None = None,
+    ) -> tuple[Any, bool]:
+        """Карта матча: кэфы на её победителя + счёт по раундам."""
+        now = int(time.time())
+        existing = await self._fetchone(
+            "SELECT * FROM match_maps WHERE fonbet_id = ?", (fonbet_id,)
+        )
+        if existing is None:
+            await self.conn.execute(
+                """
+                INSERT INTO match_maps (match_id, fonbet_id, map_number, odds_a, odds_b,
+                                        score_a, score_b, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                """,
+                (match_id, fonbet_id, map_number, odds_a, odds_b, score_a, score_b, now),
+            )
+            await self.conn.commit()
+            created = await self._fetchone(
+                "SELECT * FROM match_maps WHERE fonbet_id = ?", (fonbet_id,)
+            )
+            assert created is not None
+            return created, True
+
+        if existing["status"] in ("open", "live"):
+            await self.conn.execute(
+                """
+                UPDATE match_maps SET odds_a = ?, odds_b = ?, score_a = ?, score_b = ?
+                WHERE id = ?
+                """,
+                (
+                    odds_a if odds_a is not None else existing["odds_a"],
+                    odds_b if odds_b is not None else existing["odds_b"],
+                    score_a if score_a is not None else existing["score_a"],
+                    score_b if score_b is not None else existing["score_b"],
+                    existing["id"],
+                ),
+            )
+            await self.conn.commit()
+            refreshed = await self._fetchone(
+                "SELECT * FROM match_maps WHERE id = ?", (existing["id"],)
+            )
+            return refreshed or existing, False
+        return existing, False
+
+    async def match_maps(self, match_id: int) -> list[Any]:
+        return await self._fetchall(
+            "SELECT * FROM match_maps WHERE match_id = ? ORDER BY map_number", (match_id,)
+        )
+
+    async def maps_for_matches(self, match_ids: Sequence[int]) -> dict[int, list[Any]]:
+        """Карты сразу для списка матчей — один запрос на экран."""
+        if not match_ids:
+            return {}
+        placeholders = ",".join("?" for _ in match_ids)
+        rows = await self._fetchall(
+            f"SELECT * FROM match_maps WHERE match_id IN ({placeholders}) ORDER BY map_number",
+            tuple(int(item) for item in match_ids),
+        )
+        grouped: dict[int, list[Any]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["match_id"]), []).append(row)
+        return grouped
+
+    async def maps_by_status(self, statuses: Sequence[str]) -> list[Any]:
+        placeholders = ",".join("?" for _ in statuses)
+        return await self._fetchall(
+            f"SELECT * FROM match_maps WHERE status IN ({placeholders}) ORDER BY id",
+            tuple(statuses),
+        )
+
+    async def get_map(self, map_id: int) -> Any | None:
+        return await self._fetchone("SELECT * FROM match_maps WHERE id = ?", (map_id,))
+
+    async def set_map_status(self, map_id: int, status: str) -> None:
+        await self.conn.execute(
+            "UPDATE match_maps SET status = ? WHERE id = ?", (status, map_id)
+        )
+        await self.conn.commit()
+
+    async def start_maps_of_match(self, match_id: int) -> list[Any]:
+        """Матч начался — карты переезжают из линии в live (ставки при live_betting остаются)."""
+        rows = await self._fetchall(
+            "SELECT * FROM match_maps WHERE match_id = ? AND status = 'open'", (match_id,)
+        )
+        for row in rows:
+            await self.conn.execute(
+                "UPDATE match_maps SET status = 'live' WHERE id = ?", (row["id"],)
+            )
+        await self.conn.commit()
+        return rows
+
+    async def place_map_bet(
+        self, map_id: int, user_id: int, chat_id: int | None, side: str, amount: int
+    ) -> tuple[int, float]:
+        """Ставка на победителя конкретной карты. Возвращает (новый баланс, кэф)."""
+        if side not in ("a", "b"):
+            raise InvalidBet("Сторона должна быть 1 или 2")
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM match_maps WHERE id = ?", (map_id,)) as cur:
+                card = await cur.fetchone()
+            if card is None:
+                raise MatchNotFound("Карта не найдена")
+            async with conn.execute(
+                "SELECT * FROM matches WHERE id = ?", (int(card["match_id"]),)
+            ) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+
+            refusal = self._betting_refusal(match, now)
+            if refusal:
+                raise MatchNotOpen(refusal)
+            if str(card["status"]) not in ("open", "live"):
+                raise MatchNotOpen("Ставки на эту карту закрыты")
+
+            odds = card["odds_a"] if side == "a" else card["odds_b"]
+            if not odds:
+                raise InvalidBet("На этот исход нет кэфа")
+
+            cur = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (amount, user_id, amount),
+            )
+            if cur.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+
+            await conn.execute(
+                """
+                INSERT INTO bets (match_id, user_id, chat_id, side, amount, odds,
+                                  market, map_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'map', ?, ?)
+                """,
+                (int(match["id"]), user_id, chat_id, side, amount, float(odds), map_id, now),
+            )
+            await self._ledger(
+                conn, user_id, -amount, f"ставка · карта {int(card['map_number'])}", now
+            )
+            async with conn.execute(
+                "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+            ) as cur2:
+                row = await cur2.fetchone()
+        return (int(row["balance"]) if row else 0), float(odds)
+
+    async def settle_map(
+        self, map_id: int, winner: str, source: str = "fonbet"
+    ) -> dict[str, Any]:
+        """Расчёт карты: платим только ставкам на эту карту."""
+        if winner not in ("a", "b"):
+            raise InvalidBet("Победитель должен быть 1 или 2")
+
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM match_maps WHERE id = ?", (map_id,)) as cur:
+                card = await cur.fetchone()
+            if card is None:
+                raise MatchNotFound("Карта не найдена")
+            if str(card["status"]) in ("finished", "cancelled"):
+                raise MatchAlreadySettled("Карта уже рассчитана")
+            async with conn.execute(
+                "SELECT * FROM matches WHERE id = ?", (int(card["match_id"]),)
+            ) as cur:
+                match = await cur.fetchone()
+
+            async with conn.execute(
+                "SELECT * FROM bets WHERE map_id = ? AND market = 'map'", (map_id,)
+            ) as cur:
+                bets = list(await cur.fetchall())
+
+            paid = 0
+            payouts: dict[int, int] = {}
+            settlements: list[dict[str, Any]] = []
+            for bet in bets:
+                amount = int(bet["amount"])
+                win = bet["side"] == winner
+                payout = round(amount * float(bet["odds"])) if win else 0
+                if win:
+                    paid += payout
+                    payouts[int(bet["user_id"])] = payouts.get(int(bet["user_id"]), 0) + payout
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "side": str(bet["side"]),
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": payout,
+                        "won": win,
+                    }
+                )
+                await conn.execute(
+                    "UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"])
+                )
+
+            for user_id, total in payouts.items():
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
+                )
+                await self._ledger(
+                    conn, user_id, total, f"выплата · карта {int(card['map_number'])}"
+                )
+
+            await conn.execute(
+                "UPDATE match_maps SET status = 'finished', winner = ?, finished_at = ? WHERE id = ?",
+                (winner, int(time.time()), map_id),
+            )
+
+        team_a = str(match["team_a"]) if match is not None else ""
+        team_b = str(match["team_b"]) if match is not None else ""
+        return {
+            "map_id": map_id,
+            "map_number": int(card["map_number"]),
+            "team_a": team_a,
+            "team_b": team_b,
+            "team": team_a if winner == "a" else team_b,
+            "paid": paid,
+            "bets": len(bets),
+            "winners": len(payouts),
+            "settlements": settlements,
+            "source": source,
+        }
+
     @staticmethod
     def _betting_refusal(match: Any, now: int) -> str | None:
         """None — ставку принять можно; иначе текст отказа для игрока."""
@@ -673,10 +909,12 @@ class Database:
         return await self._fetchall(
             """
             SELECT b.id, b.match_id, b.side, b.amount, b.odds, b.payout, b.created_at,
+                   b.market, mm.map_number,
                    m.tournament, m.team_a, m.team_b, m.start_time,
                    m.status AS match_status, m.winner, m.finished_at
             FROM bets b
             JOIN matches m ON m.id = b.match_id
+            LEFT JOIN match_maps mm ON mm.id = b.map_id
             WHERE b.user_id = ?
             ORDER BY b.id DESC
             LIMIT ?
@@ -729,8 +967,9 @@ class Database:
             if match["status"] in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
+            # ставки на конкретные карты рассчитываются отдельно, по своей карте
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ?", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -801,8 +1040,9 @@ class Database:
             if match["status"] in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
+            # ставки на конкретные карты рассчитываются отдельно, по своей карте
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ?", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 

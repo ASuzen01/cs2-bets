@@ -81,6 +81,12 @@ async def health(_: web.Request) -> web.Response:
     })
 
 
+async def _line_with_maps(db: Database, rows: list[Any]) -> list[dict[str, Any]]:
+    """Матчи вместе с рынками «победа в карте» — один запрос на список."""
+    maps = await db.maps_for_matches([int(row["id"]) for row in rows])
+    return [match_payload(row, maps.get(int(row["id"]), [])) for row in rows]
+
+
 # ------------------------------------------------------------------ интерфейс
 def render_index(boot: dict[str, Any]) -> str:
     """Подставляет стартовые данные прямо в HTML — приложению не нужен лишний запрос."""
@@ -127,8 +133,8 @@ async def index(request: web.Request) -> web.Response:
             "balance": await db.get_balance(user["user_id"]),
         }
         boot["dev"] = user["dev"]
-        boot["matches"] = [match_payload(row) for row in await db.open_matches(limit=60)]
-        boot["live"] = [match_payload(row) for row in await db.live_matches(limit=40)]
+        boot["matches"] = await _line_with_maps(db, await db.open_matches(limit=60))
+        boot["live"] = await _line_with_maps(db, await db.live_matches(limit=40))
 
     return web.Response(text=render_index(boot), content_type="text/html")
 
@@ -152,8 +158,8 @@ async def api_state(request: web.Request) -> web.Response:
                 "balance": await db.get_balance(user_id),
                 "dev": user["dev"],
             },
-            "matches": [match_payload(row) for row in await db.open_matches(limit=60)],
-            "live": [match_payload(row) for row in await db.live_matches(limit=40)],
+            "matches": await _line_with_maps(db, await db.open_matches(limit=60)),
+            "live": await _line_with_maps(db, await db.live_matches(limit=40)),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "limits": {
@@ -188,17 +194,29 @@ async def api_bet(request: web.Request) -> web.Response:
     match_id = int(body.get("match_id") or 0)
     side = str(body.get("side") or "")
     amount = int(body.get("amount") or 0)
+    market = str(body.get("market") or "match")
+    map_id = int(body.get("map_id") or 0)
     if side not in ("a", "b"):
         return _bad("Неверный исход")
 
-    balance, odds = await db.place_bet(match_id, int(user["user_id"]), None, side, amount)
-    match = await db.get_match(match_id)
+    if market == "map":
+        if not map_id:
+            return _bad("Не выбрана карта")
+        balance, odds = await db.place_map_bet(
+            map_id, int(user["user_id"]), None, side, amount
+        )
+        card = await db.get_map(map_id)
+        match = await db.get_match(int(card["match_id"])) if card is not None else None
+    else:
+        balance, odds = await db.place_bet(match_id, int(user["user_id"]), None, side, amount)
+        match = await db.get_match(match_id)
     return web.json_response(
         {
             "ok": True,
             "balance": balance,
             "odds": odds,
             "match": match_payload(match) if match is not None else None,
+            "market": market,
             "side": side,
             "amount": amount,
             "potential": round(amount * odds),

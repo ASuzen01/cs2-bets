@@ -138,10 +138,15 @@ def bet_result(
     payout: int,
     balance: int,
     score: str | None = None,
+    market_label: str | None = None,
 ) -> str:
-    """Персональное сообщение игроку по его одиночной ставке."""
+    """Персональное сообщение игроку по его одиночной ставке.
+
+    market_label — «Карта 1», если ставка была на конкретную карту, а не на матч.
+    """
     score_part = f" · {score}" if score else ""
-    head = f"{escape(str(team_a))} — {escape(str(team_b))}{score_part}"
+    market_part = f" · <b>{escape(str(market_label))}</b>" if market_label else ""
+    head = f"{escape(str(team_a))} — {escape(str(team_b))}{market_part}{score_part}"
     stake_line = f"Ставка {money(amount)} на <b>{escape(str(picked))}</b> · кэф {odds_value:.2f}"
 
     if void:

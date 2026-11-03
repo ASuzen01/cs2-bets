@@ -20,7 +20,21 @@ def short_tournament(name: str, limit: int = 42) -> str:
     return name[:limit]
 
 
-def match_payload(row: Any) -> dict[str, Any]:
+def map_payload(row: Any) -> dict[str, Any]:
+    """Рынок «победитель конкретной карты»."""
+    score_a, score_b = row["score_a"], row["score_b"]
+    return {
+        "id": int(row["id"]),
+        "number": int(row["map_number"]),
+        "odds_a": float(row["odds_a"]) if row["odds_a"] else None,
+        "odds_b": float(row["odds_b"]) if row["odds_b"] else None,
+        "status": str(row["status"]),
+        "winner": row["winner"],
+        "score": f"{int(score_a)}:{int(score_b)}" if score_a is not None and score_b is not None else None,
+    }
+
+
+def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
     status = str(row["status"])
     # sqlite3.Row итерируется значениями, поэтому проверяем именно ключи
     score_a = row["score_a"] if "score_a" in row.keys() else None  # noqa: SIM118
@@ -42,6 +56,8 @@ def match_payload(row: Any) -> dict[str, Any]:
         "score": score,
         "score_a": int(score_a) if score_a is not None else None,
         "score_b": int(score_b) if score_b is not None else None,
+        # ставки на карты: «Карта 1», «Карта 2»…
+        "maps": [map_payload(card) for card in maps],
     }
 
 
@@ -105,12 +121,19 @@ def _single_item(row: Any) -> dict[str, Any]:
     team = str(row["team_a"] if side == "a" else row["team_b"])
     amount = int(row["amount"])
     odds = float(row["odds"])
+    cells = dict(row)  # dict() работает и для sqlite3.Row, и для dict из Postgres
+    market = str(cells.get("market") or "match")
+    map_number = cells.get("map_number")
+    market_label = f"Карта {int(map_number)}" if market == "map" and map_number else None
+    subtitle = f"Ставка на {team}" + (f" · {market_label}" if market_label else "")
     return {
         "kind": "single",
         "id": int(row["id"]),
         "match_id": int(row["match_id"]),
         "title": f"{row['team_a']} — {row['team_b']}",
-        "subtitle": f"Ставка на {team}",
+        "subtitle": subtitle,
+        "market": market,
+        "market_label": market_label,
         "tournament": str(row["tournament"]),
         "stake": amount,
         "odds": round(odds, 2),
@@ -215,6 +238,7 @@ __all__ = [
     "display_name",
     "express_payload",
     "legs_word",
+    "map_payload",
     "match_payload",
     "short_tournament",
 ]

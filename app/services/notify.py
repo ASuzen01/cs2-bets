@@ -82,4 +82,44 @@ async def notify_bettors(
             await safe_send(bot, user_id, text, reply_markup=markup)
 
 
-__all__ = ["notify_bettors", "safe_send", "send_with_mascot"]
+async def notify_map_bettors(
+    bot: Bot,
+    db: Database,
+    result: dict[str, Any],
+    *,
+    score: str | None = None,
+) -> None:
+    """Персональное сообщение по ставкам на конкретную карту."""
+    settlements = result.get("settlements") or []
+    if not settlements:
+        return
+
+    team_a = str(result.get("team_a") or "")
+    team_b = str(result.get("team_b") or "")
+    label = f"Карта {int(result.get('map_number') or 0)}"
+    markup = keyboards.app_kb()
+
+    for item in settlements:
+        user_id = int(item["user_id"])
+        picked = team_a if item["side"] == "a" else team_b
+        balance = await db.get_balance(user_id)
+        text = texts.bet_result(
+            won=bool(item["won"]),
+            void=False,
+            team_a=team_a,
+            team_b=team_b,
+            picked=picked,
+            amount=int(item["amount"]),
+            odds_value=float(item["odds"]),
+            payout=int(item["payout"]),
+            balance=balance,
+            score=score,
+            market_label=label,
+        )
+        if item["won"]:
+            await send_with_mascot(bot, user_id, text, markup)
+        else:
+            await safe_send(bot, user_id, text, reply_markup=markup)
+
+
+__all__ = ["notify_bettors", "notify_map_bettors", "safe_send", "send_with_mascot"]

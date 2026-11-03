@@ -14,8 +14,8 @@ from aiogram.exceptions import TelegramAPIError
 from app import keyboards, texts
 from app.config import settings
 from app.db import Database
-from app.services.fonbet import FonbetClient, FonbetMatch
-from app.services.notify import notify_bettors
+from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
+from app.services.notify import notify_bettors, notify_map_bettors
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ class MatchSyncer:
     async def tick(self) -> dict[str, Any]:
         packet = await self.client.fetch_packet()
         matches = self.client.parse(packet)
+        maps_by_parent = parse_maps(packet, self.client)
         stats = {
             "fetched": len(matches),
             "created": 0,
@@ -70,17 +71,20 @@ class MatchSyncer:
             "closed": 0,
             "settled": 0,
             "awaiting": 0,
+            "maps_settled": 0,
         }
 
-        await self._store(matches, stats)
+        await self._store(matches, maps_by_parent, stats)
         await self._close_started(stats)
         await self._settle(matches, stats)
+        await self._settle_maps(maps_by_parent, stats)
 
         self.last_sync_at = int(time.time())
         self.last_error = None
         log.info(
-            "Линия: %s матчей тир-1 (новых %s, закрыто %s, рассчитано %s, ждут подтверждения %s)",
-            stats["fetched"], stats["created"], stats["closed"], stats["settled"], stats["awaiting"],
+            "Линия: %s матчей (новых %s, закрыто %s, рассчитано %s, карт %s, ждут %s)",
+            stats["fetched"], stats["created"], stats["closed"], stats["settled"],
+            stats["maps_settled"], stats["awaiting"],
         )
         return stats
 
@@ -103,7 +107,12 @@ class MatchSyncer:
             return None
         return "a" if score_a > score_b else "b"
 
-    async def _store(self, matches: list[FonbetMatch], stats: dict[str, Any]) -> None:
+    async def _store(
+        self,
+        matches: list[FonbetMatch],
+        maps_by_parent: dict[int, list[FonbetMap]],
+        stats: dict[str, Any],
+    ) -> None:
         now = int(time.time())
         horizon = now + settings.autopost_horizon_hours * 3600
         chats = await self.db.list_autopost_chats() if settings.autopost_matches else []
@@ -124,6 +133,8 @@ class MatchSyncer:
                 score_a=match.score_a,   # счёт по картам: нужен для live-табло
                 score_b=match.score_b,
             )
+            await self._store_maps(row, match.event_id, maps_by_parent)
+
             if created:
                 stats["created"] += 1
                 should_post = posted < settings.autopost_limit and match.start_time <= horizon
@@ -132,6 +143,61 @@ class MatchSyncer:
                     await self._post_card(row, chats)
             else:
                 stats["updated"] += 1
+
+    async def _store_maps(
+        self, row: Any, fonbet_id: int, maps_by_parent: dict[int, list[FonbetMap]]
+    ) -> None:
+        """Кэфы на победителя каждой карты («1-я карта», «2-я карта»…)."""
+        for card in maps_by_parent.get(fonbet_id, []):
+            await self.db.upsert_map(
+                match_id=int(row["id"]),
+                fonbet_id=card.event_id,
+                map_number=card.map_number,
+                odds_a=card.odds_a,
+                odds_b=card.odds_b,
+                score_a=card.score_a,
+                score_b=card.score_b,
+            )
+
+    @staticmethod
+    def _map_winner(score_a: int | None, score_b: int | None) -> str | None:
+        """Победитель карты по раундам: до 13, с разницей минимум 2 (овертайм — до 16+)."""
+        if score_a is None or score_b is None or score_a == score_b:
+            return None
+        high, low = max(score_a, score_b), min(score_a, score_b)
+        if high < 13 or high - low < 2:
+            return None
+        return "a" if score_a > score_b else "b"
+
+    async def _settle_maps(self, maps_by_parent: dict[int, list[FonbetMap]], stats: dict) -> None:
+        """Раскладываем ставки по картам, как только карта доиграна."""
+        by_event: dict[int, FonbetMap] = {}
+        for cards in maps_by_parent.values():
+            for card in cards:
+                by_event[card.event_id] = card
+
+        for row in await self.db.maps_by_status(["open", "live"]):
+            card = by_event.get(int(row["fonbet_id"]))
+            if card is None:
+                # карта ушла из линии, а счёта нет — пусть подтвердит админ через /maps
+                await self.db.set_map_status(int(row["id"]), "awaiting")
+                continue
+            if not card.finished:
+                continue
+            winner = self._map_winner(card.score_a, card.score_b)
+            if winner is None:
+                await self.db.set_map_status(int(row["id"]), "awaiting")
+                continue
+            try:
+                result = await self.db.settle_map(int(row["id"]), winner, source="fonbet")
+            except Exception:
+                log.exception("Не смог рассчитать карту #%s", row["id"])
+                continue
+            stats["maps_settled"] += 1
+            await notify_map_bettors(self.bot, self.db, result, score=card.score_text)
+            log.info(
+                "Карта #%s рассчитана: %s (%s)", row["id"], result["team"], card.score_text
+            )
 
     async def _post_card(self, match: Any, chats: list[Any]) -> None:
         markup = keyboards.app_kb(group=True)  # в группе web_app-кнопка не отрисуется
@@ -151,6 +217,7 @@ class MatchSyncer:
         # матч переезжает из линии в live; при live_betting приём ставок при этом не закрывается
         for match in await self.db.close_started_matches():
             stats["closed"] += 1
+            await self.db.start_maps_of_match(int(match["id"]))
             await self._edit_card(int(match["id"]))
             # обновим карточку и в остальных чатах: там своя клавиатура без кнопок
             for chat_id in await self.db.chat_ids_with_bets(int(match["id"])):
