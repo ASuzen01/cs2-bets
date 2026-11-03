@@ -89,6 +89,20 @@ async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> None:
         log.warning("Не удалось отправить сообщение в чат %s: %s", chat_id, exc)
 
 
+def _side_label(side: str, team_a: str, team_b: str) -> str:
+    """Что именно поставил игрок: команда, ничья или конкретный рынок."""
+    if side == "a":
+        return team_a
+    if side == "b":
+        return team_b
+    if side == "x":
+        return "Ничья"
+    from app.services.football import market_label, parse_side
+
+    parsed = parse_side(side)
+    return market_label(parsed[0], parsed[1]) if parsed else side
+
+
 async def notify_bettors(
     bot: Bot,
     db: Database,
@@ -108,7 +122,7 @@ async def notify_bettors(
 
     for item in settlements:
         user_id = int(item["user_id"])
-        picked = team_a if item["side"] == "a" else team_b
+        picked = item.get("label") or _side_label(str(item["side"]), team_a, team_b)
         balance = await db.get_balance(user_id)
         text = texts.bet_result(
             won=bool(item["won"]) and not void,
@@ -145,7 +159,7 @@ async def notify_map_bettors(
 
     for item in settlements:
         user_id = int(item["user_id"])
-        picked = team_a if item["side"] == "a" else team_b
+        picked = item.get("label") or _side_label(str(item["side"]), team_a, team_b)
         balance = await db.get_balance(user_id)
         text = texts.bet_result(
             won=bool(item["won"]),

@@ -10,14 +10,42 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from app.db import Database
+from app.services.football import market_label, markets_of, parse_side
+
+_CUPS = (
+    ("лига чемпионов уефа", "ЛЧ"),
+    ("лига европы уефа", "ЛЕ"),
+    ("лига конференций уефа", "ЛК"),
+)
 
 
 def short_tournament(name: str, limit: int = 42) -> str:
-    """'Counter-Strike. IEM Пекин. Групповой этап. Bo3' → 'IEM Пекин'."""
+    """'Counter-Strike. IEM Пекин. Групповой этап. Bo3' → 'IEM Пекин'.
+
+    У футбольных еврокубков название начинается с турнира, а не с вида спорта:
+    'Лига Чемпионов УЕФА. Общий этап' — коротко это «ЛЧ · Общий этап».
+    """
     parts = [part.strip() for part in name.split(".") if part.strip()]
+    low = name.lower()
+    for needle, short in _CUPS:
+        if low.startswith(needle):
+            stage = parts[1] if len(parts) > 1 else ""
+            return f"{short} · {stage}"[:limit] if stage else short
     if len(parts) > 1:
         return parts[1][:limit]
     return name[:limit]
+
+
+def side_label(side: str, team_a: str, team_b: str) -> str:
+    """Подпись исхода: команда, ничья или конкретный рынок (тотал, фора, счёт)."""
+    if side == "a":
+        return team_a
+    if side == "b":
+        return team_b
+    if side == "x":
+        return "Ничья"
+    parsed = parse_side(side)
+    return market_label(parsed[0], parsed[1]) if parsed else side
 
 
 def map_payload(row: Any) -> dict[str, Any]:
@@ -58,6 +86,10 @@ def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
         "score_b": int(score_b) if score_b is not None else None,
         # ставки на карты: «Карта 1», «Карта 2»…
         "maps": [map_payload(card) for card in maps],
+        "sport": str(row["sport"]) if "sport" in row.keys() else "cs2",  # noqa: SIM118
+        "odds_x": float(row["odds_x"]) if ("odds_x" in row.keys() and row["odds_x"]) else None,  # noqa: SIM118
+        # роспись футбола: тоталы, форы, точный счёт. Для CS2 список пустой
+        "markets": markets_of(row) if "sport" in row.keys() else [],  # noqa: SIM118
     }
 
 
@@ -73,7 +105,8 @@ def bet_payload(row: Any) -> dict[str, Any]:
         "side": side,
         "amount": amount,
         "odds": odds,
-        "team": row["team_a"] if side == "a" else row["team_b"],
+        "label": side_label(side, str(row["team_a"]), str(row["team_b"])),
+        "team": side_label(side, str(row["team_a"]), str(row["team_b"])),
         "team_a": row["team_a"],
         "team_b": row["team_b"],
         "market": market,
@@ -123,7 +156,7 @@ def legs_word(count: int) -> str:
 # ------------------------------------------------------------ история ставок
 def _single_item(row: Any) -> dict[str, Any]:
     side = str(row["side"])
-    team = str(row["team_a"] if side == "a" else row["team_b"])
+    team = side_label(side, str(row["team_a"]), str(row["team_b"]))
     amount = int(row["amount"])
     odds = float(row["odds"])
     cells = dict(row)  # dict() работает и для sqlite3.Row, и для dict из Postgres
@@ -156,7 +189,7 @@ def _leg_view(leg: Any) -> dict[str, Any]:
         "match_id": int(leg["match_id"]),
         "side": side,
         "odds": float(leg["odds"]),
-        "team": str(leg["team_a"] if side == "a" else leg["team_b"]),
+        "team": side_label(side, str(leg["team_a"]), str(leg["team_b"])),
         "match": f"{leg['team_a']} — {leg['team_b']}",
         "result": str(leg["result"]),
         "match_status": str(leg["match_status"]),

@@ -21,6 +21,7 @@ from aiohttp import web
 from app.config import settings
 from app.db import Database
 from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
+from app.services.football import market_label, parse_side
 from app.services.miniapp import AuthError
 from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.payloads import (
@@ -29,6 +30,7 @@ from app.web.payloads import (
     display_name,
     express_payload,
     match_payload,
+    side_label,
 )
 
 log = logging.getLogger(__name__)
@@ -150,8 +152,11 @@ async def index(request: web.Request) -> web.Response:
             "balance": await db.get_balance(user["user_id"]),
         }
         boot["dev"] = user["dev"]
-        boot["matches"] = await _line_with_maps(db, await db.open_matches(limit=60))
+        boot["matches"] = await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2"))
         boot["live"] = await _line_with_maps(db, await db.live_matches(limit=40))
+        boot["football"] = await _line_with_maps(
+            db, await db.open_matches(limit=60, sport="football")
+        )
 
     return web.Response(text=render_index(boot), content_type="text/html")
 
@@ -175,8 +180,11 @@ async def api_state(request: web.Request) -> web.Response:
                 "balance": await db.get_balance(user_id),
                 "dev": user["dev"],
             },
-            "matches": await _line_with_maps(db, await db.open_matches(limit=60)),
+            "matches": await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2")),
             "live": await _line_with_maps(db, await db.live_matches(limit=40)),
+            "football": await _line_with_maps(
+                db, await db.open_matches(limit=60, sport="football")
+            ),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "bonus": await _bonus_payload(db, user_id),
@@ -243,8 +251,31 @@ async def api_bet(request: web.Request) -> web.Response:
     amount = int(body.get("amount") or 0)
     market = str(body.get("market") or "match")
     map_id = int(body.get("map_id") or 0)
-    if side not in ("a", "b"):
+
+    parsed = parse_side(side)
+    if parsed is not None:      # рынок футбола: тотал, фора, точный счёт…
+        balance, odds = await db.place_football_bet(
+            match_id, int(user["user_id"]), None, parsed[0], parsed[1], amount
+        )
+        match = await db.get_match(match_id)
+        return web.json_response(
+            {
+                "ok": True,
+                "balance": balance,
+                "odds": odds,
+                "match": match_payload(match) if match is not None else None,
+                "market": "football",
+                "side": side,
+                "label": market_label(*parsed),
+                "amount": amount,
+                "potential": round(amount * odds),
+            }
+        )
+
+    if side not in ("a", "x", "b"):
         return _bad("Неверный исход")
+    if side == "x" and market != "match":
+        return _bad("Ничья — только для основного исхода")
 
     if market == "map":
         if not map_id:
@@ -283,7 +314,7 @@ async def api_express(request: web.Request) -> web.Response:
         for leg in raw_legs
         if isinstance(leg, dict)
     ]
-    if len(legs) < 2 or any(leg["side"] not in ("a", "b") for leg in legs):
+    if len(legs) < 2 or any(leg["side"] not in ("a", "x", "b") for leg in legs):
         return _bad("Нужно минимум 2 исхода")
 
     express_id, odds, balance = await db.place_express(
@@ -299,8 +330,12 @@ async def api_express(request: web.Request) -> web.Response:
             {
                 "match_id": leg["match_id"],
                 "side": leg["side"],
-                "team": match["team_a"] if leg["side"] == "a" else match["team_b"],
-                "odds": float(match["odds_a"] if leg["side"] == "a" else match["odds_b"]),
+                "team": side_label(
+                    leg["side"], str(match["team_a"]), str(match["team_b"])
+                ),
+                "odds": float(
+                    {"a": match["odds_a"], "x": match["odds_x"], "b": match["odds_b"]}[leg["side"]]
+                ),
             }
         )
 

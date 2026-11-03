@@ -8,6 +8,9 @@
   const state = {
     user: boot.user || null,
     matches: boot.matches || [],
+    football: boot.football || [],
+    sport: "cs2",
+    fbOpen: {},          // какие футбольные карточки раскрыты до полной росписи
     liveMatches: boot.live || [],   // матчи в эфире (state.live — флаг «данные загружены»)
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
@@ -174,6 +177,16 @@
   }
 
   function renderSegments() {
+    document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (state.sport === btn.dataset.sport) return;
+        state.sport = btn.dataset.sport;
+        state.segment = "line";
+        haptic("light");
+        renderMatches();
+        refreshState({ silent: true });
+      });
+    });
     document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.segment === state.segment);
     });
@@ -305,10 +318,131 @@
     return card;
   }
 
+  function teamName(match, side) {
+    if (side === "a") return match.team_a;
+    if (side === "b") return match.team_b;
+    if (side === "x") return "Ничья";
+    return side;
+  }
+
+  function sideOdds(match, side) {
+    if (side === "a") return match.odds_a;
+    if (side === "b") return match.odds_b;
+    if (side === "x") return match.odds_x;
+    return null;
+  }
+
+  function renderSportSegments() {
+    document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.sport === state.sport);
+    });
+  }
+
+  function renderFootballCard(match) {
+    const isLive = match.status === "live";
+    const closed = isLive || match.status !== "open";
+    // на live-табло счёт живой, а роспись уже не считается — она только для прематча
+    const card = el("div", "card" + (isLive ? " live" : ""));
+
+    const top = el("div", "top");
+    if (isLive) top.append(liveTag("LIVE", "live"));
+    top.append(el("span", "tour", match.short_tournament));
+    top.append(el("span", "kick", timeText(match.start_time)));
+    card.append(top);
+
+    const board = el("div", "fb-board");
+    const teams = el("div", "fb-teams");
+    teams.append(document.createTextNode(match.team_a));
+    teams.append(el("span", null, "—"));
+    teams.append(document.createTextNode(match.team_b));
+    board.append(teams);
+    if (match.score) board.append(el("div", "fb-score" + (isLive ? " live" : ""), match.score));
+    card.append(board);
+
+    card.append(el("div", "market-title", "Исход"));
+    const three = el("div", "fb-odds");
+    [["a", "П1"], ["x", "X"], ["b", "П2"]].forEach(([side, label]) => {
+      const value = sideOdds(match, side);
+      const btn = el("button", "odd");
+      btn.type = "button";
+      btn.append(el("span", "name", label));
+      btn.append(el("span", "val", value ? oddsText(value) : "—"));
+      btn.disabled = closed || !value;
+      btn.addEventListener("click", () => openAmountSheet(match, side));
+      three.append(btn);
+    });
+    card.append(three);
+
+    const markets = (Array.isArray(match.markets) ? match.markets : [])
+      .filter((market) => market.key !== "result");
+    if (markets.length && !closed) {
+      const open = Boolean(state.fbOpen[match.id]);
+      const toggle = el("button", "mkt-toggle" + (open ? " open" : ""));
+      toggle.type = "button";
+      toggle.append(el("span", null, open ? "Свернуть роспись" : "Вся роспись"));
+      toggle.append(el("span", "cnt", markets.length + " " + marketsWord(markets.length)));
+      toggle.addEventListener("click", () => {
+        state.fbOpen[match.id] = !open;
+        haptic("light");
+        renderMatches();
+      });
+      card.append(toggle);
+      if (open) card.append(renderMarketGroups(match, markets));
+    }
+
+    return card;
+  }
+
+  function renderMarketGroups(match, markets) {
+    const box = el("div", "mkt-body");
+    const order = [];
+    const groups = new Map();
+    markets.forEach((market) => {
+      if (!groups.has(market.group)) { groups.set(market.group, []); order.push(market.group); }
+      groups.get(market.group).push(market);
+    });
+
+    order.forEach((name) => {
+      const block = el("div", "mkt-group");
+      block.append(el("div", "mkt-title", name));
+      const grid = el("div", "mkt-grid");
+      if (name !== "Точный счёт") {
+        // рынки парные (ТБ/ТМ, Ф1/Ф2, Да/Нет): пара должна стоять в одной строке
+        grid.style.gridTemplateColumns = "repeat(2, 1fr)";
+      }
+      groups.get(name).forEach((market) => {
+        const chip = el("button", "mkt-chip");
+        chip.type = "button";
+        chip.append(el("span", "lbl", market.label));
+        chip.append(el("span", "val", oddsText(market.odds)));
+        chip.addEventListener("click", () => openAmountSheet(match, sideOfMarket(market), null, market));
+        grid.append(chip);
+      });
+      block.append(grid);
+      box.append(block);
+    });
+    return box;
+  }
+
+  function marketsWord(count) {
+    const tail = count % 100;
+    if (tail >= 11 && tail <= 14) return "рынков";
+    const last = count % 10;
+    if (last === 1) return "рынок";
+    if (last >= 2 && last <= 4) return "рынка";
+    return "рынков";
+  }
+
+  // сторона ставки для рынка: f:<ключ>:<параметр> — так её понимает сервер
+  function sideOfMarket(market) {
+    return "f:" + market.key + ":" + market.param;
+  }
+
   function renderMatches() {
     const host = $("#matches");
     host.textContent = "";
     renderSegments();
+    renderSportSegments();
 
     if (!state.user) {
       const message = boot.error && /Откройте/i.test(boot.error)
@@ -325,16 +459,22 @@
     }
 
     const liveMode = state.segment === "live";
-    const list = liveMode ? state.liveMatches : state.matches;
+    const footballMode = state.sport === "football";
+    const source = liveMode ? state.liveMatches : (footballMode ? state.football : state.matches);
+    const list = source.filter((match) => (match.sport || "cs2") === state.sport);
 
     if (!list.length) {
       host.append(emptyWithMascot(liveMode
         ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
-        : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."));
+        : (footballMode
+          ? "Футбольная линия пуста.\nМатчи Лиги Чемпионов подтянутся к следующему туру."
+          : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже.")));
       return;
     }
 
-    for (const match of list) host.append(renderCard(match));
+    for (const match of list) {
+      host.append(footballMode ? renderFootballCard(match) : renderCard(match));
+    }
   }
 
   function cartOdds() {
@@ -346,6 +486,7 @@
     if (!state.cart.length) return false;
     const byId = new Map();
     for (const match of state.matches) byId.set(match.id, match);
+    for (const match of state.football) byId.set(match.id, match);
     for (const match of state.liveMatches) byId.set(match.id, match);
 
     let changed = false;
@@ -363,7 +504,7 @@
         delete leg.missing;
         changed = true;
       }
-      const current = Number(leg.side === "a" ? match.odds_a : match.odds_b);
+      const current = Number(sideOdds(match, leg.side));
       if (!current) return;
       const previous = Number(leg.odds);
       if (current !== previous) {
@@ -612,16 +753,21 @@
   }
   function closeSheet() { $("#sheetWrap").classList.remove("show"); }
 
-  function openAmountSheet(match, side, map) {
+  function openAmountSheet(match, side, map, market) {
     haptic("light");
-    const team = side === "a" ? match.team_a : match.team_b;
-    const odd = map
-      ? (side === "a" ? map.odds_a : map.odds_b)
-      : (side === "a" ? match.odds_a : match.odds_b);
-    const marketTitle = map ? `Карта ${map.number} · ${team}` : team;
-    const body = map
-      ? { match_id: match.id, side, market: "map", map_id: map.id }
-      : { match_id: match.id, side, market: "match" };
+    const team = market ? market.label : teamName(match, side);
+    const odd = market
+      ? market.odds
+      : (map
+        ? (side === "a" ? map.odds_a : map.odds_b)
+        : sideOdds(match, side));
+    const marketTitle = market
+      ? `${team} · ${oddsText(market.odds)}`
+      : (map ? `Карта ${map.number} · ${team}` : team);
+    let body;
+    if (market) body = { match_id: match.id, side, market: "football" };
+    else if (map) body = { match_id: match.id, side, market: "map", map_id: map.id };
+    else body = { match_id: match.id, side, market: "match" };
 
     openSheet((sheet) => {
       sheet.append(el("h3", null, marketTitle));
@@ -819,8 +965,8 @@
       sheet.append(el("h3", null, "Какой исход берём?"));
       sheet.append(el("div", "sub", match.short_tournament));
       const pick = (side) => {
-        const team = side === "a" ? match.team_a : match.team_b;
-        const odd = side === "a" ? match.odds_a : match.odds_b;
+        const team = teamName(match, side);
+        const odd = sideOdds(match, side);
         state.cart.push({
           match_id: match.id,
           side,
@@ -1356,12 +1502,14 @@
     try {
       const data = await api("/api/state");
       const liveMatches = data.live || [];
-      const matchesJson = JSON.stringify([data.matches, liveMatches]);
+      const football = data.football || [];
+      const matchesJson = JSON.stringify([data.matches, liveMatches, football]);
       const matchesChanged = matchesJson !== state.matchesJson;
       const balanceBefore = state.user ? state.user.balance : null;
 
       state.user = data.user;
       state.matches = data.matches;
+      state.football = football;
       state.liveMatches = liveMatches;
       state.matchesJson = matchesJson;
       state.bets = data.bets;
@@ -1408,6 +1556,16 @@
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+    document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (state.sport === btn.dataset.sport) return;
+        state.sport = btn.dataset.sport;
+        state.segment = "line";
+        haptic("light");
+        renderMatches();
+        refreshState({ silent: true });
+      });
     });
     document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
       btn.addEventListener("click", () => {

@@ -114,6 +114,19 @@ def settled_text(result: Mapping[str, Any], match_id: int, score: str | None = N
         f"угадали: {result['winners']}"
     )
 
+def football_settled_text(result: Mapping[str, Any], match_id: int, score: str | None = None) -> str:
+    """Итог футбольного матча: счёт, сколько выплачено, сколько ставок угадало."""
+    score_part = f" · счёт <b>{score}</b>" if score else ""
+    refunded = int(result.get("refunded") or 0)
+    refund_part = f" · возвращено: {money(refunded)}" if refunded else ""
+    return (
+        f"⚽️ Матч #{match_id}: {escape(str(result['team_a']))} — "
+        f"{escape(str(result['team_b']))}{score_part}\n"
+        f"Выплачено: {money(int(result['paid']))} · ставок: {result['bets']} · "
+        f"угадали: {result['winners']}{refund_part}"
+    )
+
+
 def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
     score_part = f"\nСчёт в линии: <b>{score}</b>" if score else ""
     return (

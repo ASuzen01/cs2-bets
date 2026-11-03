@@ -286,3 +286,40 @@
   .legadd:disabled{opacity:.45}
   .legadd .count{margin-left:auto;font-variant-numeric:tabular-nums;color:inherit;opacity:.7;
     font-weight:700;font-size:11.5px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---------------------------------------------------------- футбол */
+  .segments.sports{margin-bottom:6px}
+  .segments.sports .seg{flex:0 0 auto;padding:6px 14px;border-radius:999px;font-size:13px}
+  .segments.sports .seg.active{background:var(--accent-soft);color:#bfe0ff;border-color:#2f5d85}
+
+  .fb-board{display:flex;align-items:center;gap:10px;margin:2px 0 10px}
+  .fb-teams{flex:1;min-width:0;font-weight:700;font-size:15px;line-height:1.3}
+  .fb-teams span{color:var(--muted);font-weight:600;margin:0 4px}
+  .fb-score{font-variant-numeric:tabular-nums;font-weight:800;font-size:19px;
+    background:#16222e;border:1px solid #26374a;border-radius:10px;padding:3px 10px}
+  .fb-score.live{color:#ff8f8f;border-color:#5a2b2b;background:#2a1a1c}
+
+  .fb-odds{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .fb-odds .odd{flex-direction:column;align-items:center;gap:2px;padding:8px 4px}
+  .fb-odds .odd .name{font-size:11px;color:var(--muted);font-weight:600;
+    max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fb-odds .odd .val{font-size:15px;margin:0}
+
+  .mkt-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    width:100%;margin-top:10px;padding:9px 12px;border-radius:12px;
+    background:#18242f;border:1px solid #26374a;font-size:13px;font-weight:600;color:#bfe0ff}
+  .mkt-toggle .cnt{color:var(--muted);font-weight:600;font-size:12px}
+  .mkt-toggle.open{border-color:#2f5d85;background:#1b2c3c}
+  .mkt-body{margin-top:8px;display:flex;flex-direction:column;gap:12px}
+  .mkt-group{border-top:1px solid var(--line);padding-top:9px}
+  .mkt-group:first-child{border-top:0;padding-top:0}
+  .mkt-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);font-weight:700;margin-bottom:6px}
+  .mkt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
+  .mkt-chip{display:flex;align-items:center;justify-content:space-between;gap:6px;
+    background:var(--card2);border:1px solid #26374a;border-radius:10px;padding:7px 9px;
+    font-size:12px;transition:transform .08s ease,background .15s}
+  .mkt-chip:active{transform:scale(.97);background:#27384c}
+  .mkt-chip .lbl{color:#dfe8f1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mkt-chip .val{font-weight:800;color:#8ecbff;font-variant-numeric:tabular-nums}
+  .mkt-chip:disabled{opacity:.45}

@@ -30,6 +30,8 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("bets", "market", "ALTER TABLE bets ADD COLUMN market TEXT NOT NULL DEFAULT 'match'"),
     ("bets", "map_id", "ALTER TABLE bets ADD COLUMN map_id INTEGER"),
     ("users", "last_chat_id", "ALTER TABLE users ADD COLUMN last_chat_id INTEGER"),
+    ("matches", "sport", "ALTER TABLE matches ADD COLUMN sport TEXT NOT NULL DEFAULT 'cs2'"),
+    ("matches", "odds_x", "ALTER TABLE matches ADD COLUMN odds_x REAL"),
 )
 
 
@@ -476,6 +478,8 @@ class Database:
         odds_b: float | None,
         score_a: int | None = None,
         score_b: int | None = None,
+        odds_x: float | None = None,
+        sport: str = "cs2",
     ) -> tuple[Any, bool]:
         """Возвращает (матч, создан_ли_сейчас)."""
         now = int(time.time())
@@ -483,11 +487,11 @@ class Database:
         if existing is None:
             await self.conn.execute(
                 """
-                INSERT INTO matches (fonbet_id, tournament, team_a, team_b, start_time,
-                                     odds_a, odds_b, score_a, score_b, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                INSERT INTO matches (fonbet_id, tournament, team_a, team_b, start_time, sport,
+                                     odds_a, odds_x, odds_b, score_a, score_b, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
-                (fonbet_id, tournament, team_a, team_b, start_time, odds_a, odds_b,
+                (fonbet_id, tournament, team_a, team_b, start_time, sport, odds_a, odds_x, odds_b,
                  score_a, score_b, now),
             )
             await self.conn.commit()
@@ -505,11 +509,11 @@ class Database:
         if existing["status"] in ("open", "live"):
             await self.conn.execute(
                 """
-                UPDATE matches SET odds_a = ?, odds_b = ?, start_time = ?,
+                UPDATE matches SET odds_a = ?, odds_x = ?, odds_b = ?, start_time = ?,
                                    score_a = ?, score_b = ?
                 WHERE id = ?
                 """,
-                (odds_a, odds_b, start_time, new_score_a, new_score_b, existing["id"]),
+                (odds_a, odds_x, odds_b, start_time, new_score_a, new_score_b, existing["id"]),
             )
             await self.conn.commit()
             refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
@@ -530,9 +534,14 @@ class Database:
     async def get_match(self, match_id: int) -> Any | None:
         return await self._fetchone("SELECT * FROM matches WHERE id = ?", (match_id,))
 
-    async def open_matches(self, limit: int = 10) -> list[Any]:
+    async def open_matches(self, limit: int = 10, sport: str | None = None) -> list[Any]:
+        if sport is None:
+            return await self._fetchall(
+                "SELECT * FROM matches WHERE status = 'open' ORDER BY start_time LIMIT ?", (limit,)
+            )
         return await self._fetchall(
-            "SELECT * FROM matches WHERE status = 'open' ORDER BY start_time LIMIT ?", (limit,)
+            "SELECT * FROM matches WHERE status = 'open' AND sport = ? ORDER BY start_time LIMIT ?",
+            (sport, limit),
         )
 
     async def live_matches(self, limit: int = 40) -> list[Any]:
@@ -713,8 +722,8 @@ class Database:
         self, map_id: int, user_id: int, chat_id: int | None, side: str, amount: int
     ) -> tuple[int, float]:
         """Ставка на победителя конкретной карты. Возвращает (новый баланс, кэф)."""
-        if side not in ("a", "b"):
-            raise InvalidBet("Сторона должна быть 1 или 2")
+        if side not in ("a", "b", "x"):
+            raise InvalidBet("Сторона должна быть 1, X или 2")
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
@@ -858,8 +867,8 @@ class Database:
         self, match_id: int, user_id: int, chat_id: int | None, side: str, amount: int
     ) -> tuple[int, float]:
         """Списывает ставку по текущему кэфу матча. Возвращает (новый баланс, кэф)."""
-        if side not in ("a", "b"):
-            raise InvalidBet("Сторона должна быть 1 или 2")
+        if side not in ("a", "b", "x"):
+            raise InvalidBet("Сторона должна быть 1, X или 2")
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
@@ -869,11 +878,13 @@ class Database:
                 match = await cur.fetchone()
             if match is None:
                 raise MatchNotFound("Матч не найден")
+            if side == "x" and str(match["sport"]) != "football":
+                raise InvalidBet("Ничья бывает только в футболе")
             refusal = self._betting_refusal(match, now)
             if refusal:
                 raise MatchNotOpen(refusal)
 
-            odds = match["odds_a"] if side == "a" else match["odds_b"]
+            odds = {"a": match["odds_a"], "x": match["odds_x"], "b": match["odds_b"]}[side]
             if not odds:
                 raise InvalidBet("На этот исход нет кэфа")
 
@@ -897,6 +908,164 @@ class Database:
             ) as cur2:
                 row = await cur2.fetchone()
         return (int(row["balance"]) if row else 0), float(odds)
+
+    # --------------------------------------------------------------- футбол
+    async def place_football_bet(
+        self,
+        match_id: int,
+        user_id: int,
+        chat_id: int | None,
+        key: str,
+        param: str,
+        amount: int,
+    ) -> tuple[int, float]:
+        """Ставка на рынок футбольного матча (тотал, точный счёт, форы и т.д.).
+
+        Кэф берётся из той же модели, что видит игрок, и фиксируется в ставке —
+        дальнейшие пересчёты линии на уже сделанную ставку не влияют.
+        """
+        from app.services.football import markets_of, side_code
+
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if str(match["sport"]) != "football":
+                raise InvalidBet("Это не футбольный матч")
+            if str(match["status"]) != "open" or int(match["start_time"]) <= now:
+                raise MatchNotOpen("Матч начался — роспись закрыта")
+
+            market = next(
+                (m for m in markets_of(match) if m["key"] == key and m["param"] == param), None
+            )
+            if market is None:
+                raise InvalidBet("Такого рынка нет в линии")
+            odds = float(market["odds"])
+
+            cur = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (amount, user_id, amount),
+            )
+            if cur.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+
+            await conn.execute(
+                """
+                INSERT INTO bets (match_id, user_id, chat_id, side, amount, odds, market, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'football', ?)
+                """,
+                (match_id, user_id, chat_id, side_code(key, param), amount, odds, now),
+            )
+            await self._ledger(conn, user_id, -amount, f"ставка · {market['label']} · матч #{match_id}", now)
+            async with conn.execute(
+                "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+            ) as cur2:
+                row = await cur2.fetchone()
+        return (int(row["balance"]) if row else 0), odds
+
+    async def settle_football(
+        self, match_id: int, score_a: int, score_b: int, source: str = "auto"
+    ) -> dict[str, Any]:
+        """Расчёт футбольного матча по счёту: исход, тоталы, форы, точный счёт."""
+        from app.services.football import market_label, market_outcome, parse_side
+
+        if score_a == score_b:
+            winner = "x"
+        elif score_a > score_b:
+            winner = "a"
+        else:
+            winner = "b"
+
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if str(match["status"]) in ("finished", "cancelled"):
+                raise MatchAlreadySettled("Матч уже рассчитан или отменён")
+
+            async with conn.execute("SELECT * FROM bets WHERE match_id = ?", (match_id,)) as cur:
+                bets = list(await cur.fetchall())
+
+            total_stake = sum(int(bet["amount"]) for bet in bets)
+            paid = 0
+            refunded = 0
+            payouts: dict[int, int] = {}
+            settlements: list[dict[str, Any]] = []
+
+            for bet in bets:
+                amount = int(bet["amount"])
+                side = str(bet["side"])
+                parsed = parse_side(side)
+                if parsed is None:
+                    outcome = "win" if side == winner else "lose"
+                    label = "П1" if side == "a" else ("Ничья" if side == "x" else "П2")
+                else:
+                    outcome = market_outcome(parsed[0], parsed[1], score_a, score_b)
+                    label = market_label(parsed[0], parsed[1])
+
+                if outcome == "win":
+                    payout = round(amount * float(bet["odds"]))
+                elif outcome == "void":
+                    payout = amount
+                    refunded += payout
+                else:
+                    payout = 0
+                if payout:
+                    paid += payout
+                    payouts[int(bet["user_id"])] = payouts.get(int(bet["user_id"]), 0) + payout
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "chat_id": int(bet["chat_id"]) if bet["chat_id"] else None,
+                        "side": side,
+                        "label": label,
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": payout,
+                        "won": outcome == "win",
+                        "void": outcome == "void",
+                    }
+                )
+                await conn.execute("UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"]))
+
+            for user_id, total in payouts.items():
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
+                )
+                await self._ledger(conn, user_id, total, f"выплата · матч #{match_id}")
+
+            await conn.execute(
+                """
+                UPDATE matches SET status = 'finished', winner = ?, result_source = ?,
+                                   score_a = ?, score_b = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (winner, source, score_a, score_b, int(time.time()), match_id),
+            )
+            expresses = await self._resolve_expresses(conn, match_id, winner)
+
+        return {
+            "team": str(match["team_a"] if winner == "a" else match["team_b"]),
+            "score": f"{score_a}:{score_b}",
+            "winner": winner,
+            "paid": paid,
+            "refunded": refunded,
+            "stake": total_stake,
+            "bets": len(bets),
+            "winners": len(payouts),
+            "payouts": payouts,
+            "settlements": settlements,
+            "team_a": str(match["team_a"]),
+            "team_b": str(match["team_b"]),
+            "expresses": expresses,
+        }
 
     # -------------------------------------------------------------- экспрессы
     async def place_express(

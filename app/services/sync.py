@@ -15,6 +15,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import Database
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
+from app.services.football import FootballMatch, parse_football
 from app.services.notify import notify_bettors, notify_map_bettors
 
 log = logging.getLogger(__name__)
@@ -91,6 +92,9 @@ class MatchSyncer:
         packet = await self.client.fetch_packet()
         matches = self.client.parse(packet)
         maps_by_parent = parse_maps(packet, self.client)
+        football = parse_football(
+            packet, settings.football_include_list, settings.football_exclude_list
+        )
         stats = {
             "fetched": len(matches),
             "created": 0,
@@ -99,13 +103,17 @@ class MatchSyncer:
             "settled": 0,
             "awaiting": 0,
             "maps_settled": 0,
+            "football": len(football),
+            "football_created": 0,
         }
 
         await self._store(matches, maps_by_parent, stats)
+        await self._store_football(football, stats)
         await self._close_started(stats)
         # сначала карты: матч считается в том числе по их результатам
         await self._settle_maps(maps_by_parent, stats)
         await self._settle(matches, stats)
+        await self._settle_football(football, stats)
         await self._close_stale(stats)
 
         self.last_sync_at = int(time.time())
@@ -232,6 +240,93 @@ class MatchSyncer:
                 "Карта #%s рассчитана: %s (%s)", row["id"], result["team"], card.score_text
             )
 
+    # --------------------------------------------------------------- футбол
+    @staticmethod
+    def _prepare_three_way(match: FootballMatch) -> tuple[float | None, float | None, float | None]:
+        """Кэфы 1X2 как у книги; в режиме fair — с убранной маржой."""
+        if not match.has_result_odds:
+            return match.odds_1, match.odds_x, match.odds_2
+        odds_1, odds_x, odds_2 = match.odds_1, match.odds_x, match.odds_2
+        assert odds_1 and odds_x and odds_2
+        if settings.odds_mode == "fair":
+            margin = 1 / odds_1 + 1 / odds_x + 1 / odds_2
+            return (
+                round(odds_1 * margin, 2),
+                round(odds_x * margin, 2),
+                round(odds_2 * margin, 2),
+            )
+        return round(odds_1, 2), round(odds_x, 2), round(odds_2, 2)
+
+    async def _store_football(self, matches: list[FootballMatch], stats: dict[str, Any]) -> None:
+        """Пишем футбольные матчи в ту же таблицу, что и CS2 (поле sport их различает)."""
+        now = int(time.time())
+        for match in matches:
+            if not match.has_result_odds:
+                continue
+            if match.start_time and match.start_time < now - 6 * 3600:
+                tracked = await self.db.match_by_fonbet(match.event_id)
+                if tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"):
+                    continue
+            odds_1, odds_x, odds_2 = self._prepare_three_way(match)
+            row, created = await self.db.upsert_match(
+                fonbet_id=match.event_id,
+                tournament=match.tournament,
+                team_a=match.team_a,
+                team_b=match.team_b,
+                start_time=match.start_time,
+                odds_a=odds_1,
+                odds_x=odds_x,
+                odds_b=odds_2,
+                score_a=match.score_a,
+                score_b=match.score_b,
+                sport="football",
+            )
+            del row
+            if created:
+                stats["football_created"] += 1
+
+    async def _settle_football(
+        self, matches: list[FootballMatch], stats: dict[str, Any]
+    ) -> None:
+        """Считаем футбольные матчи по финальному счёту из линии."""
+        by_fonbet = {match.event_id: match for match in matches}
+        now = int(time.time())
+
+        for row in await self.db.matches_by_status(["open", "live", "awaiting"]):
+            if str(row["sport"]) != "football":
+                continue
+            match = by_fonbet.get(int(row["fonbet_id"]))
+            if match is None:
+                if str(row["status"]) != "awaiting" and now - int(row["start_time"]) > 3 * 3600:
+                    await self._mark_awaiting(row, None)
+                    stats["awaiting"] += 1
+                continue
+            if not match.finished or match.score_a is None or match.score_b is None:
+                continue
+
+            try:
+                result = await self.db.settle_football(
+                    int(row["id"]), match.score_a, match.score_b, source="fonbet"
+                )
+            except Exception:
+                log.exception("Не смог рассчитать футбольный матч #%s", row["id"])
+                continue
+
+            stats["settled"] += 1
+            score = f"{match.score_a}:{match.score_b}"
+            text = texts.football_settled_text(result, int(row["id"]), score)
+            for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
+                await self._safe_send(chat_id, text)
+            await notify_bettors(self.bot, self.db, result, score=score)
+            for express in result.get("expresses") or []:
+                target = express.get("chat_id") or None
+                if target:
+                    await self._safe_send(int(target), texts.express_result(express))
+            log.info(
+                "Футбол #%s рассчитан: %s — %s (%s), выплачено %s",
+                row["id"], row["team_a"], row["team_b"], score, result["paid"],
+            )
+
     async def _post_card(self, match: Any, chats: list[Any]) -> None:
         markup = keyboards.app_kb(group=True)  # в группе web_app-кнопка не отрисуется
         for index, chat in enumerate(chats):
@@ -268,6 +363,8 @@ class MatchSyncer:
         now = int(time.time())
 
         for row in await self.db.matches_by_status(["live", "awaiting"]):
+            if str(row["sport"]) != "cs2":
+                continue          # футбол считает отдельный проход, по счёту
             match = by_fonbet.get(int(row["fonbet_id"]))
             score: str | None = None
 
@@ -300,6 +397,8 @@ class MatchSyncer:
         # матчи, которые давно ушли из линии и висят без результата
         threshold = settings.result_check_after_minutes * 60
         for row in await self.db.matches_for_result_check(threshold, check_cooldown=900):
+            if str(row["sport"]) != "cs2":
+                continue
             if int(row["fonbet_id"]) in by_fonbet:
                 continue
             await self._mark_awaiting(row, None)
@@ -348,6 +447,8 @@ class MatchSyncer:
     async def _close_stale(self, stats: dict[str, Any]) -> None:
         """Матч давно висит без результата: считаем по картам, иначе возвращаем ставки."""
         for row in await self.db.stale_matches(settings.stale_match_hours):
+            if str(row["sport"]) != "cs2":
+                continue          # у футбола своя логика ожидания результата
             # вдруг результат всё-таки известен по картам — тогда считаем, а не отменяем
             winner, series_score = await self._series_from_maps(row)
             if winner is not None:

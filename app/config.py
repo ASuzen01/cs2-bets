@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     )
     # real — кэфы как у букмекера; fair — без маржи (маржа убирается, банк живёт дольше)
     odds_mode: Literal["real", "fair"] = "real"
+    football_enabled: bool = True
+    football_include: str = "лига чемпионов, лига европы, лига конференций"
+    football_exclude: str = (
+        "азии, персидск, конкакаф, женщ, до 19, до 21, до 17, юнош, молодеж, юфл, "
+        "кибер, efootball, fifa, пляж, мини-футбол, футзал, товарищеск"
+    )
     sync_interval: int = 45              # период обновления линии, сек (лайв — кэфы свежее)
     # ставки по ходу матча: кэф берётся текущий, приём идёт до конца игры
     live_betting: bool = True
@@ -117,6 +123,14 @@ class Settings(BaseSettings):
     @property
     def tier1_include_list(self) -> list[str]:
         return [part.strip() for part in self.tier1_include.split(",") if part.strip()]
+
+    @property
+    def football_include_list(self) -> list[str]:
+        return [part.strip() for part in self.football_include.split(",") if part.strip()]
+
+    @property
+    def football_exclude_list(self) -> list[str]:
+        return [part.strip() for part in self.football_exclude.split(",") if part.strip()]
 
     @property
     def tier1_exclude_list(self) -> list[str]:

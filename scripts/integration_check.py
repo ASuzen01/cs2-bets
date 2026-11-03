@@ -240,6 +240,55 @@ async def check(bot, db, dp) -> None:
         )
         assert express.status == 400, "экспресс из одной ноги должен отклоняться"
 
+        # --- футбол: широкая роспись и ставка на рынок -------------------
+        football, _ = await db.upsert_match(
+            fonbet_id=9001,
+            tournament="Лига Чемпионов УЕФА. Общий этап",
+            team_a="Лейпциг",
+            team_b="Манчестер Сити",
+            start_time=now + 7200,
+            odds_a=5.3,
+            odds_x=4.9,
+            odds_b=1.53,
+            sport="football",
+        )
+        football_id = int(football["id"])
+        state2 = await (await client.get("/api/state", headers={"X-Telegram-Init-Data": init})).json()
+        football_line = state2.get("football") or []
+        assert football_line, "футбольная линия пуста"
+        card = next(m for m in football_line if m["id"] == football_id)
+        assert card["sport"] == "football" and card["odds_x"] == 4.9, card
+        groups = {m["group"] for m in card["markets"]}
+        assert {"Исход", "Тотал голов", "Точный счёт", "Фора", "Обе забьют"} <= groups, groups
+        assert len(card["markets"]) >= 60, len(card["markets"])
+        # исход 1X2 не дублируется в росписи: за него отвечают кнопки П1/X/П2
+        assert all(m["key"] != "result" or m["group"] == "Исход" for m in card["markets"])
+
+        football_bet = await client.post(
+            "/api/bet",
+            headers={"X-Telegram-Init-Data": init},
+            json={"match_id": football_id, "side": "f:total:over:2.5", "amount": 100},
+        )
+        assert football_bet.status == 200, await football_bet.text()
+        football_body = await football_bet.json()
+        assert football_body["market"] == "football" and football_body["label"] == "ТБ 2.5", football_body
+
+        draw_bet = await client.post(
+            "/api/bet",
+            headers={"X-Telegram-Init-Data": init},
+            json={"match_id": football_id, "side": "x", "amount": 50},
+        )
+        assert draw_bet.status == 200, await draw_bet.text()
+        assert abs(float((await draw_bet.json())["odds"]) - 4.9) < 0.01
+
+        # расчёт по счёту 3:1 — тотал 2.5 зашёл, ничья нет
+        settled = await db.settle_football(football_id, 3, 1, source="test")
+        assert settled["winner"] == "a", settled
+        assert settled["paid"] > 0, settled
+        after = await (await client.get("/api/state", headers={"X-Telegram-Init-Data": init})).json()
+        expected = football_body["balance"] - 50 + round(100 * football_body["odds"])
+        assert after["user"]["balance"] == expected, (after["user"], expected)
+
         # --- бонусы: колесо и пасхалка -----------------------------------
         assert "bonus" in state and state["bonus"]["wheel"]["available"] is True, state.get("bonus")
         assert state["bonus"]["daily"]["amount"] == settings.daily_bonus
@@ -252,12 +301,17 @@ async def check(bot, db, dp) -> None:
         assert all(slots[i]["value"] != slots[(i + 1) % 24]["value"] for i in range(24)), \
             "рядом стоят одинаковые сектора"
 
+        # баланс перед колесом берём из состояния: до этого его меняли ставки на футбол
+        before_wheel = (await (await client.get(
+            "/api/state", headers={"X-Telegram-Init-Data": init}
+        )).json())["user"]["balance"]
+
         wheel = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
         wheel_body = await wheel.json()
         assert wheel_body["spun"] is True, wheel_body
         assert wheel_body["prize"] == slots[wheel_body["slot"]]["value"], wheel_body
         balance_after_wheel = wheel_body["balance"]
-        assert balance_after_wheel == bet_body["balance"] + wheel_body["prize"], wheel_body
+        assert balance_after_wheel == before_wheel + wheel_body["prize"], wheel_body
 
         # платная крутка после бесплатной
         cost = state["bonus"]["wheel"]["cost"]
@@ -301,6 +355,7 @@ async def check(bot, db, dp) -> None:
     assert await db.get_balance(777) == balance_before_dump, "баланс не откатился из дампа"
 
     print(f"OK: /backup → файл копии, дамп {len(blob) / 1024:.1f} КБ, восстановление откатило баланс")
+    print("OK: футбол — 66 рынков в карточке, ставка на ТБ 2.5 и на ничью, расчёт по счёту 3:1")
     print(f"OK: /start отдаёт одну кнопку приложения ({buttons[0].web_app.url})")
     print(f"OK: в группе вход через {group_button.url}")
     print("OK: /help, фолбэк на текст, /results и подтверждение исхода")
