@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -23,13 +24,15 @@ from app.db.backends import (
     SQLiteBackend,
 )
 
+log = logging.getLogger(__name__)
+
 # колонки, добавленные после первых деплоев: дорисовываем их в старых базах
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "score_a", "ALTER TABLE matches ADD COLUMN score_a INTEGER"),
     ("matches", "score_b", "ALTER TABLE matches ADD COLUMN score_b INTEGER"),
     ("bets", "market", "ALTER TABLE bets ADD COLUMN market TEXT NOT NULL DEFAULT 'match'"),
     ("bets", "map_id", "ALTER TABLE bets ADD COLUMN map_id INTEGER"),
-    ("users", "last_chat_id", "ALTER TABLE users ADD COLUMN last_chat_id INTEGER"),
+    ("users", "last_chat_id", "ALTER TABLE users ADD COLUMN last_chat_id BIGINT"),
     ("matches", "sport", "ALTER TABLE matches ADD COLUMN sport TEXT NOT NULL DEFAULT 'cs2'"),
     ("matches", "odds_x", "ALTER TABLE matches ADD COLUMN odds_x REAL"),
 )
@@ -49,6 +52,26 @@ BACKUP_TABLES: tuple[str, ...] = (
     "backup_log",
 )
 """Порядок важен: сначала родители, потом зависимые строки."""
+
+
+# id чатов и игроков не влезают в Postgres-ный INTEGER (int4): у супергрупп
+# chat_id вида -1001234567890 → «NumericValueOutOfRange: integer out of range».
+# Колонки, которые обязаны быть BIGINT.
+WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("users", "user_id"),
+    ("users", "last_chat_id"),
+    ("chats", "chat_id"),
+    ("matches", "fonbet_id"),
+    ("matches", "posted_chat_id"),
+    ("match_maps", "fonbet_id"),
+    ("bets", "user_id"),
+    ("bets", "chat_id"),
+    ("expresses", "user_id"),
+    ("expresses", "chat_id"),
+    ("ledger", "user_id"),
+    ("wheel_spins", "user_id"),
+    ("tease_claims", "user_id"),
+)
 
 
 class BettingError(Exception):
@@ -106,6 +129,7 @@ class Database:
             backend = await PostgresBackend.open(self._url, schema=self._schema)
             await backend.executescript(SCHEMA_POSTGRES)
             await self._migrate(backend)
+            await self._widen_ids(backend)
             self._backend = backend
             return
 
@@ -128,6 +152,34 @@ class Database:
                 continue
             await backend.execute(sql)
         await backend.commit()
+
+    @staticmethod
+    async def _widen_ids(backend: PostgresBackend) -> None:
+        """Postgres: INTEGER (int4) не держит id чатов и больших игроков — расширяем до BIGINT.
+
+        У супергрупп chat_id вида -1001234567890: при записи в int4 Postgres падает
+        с «NumericValueOutOfRange: integer out of range», и команды бота в группе
+        отвечают «Что-то сломалось».
+        """
+        for table, column in WIDE_COLUMNS:
+            if not await backend.has_table(table):
+                continue
+            row = await (
+                await backend.execute(
+                    "SELECT data_type AS t FROM information_schema.columns "
+                    "WHERE table_name = ? AND column_name = ? AND table_schema = current_schema()",
+                    (table, column),
+                )
+            ).fetchone()
+            if row is None or str(row["t"]) != "integer":
+                continue
+            try:
+                await backend.execute(
+                    f'ALTER TABLE "{table}" ALTER COLUMN "{column}" TYPE BIGINT'
+                )
+                log.info("Колонка %s.%s расширена до BIGINT", table, column)
+            except Exception:
+                log.exception("Не удалось расширить %s.%s", table, column)
 
     @staticmethod
     async def _has_incompatible_matches(backend: SQLiteBackend) -> bool:
