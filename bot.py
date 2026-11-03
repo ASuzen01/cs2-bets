@@ -12,6 +12,7 @@ import logging
 import os
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -190,12 +191,27 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
 
     async def health(_: web.Request) -> web.Response:
         # по этим полям видно, с какими настройками реально работает сервис
-        return web.json_response({
+        payload: dict[str, Any] = {
             "ok": True,
             "mode": "webhook",
             "sync_interval": settings.sync_interval,
             "live_betting": settings.live_betting,
-        })
+            "football": settings.football_include,
+            "backup_interval_hours": settings.backup_interval_hours,
+        }
+        # состояние линии и бэкапов — без авторизации, но и без личных данных
+        if db is not None:
+            try:
+                payload["line"] = {
+                    "cs2": len(await db.open_matches(limit=500, sport="cs2")),
+                    "football": len(await db.open_matches(limit=500, sport="football")),
+                    "live": len(await db.live_matches(limit=500)),
+                }
+                last = await db.last_backup()
+                payload["last_backup_at"] = int(last["created_at"]) if last else None
+            except Exception:
+                log.debug("health: не смог прочитать состояние линии", exc_info=True)
+        return web.json_response(payload)
 
     app.router.add_get("/health", health)
 
