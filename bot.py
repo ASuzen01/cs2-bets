@@ -31,6 +31,7 @@ from aiogram.types import (
 from app.config import settings
 from app.db import Database
 from app.handlers import setup_handlers
+from app.handlers.errors import last_errors
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
@@ -198,6 +199,8 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
             "live_betting": settings.live_betting,
             "football": settings.football_include,
             "backup_interval_hours": settings.backup_interval_hours,
+            # последняя ошибка обработчика — чтобы чинить поломки без логов Render
+            "last_error": last_errors(1),
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:
