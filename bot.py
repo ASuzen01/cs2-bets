@@ -177,7 +177,9 @@ async def run_polling(bot: Bot, dp: Dispatcher) -> None:
     )
 
 
-def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
+def run_webhook(
+    bot: Bot, dp: Dispatcher, db: Database | None = None, syncer: MatchSyncer | None = None
+) -> None:
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
     from aiohttp import web
 
@@ -203,6 +205,11 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
             "backup_interval_hours": settings.backup_interval_hours,
             # последняя ошибка обработчика — чтобы чинить поломки без логов Render
             "last_error": last_errors(1),
+            "sync": {
+                "last_at": syncer.last_sync_at if syncer else None,
+                "last_error": syncer.last_error if syncer else None,
+                "stats": syncer.last_stats if syncer else None,
+            },
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:
@@ -288,7 +295,7 @@ def main() -> None:
     dp = create_dispatcher(db, syncer, backup)
 
     if settings.run_mode == "webhook":
-        run_webhook(bot, dp, db)
+        run_webhook(bot, dp, db, syncer)
     else:
         asyncio.run(run_polling(bot, dp))
 

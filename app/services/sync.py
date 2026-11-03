@@ -69,6 +69,7 @@ class MatchSyncer:
         self._task: asyncio.Task[None] | None = None
         self.last_sync_at: int = 0
         self.last_error: str | None = None
+        self.last_stats: dict[str, Any] | None = None
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -126,6 +127,7 @@ class MatchSyncer:
 
         self.last_sync_at = int(time.time())
         self.last_error = None
+        self.last_stats = dict(stats)
         log.info(
             "Линия: %s матчей (новых %s, закрыто %s, рассчитано %s, карт %s, ждут %s)",
             stats["fetched"], stats["created"], stats["closed"], stats["settled"],
