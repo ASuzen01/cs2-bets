@@ -606,6 +606,15 @@ class Database:
             (limit,),
         )
 
+    async def status_counts(self, sport: str | None = None) -> dict[str, int]:
+        """Сколько матчей в каждом статусе — для /health и админской диагностики."""
+        sql = "SELECT status, COUNT(*) AS n FROM matches "
+        if sport:
+            sql += "WHERE sport = ? "
+        sql += "GROUP BY status"
+        rows = await self._fetchall(sql, (sport,) if sport else ())
+        return {str(row["status"]): int(row["n"]) for row in rows}
+
     async def matches_by_status(self, statuses: Sequence[str]) -> list[Any]:
         placeholders = ",".join("?" for _ in statuses)
         return await self._fetchall(

@@ -211,6 +211,10 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
                     "football": len(await db.open_matches(limit=500, sport="football")),
                     "live": len(await db.live_matches(limit=500)),
                 }
+                payload["matches"] = {
+                    "football": await db.status_counts("football"),
+                    "cs2": await db.status_counts("cs2"),
+                }
                 last = await db.last_backup()
                 payload["last_backup_at"] = int(last["created_at"]) if last else None
             except Exception:
