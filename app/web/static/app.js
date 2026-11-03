@@ -139,15 +139,11 @@
   }
 
   function renderBonusDots() {
-    const count = bonusReady();
-    const bell = $("#bonusDot");
-    if (bell) bell.hidden = count === 0;
-    const tab = $("#tabBonus");
-    const dot = $("#bonusTabDot");
-    if (tab && dot) {
-      tab.classList.toggle("badge", count > 0);
-      dot.textContent = count ? String(count) : "0";
-    }
+    // вкладка бонусов живёт только в шапке: точка на конверте — есть что забрать
+    const dot = $("#bonusDot");
+    if (dot) dot.hidden = bonusReady() === 0;
+    const bell = $("#bonusBell");
+    if (bell) bell.classList.toggle("active", state.tab === "bonus");
   }
 
   function emptyWithMascot(text) {
@@ -1205,6 +1201,7 @@
     if (tab === "me") renderMe();
     if (tab === "express") renderExpress();
     if (tab === "bonus") renderBonus();
+    renderBonusDots();   // подсветить конверт, если открыт экран бонусов
     state.teaseTaps = 0;   // «подряд» считается в пределах одного экрана
     haptic("light");
   }

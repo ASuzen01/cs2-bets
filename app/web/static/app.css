@@ -226,6 +226,8 @@
   .bonusbell{position:relative;width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;
     border-radius:12px;background:#231f2e;border:1px solid #3b3350;color:#f3d27a}
   .bonusbell:active{background:#2b2639}
+  .bonusbell.active{background:#2f2740;border-color:#6a55a0;color:#ffe08a;
+    box-shadow:0 0 0 2px rgba(255,210,63,.16)}
   .bonusbell svg.ic{width:19px;height:19px}
   .bonusbell .dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;
     background:#f5a623;box-shadow:0 0 0 2px #151d26}
