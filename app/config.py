@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     wheel_cost: int = 150            # цена платной крутки сверх бесплатной
     tease_cooldown_hours: int = 24   # пасхалка за 10 нажатий — тоже раз в сутки
     backup_enabled: bool = True      # ежедневный дамп базы в личку админу
-    backup_interval_hours: int = 24  # как часто снимать копию
+    backup_interval_hours: int = 1   # как часто снимать копию (1 = каждый час)
+    backup_chat_id: int = 0          # 0 — слать в личку админу, иначе в этот чат/канал
     backup_max_mb: int = 25          # предел размера файла, который примем на восстановление
     min_bet: int = 10
     max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери
@@ -98,7 +99,13 @@ class Settings(BaseSettings):
 
     @property
     def admin_ids_list(self) -> list[int]:
-        return sorted(self.admin_ids_set)
+        """Админы в том порядке, в каком заданы: первый — главный (ему идут бэкапы)."""
+        ordered: list[int] = []
+        for chunk in self.admin_ids.replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if chunk.lstrip("-").isdigit() and int(chunk) not in ordered:
+                ordered.append(int(chunk))
+        return ordered
 
     @property
     def webhook_url(self) -> str:

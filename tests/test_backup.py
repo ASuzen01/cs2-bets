@@ -120,3 +120,40 @@ def test_encode_is_compact_gzip() -> None:
     blob = encode({"users": [{"user_id": 1}]})
     assert blob[:2] == b"\x1f\x8b"              # gzip-магия
     assert decode(blob)["counts"] == {"users": 1}
+
+
+async def test_hourly_backup_fires_after_interval(db) -> None:
+    """Копии раз в час: через 61 минуту сервис снимает новую."""
+    from app.config import settings
+    from app.services.backup import BackupService
+
+    class NullBot:
+        async def send_document(self, **kwargs):
+            return None
+
+    service = BackupService(NullBot(), db)      # type: ignore[arg-type]
+    await db.log_backup(100, 2, 1, "auto")
+    # состариваем отметку на час с небольшим
+    await db.conn.execute("UPDATE backup_log SET created_at = created_at - 3660")
+    await db.conn.commit()
+
+    assert settings.backup_interval_hours == 1
+    assert await service.run_if_due() is True
+    assert await service.run_if_due() is False
+
+
+async def test_backup_target_chat_prefers_dedicated_chat(db) -> None:
+    from app.config import settings
+    from app.services.backup import target_chat_id
+
+    old_admins, old_chat = settings.admin_ids, settings.backup_chat_id
+    try:
+        settings.admin_ids = "5004062791,777"
+        settings.backup_chat_id = 0
+        assert target_chat_id() == 5004062791      # первый указанный в ADMIN_IDS
+
+        settings.backup_chat_id = -100200300
+        assert target_chat_id() == -100200300      # отдельный канал важнее
+    finally:
+        settings.admin_ids, settings.backup_chat_id = old_admins, old_chat
+

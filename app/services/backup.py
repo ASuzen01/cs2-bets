@@ -112,7 +112,22 @@ def summary(payload: dict[str, Any]) -> str:
     )
 
 
-async def send_dump(bot: Bot, chat_id: int, blob: bytes, payload: dict[str, Any]) -> bool:
+def target_chat_id() -> int:
+    """Куда шлём копии: отдельный чат/канал, если задан, иначе личка главного админа."""
+    if settings.backup_chat_id:
+        return int(settings.backup_chat_id)
+    admins = settings.admin_ids_list
+    return admins[0] if admins else 0    # первый в ADMIN_IDS — главный админ
+
+
+async def send_dump(
+    bot: Bot,
+    chat_id: int,
+    blob: bytes,
+    payload: dict[str, Any],
+    *,
+    silent: bool = False,
+) -> bool:
     """Отправляет файл копии в чат (обычно — в личку админу)."""
     document = BufferedInputFile(
         blob, filename=filename(int(payload.get("created_at", time.time())))
@@ -121,6 +136,7 @@ async def send_dump(bot: Bot, chat_id: int, blob: bytes, payload: dict[str, Any]
         await bot.send_document(
             chat_id=chat_id,
             document=document,
+            disable_notification=silent,   # в час по копии — без звука на телефоне
             caption=summary(payload) + "\n\nВосстановление: <code>/restore</code> в боте или "
             "<code>python scripts/restore_db.py файл</code>",
         )
@@ -178,8 +194,11 @@ class BackupService:
 
     async def send_now(self, *, kind: str = "manual") -> bool:
         blob, payload = await make_dump(self.db, kind=kind)
-        chat_id = settings.admin_ids_list[0]
-        sent = await send_dump(self.bot, chat_id, blob, payload)
+        chat_id = target_chat_id()
+        if not chat_id:
+            log.warning("Нет получателя для бэкапа: задай BACKUP_CHAT_ID или ADMIN_IDS")
+            return False
+        sent = await send_dump(self.bot, chat_id, blob, payload, silent=kind == "auto")
         if sent:
             self.last_run_at = int(payload["created_at"])
         return sent
