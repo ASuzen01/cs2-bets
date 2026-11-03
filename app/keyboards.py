@@ -80,3 +80,15 @@ def map_confirm_kb(card: Mapping[str, Any]) -> InlineKeyboardMarkup:
 
 
 __all__ = ["app_kb", "app_url", "confirm_result_kb", "deep_link", "map_confirm_kb"]
+
+
+def restore_confirm_kb() -> InlineKeyboardMarkup:
+    """Подтверждение восстановления базы: затирание данных — только по кнопке."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да, восстановить", callback_data="rst:yes"),
+                InlineKeyboardButton(text="Отмена", callback_data="rst:no"),
+            ]
+        ]
+    )

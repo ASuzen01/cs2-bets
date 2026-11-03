@@ -8,6 +8,8 @@
     /maps                  — карты, которые не удалось рассчитать автоматически
     /cleanup [часов]       — рассчитать зависшие матчи, остальные отменить с возвратом
     /recount ID 1|2        — пересчитать отменённый матч по реальному исходу
+    /backup [status]       — снять копию базы и прислать файлом
+    (файл .json.gz в личку) — восстановить базу из копии
     /results               — матчи, которые ждут подтверждения исхода
     /stats                 — короткая сводка по базе
 
@@ -19,6 +21,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
+from io import BytesIO
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -28,6 +32,15 @@ from aiogram.types import CallbackQuery, Message
 from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
+from app.db.database import BackupError
+from app.services.backup import (
+    BackupService,
+    decode,
+    make_dump,
+    restore,
+    send_dump,
+    summary,
+)
 from app.services.notify import notify_bettors, notify_map_bettors
 from app.services.sync import series_from_maps
 
@@ -323,3 +336,124 @@ async def cb_admin_void(callback: CallbackQuery, db: Database) -> None:
     if callback.message is not None:
         for express in result.get("expresses") or []:
             await callback.message.answer(texts.express_result(express))
+
+
+# --------------------------------------------------------------- бэкапы
+_pending_restore: dict[int, tuple[bytes, dict[str, Any], float]] = {}
+RESTORE_TTL = 10 * 60       # подтвердить восстановление нужно за 10 минут
+
+
+@router.message(Command("backup"))
+async def cmd_backup(message: Message, command: CommandObject, db: Database) -> None:
+    """Снять копию базы прямо сейчас: /backup или /backup status."""
+    arg = (command.args or "").strip().lower()
+    if arg in ("status", "info"):
+        last = await db.last_backup()
+        if last is None:
+            await message.answer("Копий ещё не было. /backup — сделаю сейчас.")
+            return
+        created = time.strftime("%d.%m.%Y %H:%M UTC", time.gmtime(int(last["created_at"])))
+        age = (int(time.time()) - int(last["created_at"])) // 3600
+        await message.answer(
+            f"<b>Последняя копия</b>: {created} ({age} ч назад)\n"
+            f"Размер: {int(last['size_bytes']) / 1024:.1f} КБ · игроков {last['users']} · "
+            f"ставок {last['bets']}\n"
+            f"Тип: {last['kind']}\n\n"
+            "Копии приходят сюда, в личку, и хранятся в истории Telegram — это вне Render и Neon."
+        )
+        return
+
+    bot = callback_bot(message)
+    await message.answer("Собираю дамп…")
+    blob, payload = await make_dump(db, kind="manual")
+    assert message.from_user is not None
+    sent = await send_dump(bot, message.from_user.id, blob, payload)
+    if sent:
+        await message.answer(summary(payload) + f"\nРазмер: {len(blob) / 1024:.1f} КБ")
+    else:
+        await message.answer("Дамп собрал, но отправить файл не смог — смотри лог.")
+
+
+@router.message(F.document)
+async def on_backup_file(message: Message, db: Database, backup: BackupService) -> None:
+    """Админ прислал файл копии — показываем, что внутри, и ждём подтверждения."""
+    document = message.document
+    assert document is not None
+    if (message.from_user is None or not document.file_name
+            or not document.file_name.endswith(".json.gz")):
+        return
+
+    limit = settings.backup_max_mb * 1024 * 1024
+    if int(document.file_size or 0) > limit:
+        await message.answer(f"Файл больше {settings.backup_max_mb} МБ — такой не приму.")
+        return
+
+    bot = callback_bot(message)
+    file = await bot.get_file(document.file_id)
+    buffer = BytesIO()
+    if file.file_path:
+        await bot.download_file(file.file_path, buffer)
+    try:
+        payload = decode(buffer.getvalue())
+    except BackupError as exc:
+        await message.answer(f"Это не наш дамп: {exc}")
+        return
+
+    current = await db.dump_rows()
+    old_users = len(current.get("users", []))
+    new_users = payload["counts"].get("users", 0)
+    _pending_restore[int(message.from_user.id)] = (buffer.getvalue(), payload, time.time())
+
+    preview = summary(payload)
+    await message.answer(
+        f"{preview}\n\n"
+        f"Сейчас в базе игроков: <b>{old_users}</b>, в дампе — <b>{new_users}</b>.\n"
+        "Восстановление <b>затрёт</b> текущие данные полностью. Подтверди, если уверен "
+        "(10 минут на раздумья).",
+        reply_markup=keyboards.restore_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("rst:"))
+async def on_restore_confirm(callback: CallbackQuery, db: Database, backup: BackupService) -> None:
+    if callback.from_user is None or callback.from_user.id not in settings.admin_ids_set:
+        await callback.answer("Только для админа", show_alert=True)
+        return
+    user_id = int(callback.from_user.id)
+
+    if callback.data == "rst:no":
+        _pending_restore.pop(user_id, None)
+        await callback.answer("Отменил")
+        if callback.message is not None:
+            await callback.message.answer("Восстановление отменено, база не тронута.")
+        return
+
+    pending = _pending_restore.pop(user_id, None)
+    if pending is None:
+        await callback.answer("Файл уже неактуален", show_alert=True)
+        return
+    blob, _, taken_at = pending
+    if time.time() - taken_at > RESTORE_TTL:
+        await callback.answer("Прошло больше 10 минут — пришли файл заново", show_alert=True)
+        return
+
+    # перед затиранием сохраняем текущее состояние: откат всегда возможен
+    safety, safety_payload = await make_dump(db, kind="before-restore")
+    if callback.bot is not None:
+        await send_dump(callback.bot, int(settings.admin_ids_list[0]), safety, safety_payload)
+
+    try:
+        counts = await restore(db, blob)
+    except BackupError as exc:
+        await callback.answer("Не вышло", show_alert=True)
+        if callback.message is not None:
+            await callback.message.answer(f"Восстановление не прошло: {exc}")
+        return
+
+    await callback.answer("Готово")
+    if callback.message is not None:
+        await callback.message.answer(
+            "База восстановлена.\n"
+            + "\n".join(f"{table}: {count}" for table, count in counts.items() if count)
+            + "\n\nПредыдущее состояние прислал отдельным файлом — если что, вернём его."
+        )

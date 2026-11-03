@@ -17,3 +17,7 @@ venv/
 !.env.example
 *.log
 .cache/
+
+# дампы базы не должны попадать в публичный репозиторий
+backups/
+*.json.gz

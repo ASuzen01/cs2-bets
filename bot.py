@@ -32,6 +32,7 @@ from app.db import Database
 from app.handlers import setup_handlers
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
+from app.services.backup import BackupService
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -69,12 +70,16 @@ def create_bot() -> Bot:
     )
 
 
-def create_dispatcher(db: Database, syncer: MatchSyncer) -> Dispatcher:
+def create_dispatcher(
+    db: Database, syncer: MatchSyncer, backup: BackupService | None = None
+) -> Dispatcher:
     dp = Dispatcher(storage=build_storage())
 
     # доступно во всех хендлерах как аргументы db=... и syncer=...
     dp["db"] = db
     dp["syncer"] = syncer
+    if backup is not None:
+        dp["backup"] = backup
 
     dp.update.outer_middleware(UserSyncMiddleware(db))
     dp.message.outer_middleware(
@@ -94,10 +99,16 @@ def create_dispatcher(db: Database, syncer: MatchSyncer) -> Dispatcher:
 
 # ------------------------------------------------------------------ startup
 async def on_startup(
-    bot: Bot, db: Database, syncer: MatchSyncer, allowed_updates: list[str]
+    bot: Bot,
+    db: Database,
+    syncer: MatchSyncer,
+    allowed_updates: list[str],
+    backup: BackupService | None = None,
 ) -> None:
     await db.connect()
     syncer.start()
+    if backup is not None:
+        backup.start()
 
     me = await bot.get_me()
     settings.bot_username = me.username or ""   # для ссылок-входов из групповых чатов
@@ -115,8 +126,12 @@ async def on_startup(
         log.info("Webhook установлен: %s", settings.webhook_url)
 
 
-async def on_shutdown(bot: Bot, db: Database, syncer: MatchSyncer) -> None:
+async def on_shutdown(
+    bot: Bot, db: Database, syncer: MatchSyncer, backup: BackupService | None = None
+) -> None:
     log.info("Остановка бота")
+    if backup is not None:
+        await backup.stop()
     await syncer.stop()
     await db.close()
     await bot.session.close()
@@ -229,7 +244,8 @@ def main() -> None:
     bot = create_bot()
     db = Database(settings.db_file, start_balance=settings.start_balance, url=settings.database_url, schema=settings.database_schema)
     syncer = MatchSyncer(bot, db)
-    dp = create_dispatcher(db, syncer)
+    backup = BackupService(bot, db)
+    dp = create_dispatcher(db, syncer, backup)
 
     if settings.run_mode == "webhook":
         run_webhook(bot, dp, db)

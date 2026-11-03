@@ -283,6 +283,24 @@ async def check(bot, db, dp) -> None:
         assert 'id="screen-bonus"' in html, "нет вкладки бонусов"
         assert "#i-bonus" in html and "#i-matches" in html, "иконки табов не встроены"
 
+    # --- бэкапы: снимок, проверка, восстановление -------------------------
+    from app.services.backup import decode, make_dump, restore
+
+    await dp.feed_update(bot, message_update(40, "/backup", user_id=777))
+    assert any("Бэкап от" in text or "Размер" in text for text in sent[-3:]), sent[-3:]
+    last_backup = await db.last_backup()
+    assert last_backup is not None and int(last_backup["users"]) >= 1, last_backup
+
+    balance_before_dump = await db.get_balance(777)
+    blob, _payload = await make_dump(db, kind="test")
+    decode(blob)                                  # дамп проходит проверку целостности
+    await db.add_coins(777, 500, "проверка восстановления")
+    assert await db.get_balance(777) == balance_before_dump + 500
+    counts = await restore(db, blob)
+    assert counts["users"] >= 1, counts
+    assert await db.get_balance(777) == balance_before_dump, "баланс не откатился из дампа"
+
+    print(f"OK: /backup → файл копии, дамп {len(blob) / 1024:.1f} КБ, восстановление откатило баланс")
     print(f"OK: /start отдаёт одну кнопку приложения ({buttons[0].web_app.url})")
     print(f"OK: в группе вход через {group_button.url}")
     print("OK: /help, фолбэк на текст, /results и подтверждение исхода")

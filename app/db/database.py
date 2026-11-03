@@ -33,6 +33,22 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+BACKUP_TABLES: tuple[str, ...] = (
+    "users",
+    "chats",
+    "matches",
+    "match_maps",
+    "bets",
+    "expresses",
+    "express_items",
+    "ledger",
+    "wheel_spins",
+    "tease_claims",
+    "backup_log",
+)
+"""Порядок важен: сначала родители, потом зависимые строки."""
+
+
 class BettingError(Exception):
     """Игровая ошибка, текст можно показывать пользователю."""
 
@@ -43,6 +59,10 @@ class MatchNotFound(BettingError):
 
 class MatchNotOpen(BettingError):
     pass
+
+
+class BackupError(Exception):
+    """Дамп битый или не от этой версии приложения."""
 
 
 class MatchAlreadySettled(BettingError):
@@ -199,6 +219,66 @@ class Database:
             )
             await self._ledger(conn, user_id, amount, "ежедневный бонус", now)
             return True, 0, int(row["balance"]) + amount
+
+    # ----------------------------------------------------------------- бэкапы
+    def is_postgres(self) -> bool:
+        return self._url.startswith(("postgres://", "postgresql://"))
+
+    async def dump_rows(self) -> dict[str, list[dict[str, Any]]]:
+        """Снимок всех таблиц: переносимый между SQLite и Postgres."""
+        data: dict[str, list[dict[str, Any]]] = {}
+        for table in BACKUP_TABLES:
+            rows = await self._fetchall(f"SELECT * FROM {table}")
+            data[table] = [dict(row) for row in rows]
+        return data
+
+    async def restore_rows(self, data: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+        """Полная замена содержимого базы данными из дампа."""
+        unknown = set(data) - set(BACKUP_TABLES)
+        if unknown:
+            raise BackupError(f"В дампе незнакомые таблицы: {', '.join(sorted(unknown))}")
+
+        counts: dict[str, int] = {}
+        async with self.transaction() as conn:
+            for table in reversed(BACKUP_TABLES):
+                await conn.execute(f"DELETE FROM {table}")
+            for table in BACKUP_TABLES:
+                rows = data.get(table) or []
+                for row in rows:
+                    columns = list(row)
+                    placeholders = ", ".join("?" for _ in columns)
+                    await conn.execute(
+                        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                        tuple(row[column] for column in columns),
+                    )
+                counts[table] = len(rows)
+
+        if self.is_postgres():
+            await self._reset_sequences()
+        return counts
+
+    async def _reset_sequences(self) -> None:
+        """После вставки строк с явными id сдвигаем счётчики Postgres."""
+        for table in BACKUP_TABLES:
+            columns = await self._backend.table_columns(table)  # type: ignore[union-attr]
+            if "id" not in columns:
+                continue
+            await self._backend.execute(  # type: ignore[union-attr]
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                f"COALESCE((SELECT MAX(id) FROM {table}), 1))"
+            )
+
+    async def log_backup(self, size_bytes: int, users: int, bets: int, kind: str) -> int:
+        now = int(time.time())
+        await self.conn.execute(
+            "INSERT INTO backup_log (created_at, size_bytes, users, bets, kind) VALUES (?, ?, ?, ?, ?)",
+            (now, size_bytes, users, bets, kind),
+        )
+        await self.conn.commit()
+        return now
+
+    async def last_backup(self) -> Any | None:
+        return await self._fetchone("SELECT * FROM backup_log ORDER BY created_at DESC LIMIT 1")
 
     # ---------------------------------------------------------------- бонусы
     async def bonus_state(self, user_id: int, daily_cooldown: int, wheel_cooldown: int,

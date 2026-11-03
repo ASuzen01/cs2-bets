@@ -125,6 +125,15 @@ CREATE TABLE IF NOT EXISTS express_items (
 CREATE INDEX IF NOT EXISTS idx_express_items_match ON express_items(match_id);
 CREATE INDEX IF NOT EXISTS idx_express_items_express ON express_items(express_id);
 
+CREATE TABLE IF NOT EXISTS backup_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at INTEGER NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    users      INTEGER NOT NULL,
+    bets       INTEGER NOT NULL,
+    kind       TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ledger (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,

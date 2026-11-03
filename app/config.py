@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     wheel_cooldown_hours: int = 24   # колесо: одна бесплатная крутка в сутки
     wheel_cost: int = 150            # цена платной крутки сверх бесплатной
     tease_cooldown_hours: int = 24   # пасхалка за 10 нажатий — тоже раз в сутки
+    backup_enabled: bool = True      # ежедневный дамп базы в личку админу
+    backup_interval_hours: int = 24  # как часто снимать копию
+    backup_max_mb: int = 25          # предел размера файла, который примем на восстановление
     min_bet: int = 10
     max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери
     max_express_odds: float = 0.0   # 0 — без потолка: итоговый кэф экспресса не ограничен
@@ -92,6 +95,10 @@ class Settings(BaseSettings):
             if chunk.lstrip("-").isdigit():
                 ids.add(int(chunk))
         return ids
+
+    @property
+    def admin_ids_list(self) -> list[int]:
+        return sorted(self.admin_ids_set)
 
     @property
     def webhook_url(self) -> str:
