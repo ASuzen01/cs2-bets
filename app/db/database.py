@@ -200,6 +200,87 @@ class Database:
             await self._ledger(conn, user_id, amount, "ежедневный бонус", now)
             return True, 0, int(row["balance"]) + amount
 
+    # ---------------------------------------------------------------- бонусы
+    async def bonus_state(self, user_id: int, daily_cooldown: int, wheel_cooldown: int,
+                          tease_cooldown: int) -> dict[str, Any]:
+        """Что из бонусов доступно прямо сейчас."""
+        now = int(time.time())
+        user = await self._fetchone("SELECT bonus_at FROM users WHERE user_id = ?", (user_id,))
+        wheel = await self._fetchone("SELECT spun_at FROM wheel_spins WHERE user_id = ?", (user_id,))
+        tease = await self._fetchone("SELECT claimed_at FROM tease_claims WHERE user_id = ?", (user_id,))
+
+        def wait(ts: int | None, cooldown: int) -> int:
+            if not ts:
+                return 0
+            return max(0, cooldown - (now - int(ts)))
+
+        return {
+            "daily": {"wait_seconds": wait(int(user["bonus_at"]) if user else 0, daily_cooldown)},
+            "wheel": {"wait_seconds": wait(int(wheel["spun_at"]) if wheel else 0, wheel_cooldown)},
+            "tease": {"wait_seconds": wait(int(tease["claimed_at"]) if tease else 0, tease_cooldown)},
+        }
+
+    async def claim_wheel(self, user_id: int, prize: int, cooldown: int) -> tuple[bool, int, int]:
+        """Крутка колеса: не чаще раза в cooldown. Возвращает (успех, ждать_сек, баланс)."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT spun_at FROM wheel_spins WHERE user_id = ?", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            last = int(row["spun_at"]) if row else 0
+            if last and now - last < cooldown:
+                return False, cooldown - (now - last), await self._balance_in(conn, user_id)
+
+            if row:
+                await conn.execute(
+                    "UPDATE wheel_spins SET spun_at = ?, prize = ? WHERE user_id = ?",
+                    (now, prize, user_id),
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO wheel_spins (user_id, spun_at, prize) VALUES (?, ?, ?)",
+                    (user_id, now, prize),
+                )
+            return await self._credit(conn, user_id, prize, "колесо фортуны", now)
+
+    async def claim_tease(self, user_id: int, amount: int, cooldown: int) -> tuple[bool, int, int]:
+        """Пасхалка за десять нажатий: тоже раз в сутки."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT claimed_at FROM tease_claims WHERE user_id = ?", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            last = int(row["claimed_at"]) if row else 0
+            if last and now - last < cooldown:
+                return False, cooldown - (now - last), await self._balance_in(conn, user_id)
+
+            if row:
+                await conn.execute(
+                    "UPDATE tease_claims SET claimed_at = ? WHERE user_id = ?", (now, user_id)
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO tease_claims (user_id, claimed_at) VALUES (?, ?)", (user_id, now)
+                )
+            return await self._credit(conn, user_id, amount, "за настойчивость", now)
+
+    @staticmethod
+    async def _balance_in(conn: Any, user_id: int) -> int:
+        async with conn.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+        return int(row["balance"]) if row else 0
+
+    async def _credit(
+        self, conn: Any, user_id: int, amount: int, reason: str, now: int
+    ) -> tuple[bool, int, int]:
+        await conn.execute(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id)
+        )
+        await self._ledger(conn, user_id, amount, reason, now)
+        return True, 0, await self._balance_in(conn, user_id)
+
     async def remember_chat(self, user_id: int, chat_id: int) -> None:
         """Помним, из какого чата игрок заходил: туда напишем, если личка закрыта."""
         if chat_id >= 0:

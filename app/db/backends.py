@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS users (
     last_chat_id INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS wheel_spins (
+    user_id  INTEGER PRIMARY KEY,
+    spun_at  INTEGER NOT NULL,
+    prize    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tease_claims (
+    user_id    INTEGER PRIMARY KEY,
+    claimed_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chats (
     chat_id  INTEGER PRIMARY KEY,
     title    TEXT,

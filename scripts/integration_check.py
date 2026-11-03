@@ -240,8 +240,40 @@ async def check(bot, db, dp) -> None:
         )
         assert express.status == 400, "экспресс из одной ноги должен отклоняться"
 
+        # --- бонусы: колесо и пасхалка -----------------------------------
+        assert "bonus" in state and state["bonus"]["wheel"]["available"] is True, state.get("bonus")
+        assert state["bonus"]["daily"]["amount"] == settings.daily_bonus
+        slots = state["bonus"]["wheel"]["slots"]
+        assert len(slots) == 24, len(slots)
+        assert [s["value"] for s in slots].count(1000) == 1
+        assert [s["value"] for s in slots].count(200) == 5
+        assert [s["value"] for s in slots].count(50) == 12
+        assert [s["value"] for s in slots].count(0) == 6
+
+        wheel = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
+        wheel_body = await wheel.json()
+        assert wheel_body["spun"] is True, wheel_body
+        assert wheel_body["prize"] == slots[wheel_body["slot"]]["value"], wheel_body
+        balance_after_wheel = wheel_body["balance"]
+        assert balance_after_wheel == bet_body["balance"] + wheel_body["prize"], wheel_body
+
+        repeat = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
+        repeat_body = await repeat.json()
+        assert repeat_body["spun"] is False and repeat_body["wait_seconds"] > 0, repeat_body
+
+        tease = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
+        tease_body = await tease.json()
+        assert tease_body["claimed"] is True and tease_body["amount"] == 50, tease_body
+        assert tease_body["balance"] == balance_after_wheel + 50, tease_body
+
+        tease_again = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
+        assert (await tease_again.json())["claimed"] is False
+
         index = await client.get("/", headers={"X-Telegram-Init-Data": init})
-        assert index.status == 200 and "<html" in (await index.text()).lower()
+        html = await index.text()
+        assert index.status == 200 and "<html" in html.lower()
+        assert 'id="screen-bonus"' in html, "нет вкладки бонусов"
+        assert "#i-bonus" in html and "#i-matches" in html, "иконки табов не встроены"
 
     print(f"OK: /start отдаёт одну кнопку приложения ({buttons[0].web_app.url})")
     print(f"OK: в группе вход через {group_button.url}")
@@ -249,6 +281,8 @@ async def check(bot, db, dp) -> None:
     print(f"OK: API /health, 401 без подписи, /api/state → баланс {balance_before}")
     print(f"OK: ставка 250 · кэф 2.00 → баланс {bet_body['balance']}")
     print("OK: экспресс из одной ноги отклонён, интерфейс отдаётся")
+    print(f"OK: колесо → приз {wheel_body['prize']} (сектор {wheel_body['slot']}), повтор отклонён")
+    print(f"OK: пасхалка на 10 нажатий → +{tease_body['amount']}, второй раз в сутки нельзя")
 
 
 if __name__ == "__main__":

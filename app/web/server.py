@@ -20,6 +20,7 @@ from aiohttp import web
 
 from app.config import settings
 from app.db import Database
+from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, slots_payload, spin
 from app.services.miniapp import AuthError
 from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.payloads import (
@@ -57,6 +58,8 @@ def register_routes(
     app.router.add_post("/api/bet", api_bet)
     app.router.add_post("/api/express", api_express)
     app.router.add_post("/api/bonus", api_bonus)
+    app.router.add_post("/api/wheel", api_wheel)
+    app.router.add_post("/api/tease", api_tease)
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
@@ -162,6 +165,7 @@ async def api_state(request: web.Request) -> web.Response:
             "live": await _line_with_maps(db, await db.live_matches(limit=40)),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
+            "bonus": await _bonus_payload(db, user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -170,6 +174,34 @@ async def api_state(request: web.Request) -> web.Response:
             },
         }
     )
+
+
+async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
+    """Что доступно: ежедневный бонус, колесо, пасхалка."""
+    state = await db.bonus_state(
+        user_id,
+        settings.bonus_cooldown_hours * 3600,
+        settings.wheel_cooldown_hours * 3600,
+        settings.tease_cooldown_hours * 3600,
+    )
+    return {
+        "daily": {
+            "amount": settings.daily_bonus,
+            "available": state["daily"]["wait_seconds"] == 0,
+            "wait_seconds": state["daily"]["wait_seconds"],
+        },
+        "wheel": {
+            "available": state["wheel"]["wait_seconds"] == 0,
+            "wait_seconds": state["wheel"]["wait_seconds"],
+            "slots": slots_payload(),
+            "tease_taps": TEASE_TAPS,
+        },
+        "tease": {
+            "amount": TEASE_PRIZE,
+            "available": state["tease"]["wait_seconds"] == 0,
+            "wait_seconds": state["tease"]["wait_seconds"],
+        },
+    }
 
 
 async def _json_body(request: web.Request) -> dict[str, Any]:
@@ -281,6 +313,58 @@ async def api_bonus(request: web.Request) -> web.Response:
             "ok": True,
             "received": received,
             "amount": settings.daily_bonus if received else 0,
+            "wait_seconds": wait_seconds,
+            "balance": balance,
+        }
+    )
+
+
+async def api_wheel(request: web.Request) -> web.Response:
+    """Крутка колеса. Приз определяет сервер — клиент только показывает результат."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    cooldown = settings.wheel_cooldown_hours * 3600
+
+    state = await db.bonus_state(
+        user_id, settings.bonus_cooldown_hours * 3600, cooldown,
+        settings.tease_cooldown_hours * 3600,
+    )
+    if state["wheel"]["wait_seconds"]:
+        return web.json_response(
+            {
+                "ok": True,
+                "spun": False,
+                "wait_seconds": state["wheel"]["wait_seconds"],
+                "balance": await db.get_balance(user_id),
+            }
+        )
+
+    slot, prize = spin()
+    spun, wait_seconds, balance = await db.claim_wheel(user_id, prize, cooldown)
+    return web.json_response(
+        {
+            "ok": True,
+            "spun": spun,
+            "slot": slot,
+            "prize": prize,
+            "wait_seconds": wait_seconds,
+            "balance": balance,
+        }
+    )
+
+
+async def api_tease(request: web.Request) -> web.Response:
+    """Пасхалка: десять нажатий на бонус — полтос на ход ноги."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    claimed, wait_seconds, balance = await db.claim_tease(
+        user_id, TEASE_PRIZE, settings.tease_cooldown_hours * 3600
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "claimed": claimed,
+            "amount": TEASE_PRIZE if claimed else 0,
             "wait_seconds": wait_seconds,
             "balance": balance,
         }

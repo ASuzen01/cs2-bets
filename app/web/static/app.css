@@ -19,7 +19,8 @@
   .who .brand{font-size:16px;letter-spacing:.01em}
   .who{flex:1;min-width:0}
   .who b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .who span{font-size:11.5px;color:var(--muted)}
+  .who span{font-size:11.5px;color:var(--muted);display:block;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
   .balance{display:flex;align-items:center;gap:6px;background:#1b2a1f;border:1px solid #23452c;
     color:#a9e6b8;padding:7px 11px;border-radius:12px;font-weight:700;font-size:14px;white-space:nowrap}
   .balance.flash{animation:flash .6s ease}
@@ -102,8 +103,10 @@
     background:var(--card2);border:1px solid #26374a;font-size:12.5px;color:var(--accent)}
   .chip:active{background:#284058}
 
-  .rowcard{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
-    border-radius:14px;padding:11px 13px;margin-bottom:8px}
+  .rowcard{display:flex;align-items:center;gap:10px;text-align:left;width:100%;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:8px}
+  .rowcard .chev{color:var(--muted);font-size:18px;line-height:1;margin-left:2px}
+  .rowcard svg.ic{color:#f3d27a;flex:0 0 20px}
   .rank{width:26px;text-align:center;font-weight:800;color:var(--muted)}
   .rowcard .grow{flex:1;min-width:0}
   .rowcard .grow b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -192,6 +195,10 @@
   .summary b{color:#fff}
   .summary .big{font-size:19px;color:#8ecbff;font-weight:800}
 
+  body.has-cart .toast{bottom:calc(var(--tabbar) + 88px)}
+  body.has-cart{padding-bottom:calc(var(--tabbar) + 74px)}
+  .btn.bonus.waiting{background:linear-gradient(180deg,#39424f,#333c48);color:#9fb3c8;
+    box-shadow:none}
   .toast{position:fixed;left:50%;transform:translate(-50%,20px);bottom:calc(var(--tabbar) + 26px);z-index:30;
     background:#1d2b3a;border:1px solid #2c4257;color:#eaf0f6;padding:11px 16px;border-radius:12px;
     font-size:13.5px;max-width:88vw;text-align:center;opacity:0;pointer-events:none;transition:.22s}
@@ -206,3 +213,74 @@
   .skeleton{height:74px;border-radius:14px;margin-bottom:10px;background:linear-gradient(90deg,#1a2431,#22303f,#1a2431);
     background-size:200% 100%;animation:sh 1.2s infinite}
   @keyframes sh{0%{background-position:0}100%{background-position:-200% 0}}
+
+  /* ---- иконки: спрайт и таббар ---- */
+  .sprite{position:absolute;width:0;height:0;overflow:hidden}
+  svg.ic{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round;display:block}
+  nav.tabs svg.ic{width:21px;height:21px;stroke-width:1.7;opacity:.85;transition:transform .16s,opacity .16s}
+  nav.tabs button.active svg.ic{opacity:1;transform:translateY(-1px)}
+  nav.tabs button{position:relative}
+
+  /* кнопка бонусов в шапке, рядом с балансом */
+  .bonusbell{position:relative;width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;
+    border-radius:12px;background:#231f2e;border:1px solid #3b3350;color:#f3d27a}
+  .bonusbell:active{background:#2b2639}
+  .bonusbell svg.ic{width:19px;height:19px}
+  .bonusbell .dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;
+    background:#f5a623;box-shadow:0 0 0 2px #151d26}
+  .bonusbell .dot[hidden]{display:none}
+
+  /* ---- вкладка «Бонусы» ---- */
+  .bonuscard{position:relative;background:linear-gradient(160deg,#1d2734,#18222e);
+    border:1px solid #2a3a4c;border-radius:16px;padding:14px;margin-bottom:10px;overflow:hidden}
+  .bonuscard h3{margin:0 0 3px;font-size:15px}
+  .bonuscard .sub{color:var(--muted);font-size:12.5px;margin-bottom:12px;line-height:1.45}
+  .bonuscard.daily{border-color:#2f4a2f;background:linear-gradient(160deg,#1b2b21,#17222b)}
+  .bonuscard.wheel{border-color:#3b3350;background:linear-gradient(160deg,#241f33,#1a2431)}
+  .bonuscard .glow{position:absolute;right:-40px;top:-40px;width:130px;height:130px;border-radius:50%;
+    background:radial-gradient(circle,rgba(245,166,35,.28),transparent 70%);pointer-events:none}
+  .bonusrow{display:flex;align-items:center;gap:10px}
+  .bonusrow .grow{flex:1;min-width:0}
+  .bonus-amount{font-variant-numeric:tabular-nums;font-weight:800;font-size:20px;color:#ffe8a3}
+  .bonus-amount.small{font-size:15px;color:#c7d6e4}
+
+  .btn.bonus{background:linear-gradient(180deg,#f5b83d,#e09a1f);color:#231a05;
+    box-shadow:0 8px 20px rgba(224,154,31,.28)}
+  .btn.bonus:disabled{opacity:.55;background:linear-gradient(180deg,#3a4350,#333c48);color:#9fb3c8;
+    box-shadow:none}
+  .btn.bonus:active{transform:translateY(1px) scale(.995)}
+
+  /* колесо */
+  .wheelwrap{position:relative;display:grid;place-items:center;margin:6px 0 14px}
+  .wheel-svg{width:min(76vw,292px);height:min(76vw,292px);display:block;
+    transform:rotate(0deg);will-change:transform;
+    filter:drop-shadow(0 12px 28px rgba(0,0,0,.5))}
+  .wheel-svg.spinning{transition:transform 4.6s cubic-bezier(.1,.74,.05,1)}
+  .wheel-rim{fill:none;stroke:#3d4b5e;stroke-width:3}
+.wheel-pointer{position:absolute;top:-2px;left:50%;transform:translateX(-50%);width:0;height:0;z-index:3;
+    border-left:11px solid transparent;border-right:11px solid transparent;border-top:19px solid #f3d27a;
+    filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+  .wheel-hub{position:absolute;width:88px;height:88px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle at 35% 30%,#2b3a4d,#16202b);border:2px solid #4a5c73;
+    color:#f3d27a;font-weight:800;font-size:12.5px;text-align:center;line-height:1.15;
+    box-shadow:0 8px 22px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);z-index:2}
+  .wheel-hub b{display:block;font-size:14px;letter-spacing:.02em}
+  .wheel-hub:disabled{color:#8496a8;border-color:#33414f}
+  .wheel-hub:active:not(:disabled){transform:scale(.97)}
+  .wheel-legend{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
+  .wheel-legend span{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid #2c3a4a;
+    color:#c7d6e4;background:#16202b}
+  .wheel-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+  .wheel-result{text-align:center;font-size:13.5px;color:#ffe8a3;min-height:18px;margin-bottom:8px}
+
+  /* чип «в экспресс» в карточке матча */
+  .legadd{display:flex;width:100%;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;
+    border:1px dashed #2f4459;background:rgba(77,171,247,.07);color:#8ecbff;font-size:12.5px;
+    font-weight:600;transition:background .16s,border-color .16s,color .16s}
+  .legadd:active{background:rgba(77,171,247,.16)}
+  .legadd svg.ic{width:16px;height:16px}
+  .legadd.added{border-style:solid;border-color:#2f6b3d;background:rgba(55,178,77,.13);color:#8fe3a5}
+  .legadd:disabled{opacity:.45}
+  .legadd .count{margin-left:auto;font-variant-numeric:tabular-nums;color:inherit;opacity:.7;
+    font-weight:700;font-size:11.5px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

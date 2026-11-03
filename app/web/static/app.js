@@ -17,6 +17,11 @@
     tab: "matches",
     live: false,
     pending: null,
+    bonus: null,       // ежедневный бонус, колесо и пасхалка (приходит из /api/state)
+    wheelResult: "",   // текст последнего результата: переживает перерисовку
+    wheelAngle: 0,     // текущий угол колеса
+    wheelBusy: false,
+    teaseTaps: 0,      // сколько раз подряд жали на бонус
     oddsPrev: {},      // кэфы, которые уже показали: нужно, чтобы заметить сдвиг линии
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
   };
@@ -124,6 +129,25 @@
       ? "локальный режим · виртуальные монеты"
       : "ставки на CS2 · виртуальные монеты";
     $("#balancePill").textContent = state.user ? money(state.user.balance) : "— 🪙";
+    renderBonusDots();
+  }
+
+  function bonusReady() {
+    const bonus = state.bonus;
+    if (!bonus) return 0;
+    return (bonus.daily.available ? 1 : 0) + (bonus.wheel.available ? 1 : 0);
+  }
+
+  function renderBonusDots() {
+    const count = bonusReady();
+    const bell = $("#bonusDot");
+    if (bell) bell.hidden = count === 0;
+    const tab = $("#tabBonus");
+    const dot = $("#bonusTabDot");
+    if (tab && dot) {
+      tab.classList.toggle("badge", count > 0);
+      dot.textContent = count ? String(count) : "0";
+    }
   }
 
   function emptyWithMascot(text) {
@@ -264,9 +288,20 @@
 
     const actions = el("div", "custom");
     actions.style.margin = "9px 0 0";
-    const add = el("button", "chip", "🎟 В экспресс");
+    const inCart = state.cart.find((leg) => leg.match_id === match.id);
+    const add = el("button", "legadd" + (inCart ? " added" : ""));
     add.type = "button";
-    add.addEventListener("click", () => addLeg(match));
+    add.dataset.match = String(match.id);
+    add.append(icon(inCart ? "check" : "ticket"));
+    add.append(el("span", null, inCart ? "В экспрессе" : "Добавить в экспресс"));
+    if (inCart) {
+      // повторный тап убирает ногу — не нужно лезть в корзину, чтобы передумать
+      add.append(el("span", "count", (inCart.side === "a" ? match.team_a : match.team_b) + " · убрать"));
+      add.addEventListener("click", () => removeLeg(match.id));
+    } else {
+      add.append(el("span", "count", "＋"));
+      add.addEventListener("click", () => addLeg(match));
+    }
     if (isWaiting) add.disabled = true;
     actions.append(add);
     card.append(actions);
@@ -351,6 +386,7 @@
     const count = state.cart.length;
     $("#tabExpress").classList.toggle("badge", count > 0);
     $("#cartDot").textContent = String(count);
+    document.body.classList.toggle("has-cart", count > 0);
     if (!count) {
       bar.classList.remove("show");
       return;
@@ -368,7 +404,7 @@
 
     if (!state.cart.length) {
       const card = el("div", "card");
-      card.append(el("div", "empty", "Корзина пуста.\nОткрой матч и жми «🎟 В экспресс» — исходов можно брать сколько угодно (минимум два)."));
+      card.append(el("div", "empty", "Корзина пуста.\nОткрой матч и жми «В экспресс» — исходов можно брать сколько угодно (минимум два)."));
       host.append(card);
       return;
     }
@@ -526,10 +562,16 @@
     kv("Минимальная ставка", money(state.limits.min_bet));
     host.append(card);
 
-    const bonus = el("button", "btn", `🎁 Забрать бонус ${money(state.limits.daily_bonus)}`);
-    bonus.type = "button";
-    bonus.addEventListener("click", claimBonus);
-    host.append(bonus);
+    const gift = el("button", "rowcard");
+    gift.type = "button";
+    const giftGrow = el("div", "grow");
+    giftGrow.append(el("b", null, "Бонусы"));
+    giftGrow.append(el("span", null, "ежедневный бонус и колесо фортуны"));
+    gift.append(icon("bonus"));
+    gift.append(giftGrow);
+    gift.append(el("span", "chev", "›"));
+    gift.addEventListener("click", () => switchTab("bonus"));
+    host.append(gift);
 
     if (state.bets.length) {
       host.append(el("h2", null, "Ставки в игре"));
@@ -755,6 +797,18 @@
     });
   }
 
+  function removeLeg(matchId) {
+    const before = state.cart.length;
+    state.cart = state.cart.filter((leg) => leg.match_id !== matchId);
+    if (state.cart.length === before) return;
+    saveCart();
+    renderMatches();
+    renderExpress();
+    renderCartBar();
+    haptic();
+    toast("Убрал из экспресса");
+  }
+
   function addLeg(match) {
     if (state.cart.some((leg) => leg.match_id === match.id)) {
       toast("Этот матч уже в корзине", "bad");
@@ -781,6 +835,7 @@
         });
         saveCart();
         closeSheet();
+        renderMatches();   // карточка сразу показывает «В экспрессе»
         renderExpress();
         renderCartBar();
         haptic("ok");
@@ -810,12 +865,293 @@
       if (data.received) {
         haptic("ok");
         toast(`Бонус ${money(data.amount)} зачислен`, "ok");
+        if (state.bonus) {
+          state.bonus.daily.available = false;
+          state.bonus.daily.wait_seconds = data.wait_seconds || 24 * 3600;
+        }
+        state.teaseTaps = 0;
       } else {
-        const hours = Math.floor(data.wait_seconds / 3600);
-        const minutes = Math.floor((data.wait_seconds % 3600) / 60);
-        toast(`Бонус уже получен. Следующий через ${hours} ч ${minutes} мин`, "bad");
+        toast(`Бонус уже получен. Следующий через ${waitText(data.wait_seconds)}`, "bad");
+        if (state.bonus) {
+          state.bonus.daily.available = false;
+          state.bonus.daily.wait_seconds = data.wait_seconds;
+        }
       }
       refreshState();
+      if (state.tab === "bonus") renderBonus();
+      renderBonusDots();
+    } catch (err) {
+      toast(err.message, "bad");
+    }
+  }
+
+
+  // ------------------------------------------------------------- БОНУСЫ
+  const WHEEL_SECTOR_DEG = 360 / 24;
+  const WHEEL_COLORS = {
+    2: ["#f7d774", "#e8b53c"],   // джекпот
+    1: ["#8b7bf0", "#6d5ae0"],   // 200
+    0: ["#3fb8a6", "#2f9c8c"],   // 50
+    "-1": ["#2b3542", "#232c37"], // пусто
+  };
+
+  function svgNode(tag, attrs) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (attrs) Object.keys(attrs).forEach((key) => node.setAttribute(key, attrs[key]));
+    return node;
+  }
+
+  function icon(name, cls) {
+    const svg = svgNode("svg", { class: cls || "ic", "aria-hidden": "true" });
+    const use = svgNode("use", { href: "#i-" + name });
+    svg.append(use);
+    return svg;
+  }
+
+  function polar(cx, cy, radius, angleDeg) {
+    // угол считается от «12 часов» по часовой стрелке
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+  }
+
+  function wheelSvg(slots) {
+    const size = 240;
+    const cx = size / 2;
+    const cy = size / 2;
+    const radius = cx - 6;
+    const svg = svgNode("svg", {
+      class: "wheel-svg", viewBox: "0 0 " + size + " " + size,
+      role: "img", "aria-label": "Колесо фортуны",
+    });
+    svg.id = "wheelSvg";
+    if (state.wheelAngle) svg.style.transform = `rotate(${state.wheelAngle}deg)`;
+
+    slots.forEach((slot, index) => {
+      const from = index * WHEEL_SECTOR_DEG;
+      const to = from + WHEEL_SECTOR_DEG;
+      const [x1, y1] = polar(cx, cy, radius, from);
+      const [x2, y2] = polar(cx, cy, radius, to);
+      const colors = WHEEL_COLORS[String(slot.tier)];
+      const path = svgNode("path", {
+        d: `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`,
+        fill: index % 2 === 0 ? colors[0] : colors[1],
+        stroke: "#121a23",
+        "stroke-width": "0.8",
+      });
+      svg.append(path);
+
+      const center = from + WHEEL_SECTOR_DEG / 2;
+      // нижнюю половину подписываем «наружу» — иначе половина цифр вверх ногами
+      const flipped = center > 90 && center < 270;
+      // джекпот подписываем ближе к ободу — иначе соседние цифры наезжают друг на друга
+      const labelRadius = slot.value >= 1000 ? radius * 0.79 : radius * 0.63;
+      const label = svgNode("text", {
+        x: "0", y: String(-labelRadius),
+        transform: `rotate(${flipped ? center + 180 : center} ${cx} ${cy}) translate(${cx} ${cy})`,
+        "text-anchor": "middle",
+        "font-size": slot.value >= 1000 ? "10" : slot.value ? "9" : "8.5",
+        "font-weight": "800",
+        fill: slot.tier > 0 ? "#1b1408" : "#dfe9f2",
+        "letter-spacing": "0.2",
+      });
+      label.textContent = slot.value ? String(slot.value) : "0";
+      svg.append(label);
+    });
+
+    svg.append(svgNode("circle", {
+      cx: String(cx), cy: String(cy), r: String(radius), class: "wheel-rim",
+    }));
+    return svg;
+  }
+
+  function waitText(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h) return `${h} ч ${m} мин`;
+    return `${Math.max(1, m)} мин`;
+  }
+
+  function renderBonus() {
+    const host = $("#bonus");
+    if (!host) return;
+    host.textContent = "";
+
+    if (!state.user || !state.bonus) {
+      host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся бонусы."));
+      return;
+    }
+
+    host.append(dailyBonusCard());
+    host.append(wheelCard());
+    host.append(wheelRulesCard());
+  }
+
+  function dailyBonusCard() {
+    const daily = state.bonus.daily;
+    const card = el("div", "bonuscard daily");
+    card.append(el("div", "glow"));
+
+    const title = el("h3", null, "Ежедневный бонус");
+    card.append(title);
+    card.append(el("div", "sub",
+      daily.available
+        ? "Забирай раз в сутки — просто за то, что зашёл."
+        : `Следующий через ${waitText(daily.wait_seconds)}.`));
+
+    const amount = el("div", "bonus-amount", money(daily.amount));
+    card.append(amount);
+
+    const btn = el("button", "btn bonus" + (daily.available ? "" : " waiting"));
+    btn.type = "button";
+    btn.style.marginTop = "12px";
+    btn.id = "dailyBonusBtn";
+    btn.append(icon("bonus"));
+    btn.append(document.createTextNode(
+      daily.available ? `Забрать ${money(daily.amount)}` : `Через ${waitText(daily.wait_seconds)}`));
+    btn.addEventListener("click", onDailyTap);
+    card.append(btn);
+    return card;
+  }
+
+  function wheelCard() {
+    const wheel = state.bonus.wheel;
+    const card = el("div", "bonuscard wheel");
+    card.append(el("div", "glow"));
+
+    card.append(el("h3", null, "Колесо фортуны"));
+    card.append(el("div", "sub",
+      wheel.available
+        ? "Одна бесплатная крутка в сутки. Джекпот 1000 выпадает примерно раз в 24 прокрута."
+        : `Следующая крутка через ${waitText(wheel.wait_seconds)}.`));
+
+    const wrap = el("div", "wheelwrap");
+    wrap.append(wheelSvg(wheel.slots || []));
+    wrap.append(el("div", "wheel-pointer"));
+
+    const hub = el("button", "wheel-hub");
+    hub.type = "button";
+    hub.id = "wheelHub";
+    hub.append(el("b", null, wheel.available ? "Крутить" : "Ждём"));
+    hub.append(el("span", null, wheel.available ? "жми" : waitText(wheel.wait_seconds)));
+    hub.disabled = !wheel.available || state.wheelBusy;
+    hub.addEventListener("click", spinWheel);
+    wrap.append(hub);
+    card.append(wrap);
+
+    const result = el("div", "wheel-result");
+    result.id = "wheelResult";
+    result.textContent = state.wheelResult || "";
+    card.append(result);
+
+    const legend = el("div", "wheel-legend");
+    [["#f7d774", "1000 × 1"], ["#8b7bf0", "200 × 5"], ["#3fb8a6", "50 × 12"], ["#2b3542", "0 × 6"]]
+      .forEach(([color, text]) => {
+        const item = el("span");
+        const dot = el("i");
+        dot.style.background = color;
+        item.append(dot, document.createTextNode(text));
+        legend.append(item);
+      });
+    card.append(legend);
+    return card;
+  }
+
+  function wheelRulesCard() {
+    const card = el("div", "card");
+    card.append(el("h2", null, "Как это работает"));
+    card.append(el("div", "hint",
+      "Ежедневный бонус капает раз в 24 часа. Колесо тоже крутится раз в сутки — приз определяет сервер, " +
+      "никакой хитрости: все 24 сектора равновероятны, поэтому 1000 падает в среднем раз на 24 прокрута, " +
+      "200 — пять раз, 50 — двенадцать, пусто — шесть. " +
+      "Монеты зачисляются сразу и видны в истории операций."));
+    return card;
+  }
+
+  async function spinWheel() {
+    if (state.wheelBusy || !state.bonus || !state.bonus.wheel.available) return;
+    state.wheelBusy = true;
+    const hub = $("#wheelHub");
+    if (hub) { hub.disabled = true; hub.querySelector("b").textContent = "Крутим"; }
+
+    try {
+      const data = await api("/api/wheel", { method: "POST" });
+      if (!data.spun) {
+        toast(`Колесо уже крутили, следующее через ${waitText(data.wait_seconds)}`, "bad");
+        state.bonus.wheel.available = false;
+        state.bonus.wheel.wait_seconds = data.wait_seconds;
+        renderBonus();
+        return;
+      }
+      await animateWheel(data.slot);
+      setBalance(data.balance);
+      haptic(data.prize > 0 ? "ok" : "bad");
+
+      state.wheelResult = data.prize > 0
+        ? `Выпало ${money(data.prize)} — уже на балансе`
+        : "Пусто. В следующий раз повезёт.";
+      if (data.prize > 0) toast(`Колесо: ${money(data.prize)}`, "ok");
+
+      state.bonus.wheel.available = false;
+      state.bonus.wheel.wait_seconds = data.wait_seconds || 24 * 3600;
+      renderBonusDots();
+      renderBonus();   // карточка встаёт в режим ожидания, угол колеса сохраняется
+    } catch (err) {
+      toast(err.message, "bad");
+      if (hub) { hub.disabled = false; hub.querySelector("b").textContent = "Крутить"; }
+    } finally {
+      state.wheelBusy = false;
+    }
+  }
+
+  function animateWheel(slotIndex) {
+    const svg = $("#wheelSvg");
+    if (!svg) return Promise.resolve();
+    const center = slotIndex * WHEEL_SECTOR_DEG + WHEEL_SECTOR_DEG / 2;
+    const jitter = (Math.random() - 0.5) * (WHEEL_SECTOR_DEG - 4);   // не всегда в яблочко
+    const current = state.wheelAngle;
+    const turns = 5;
+    const target = current + turns * 360 + (((-center - jitter - current) % 360) + 360) % 360;
+
+    svg.classList.add("spinning");
+    // принудительный reflow: иначе браузер склеит два изменения transform
+    void svg.getBoundingClientRect();
+    svg.style.transform = `rotate(${target}deg)`;
+    state.wheelAngle = target;
+
+    return new Promise((resolve) => setTimeout(() => {
+      svg.classList.remove("spinning");
+      resolve();
+    }, 4700));
+  }
+
+  function onDailyTap() {
+    // десять нажатий подряд по кнопке бонуса = пасхалка (раз в сутки)
+    if (!state.bonus) return;
+    if (state.bonus.daily.available) {
+      claimBonus();
+      return;
+    }
+    state.teaseTaps += 1;
+    haptic();
+    if (state.teaseTaps >= (state.bonus.wheel.tease_taps || 10)) {
+      state.teaseTaps = 0;
+      claimTease();
+    }
+  }
+
+  async function claimTease() {
+    try {
+      const data = await api("/api/tease", { method: "POST" });
+      if (data.claimed) {
+        setBalance(data.balance);
+        haptic("ok");
+        toast("заебал, лови полтос на ход ноги 🩴", "ok");
+        state.bonus.tease.available = false;
+        state.bonus.tease.wait_seconds = data.wait_seconds || 24 * 3600;
+      } else {
+        toast(`Уже получал сегодня. Следующий через ${waitText(data.wait_seconds)}`, "bad");
+      }
+      renderBonus();
     } catch (err) {
       toast(err.message, "bad");
     }
@@ -834,6 +1170,8 @@
     if (tab === "top") loadTop();
     if (tab === "me") renderMe();
     if (tab === "express") renderExpress();
+    if (tab === "bonus") renderBonus();
+    state.teaseTaps = 0;   // «подряд» считается в пределах одного экрана
     haptic("light");
   }
 
@@ -998,6 +1336,7 @@
       state.bets = data.bets;
       state.expresses = data.expresses;
       state.limits = data.limits;
+      state.bonus = data.bonus || null;
       state.live = true;
 
       renderHeader();
@@ -1009,6 +1348,7 @@
       renderCartBar();
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
+      if (state.tab === "bonus") renderBonus();
     } catch (err) {
       if (err.status === 401) {
         state.user = boot.user || null;
@@ -1048,6 +1388,8 @@
       });
     });
     $("#cartOpen").addEventListener("click", () => switchTab("express"));
+    const bell = $("#bonusBell");
+    if (bell) bell.addEventListener("click", () => { haptic(); switchTab("bonus"); });
     $("#sheetWrap").addEventListener("click", (event) => {
       if (event.target === $("#sheetWrap")) closeSheet();
     });

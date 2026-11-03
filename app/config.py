@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     start_balance: int = 1000
     daily_bonus: int = 250
     bonus_cooldown_hours: int = 24
+    wheel_cooldown_hours: int = 24   # колесо: одна бесплатная крутка в сутки
+    tease_cooldown_hours: int = 24   # пасхалка за 10 нажатий — тоже раз в сутки
     min_bet: int = 10
     max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери
     max_express_odds: float = 0.0   # 0 — без потолка: итоговый кэф экспресса не ограничен
