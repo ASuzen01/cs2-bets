@@ -211,12 +211,6 @@
     if (badge) badge.textContent = count ? String(count) : "";
   }
 
-  function liveLabel(match) {
-    // Fonbet отдаёт таймер матча: у футбола это минута, у CS2 его нет
-    const minute = match.live_minute;
-    return minute === null || minute === undefined ? "LIVE" : `LIVE · ${minute}′`;
-  }
-
   function liveTag(text, kind) {
     const tag = el("span", "live-tag");
     if (kind === "live") tag.append(el("i"));
@@ -256,7 +250,7 @@
     const card = el("div", "card" + (isLive || isWaiting ? " live" : ""));
 
     const top = el("div", "top");
-    if (isLive) top.append(liveTag(liveLabel(match), "live"));
+    if (isLive) top.append(liveTag("LIVE", "live"));
     else if (isWaiting) top.append(liveTag("⏳ ждём результат", "wait"));
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
@@ -356,25 +350,15 @@
     return "ludka:tour:" + state.sport;
   }
 
-  // выбор турнира: {label, prefix}. prefix — начало короткого имени турнира,
-  // поэтому «ЛЧ» покрывает все стадии, а «ЛЧ · Общий этап» — только одну.
   function selectedTournament() {
     if (state.tournaments[state.sport] !== undefined) return state.tournaments[state.sport];
-    let raw = null;
-    try { raw = localStorage.getItem(tournamentKey()); } catch (err) { return null; }
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw);
-      return parsed && parsed.prefix ? parsed : { label: raw, prefix: raw };
-    } catch (err) {
-      return { label: raw, prefix: raw };   // значение из старой версии приложения
-    }
+    try { return localStorage.getItem(tournamentKey()); } catch (err) { return null; }
   }
 
-  function setTournament(selection) {
-    state.tournaments[state.sport] = selection;
+  function setTournament(name) {
+    state.tournaments[state.sport] = name;
     try {
-      if (selection) localStorage.setItem(tournamentKey(), JSON.stringify(selection));
+      if (name) localStorage.setItem(tournamentKey(), name);
       else localStorage.removeItem(tournamentKey());
     } catch (err) { /* приватный режим — просто не запоминаем */ }
   }
@@ -390,38 +374,18 @@
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }
 
-  // Кубок → стадии. «ЛЧ · Общий этап» и «ЛЧ · 1/8 финала» — один турнир, две стадии
-  function tournamentGroups(list) {
-    const groups = new Map();
-    tournamentsOf(list).forEach((item) => {
-      const [base, ...rest] = item.name.split(" · ");
-      if (!groups.has(base)) groups.set(base, { base, total: 0, stages: [] });
-      const group = groups.get(base);
-      group.total += item.count;
-      group.stages.push({ name: item.name, stage: rest.join(" · "), count: item.count });
-    });
-    return [...groups.values()].sort((a, b) => b.total - a.total || a.base.localeCompare(b.base));
-  }
-
-  function matchesTournament(match, selection) {
-    if (!selection) return true;
-    const name = match.short_tournament || match.tournament || "";
-    return name.startsWith(selection.prefix);
-  }
-
   function renderTournamentFilter(all) {
     const button = $("#tourFilter");
     if (!button) return;
+    const chosen = selectedTournament();
     const list = tournamentsOf(all);
-    let active = selectedTournament();
-    // выбранного турнира больше нет в линии — тихо возвращаем «все»
-    if (active && !list.some((item) => item.name.startsWith(active.prefix))) {
-      setTournament(null);
-      active = null;
-    }
+    // выбранный турнир мог уйти из линии — тогда тихо показываем «все»
+    if (chosen && !list.some((item) => item.name === chosen)) setTournament(null);
+    const active = selectedTournament();
     button.textContent = "";
-    button.append(document.createTextNode(active ? active.label : "Все турниры"));
-    button.append(el("span", "caret", "▼"));
+    button.append(document.createTextNode(active || "Все турниры"));
+    const caret = el("span", "caret", "▼");
+    button.append(caret);
     button.classList.toggle("active", Boolean(active));
     const reset = $("#tourReset");
     if (reset) reset.hidden = !active;
@@ -429,47 +393,32 @@
 
   function openTournamentSheet(all) {
     haptic("light");
-    const groups = tournamentGroups(all);
+    const list = tournamentsOf(all);
     const active = selectedTournament();
     openSheet((sheet) => {
       sheet.append(el("h3", null, "Турниры"));
-      sheet.append(el("div", "sub", `${groups.length} турниров · ${all.length} матчей`));
+      sheet.append(el("div", "sub", `${list.length} турниров · ${all.length} матчей`));
       const box = el("div", "tourlist");
-
-      const row = (label, count, selection, className) => {
-        const isActive = active && active.prefix === (selection ? selection.prefix : null);
-        const btn = el("button", (className || "") + (isActive ? " active" : ""));
-        btn.type = "button";
-        btn.append(el("span", "nm", label));
-        btn.append(el("span", "cnt", String(count)));
-        btn.addEventListener("click", () => {
-          setTournament(selection);
-          closeSheet();
-          renderMatches();
-        });
-        return btn;
+      const pick = (name) => {
+        setTournament(name);
+        closeSheet();
+        renderMatches();
       };
+      const allBtn = el("button", !active ? "active" : "");
+      allBtn.type = "button";
+      allBtn.append(el("span", "nm", "Все турниры"));
+      allBtn.append(el("span", "cnt", String(all.length)));
+      allBtn.addEventListener("click", () => pick(null));
+      box.append(allBtn);
 
-      box.append(row("Все турниры", all.length, null));
-
-      groups.forEach((group) => {
-        // одна стадия — обычная строка («ЛЧ · Общий этап»), иначе заголовок + стадии
-        if (group.stages.length === 1) {
-          const single = group.stages[0];
-          box.append(row(single.name, single.count, { label: single.name, prefix: single.name }));
-          return;
-        }
-        box.append(row(group.base, group.total, { label: group.base, prefix: group.base }, "group"));
-        group.stages.forEach((stage) => {
-          box.append(row(
-            "— " + (stage.stage || stage.name),
-            stage.count,
-            { label: stage.name, prefix: stage.name },
-            "stage",
-          ));
-        });
+      list.forEach((item) => {
+        const btn = el("button", item.name === active ? "active" : "");
+        btn.type = "button";
+        btn.append(el("span", "nm", item.name));
+        btn.append(el("span", "cnt", String(item.count)));
+        btn.addEventListener("click", () => pick(item.name));
+        box.append(btn);
       });
-
       sheet.append(box);
     });
   }
@@ -501,10 +450,9 @@
     const card = el("div", "card" + (isLive ? " live" : ""));
 
     const top = el("div", "top");
-    if (isLive) top.append(liveTag(liveLabel(match), "live"));
+    if (isLive) top.append(liveTag("LIVE", "live"));
     top.append(el("span", "tour", match.short_tournament));
-    top.append(el("span", "kick", isLive && match.live_minute != null
-      ? `${match.live_minute}′` : timeText(match.start_time)));
+    top.append(el("span", "kick", timeText(match.start_time)));
     card.append(top);
 
     const board = el("div", "fb-board");
@@ -626,14 +574,14 @@
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
     const list = tournament
-      ? sportOnly.filter((match) => matchesTournament(match, tournament))
+      ? sportOnly.filter((match) => (match.short_tournament || match.tournament) === tournament)
       : sportOnly;
 
     if (!list.length) {
       if (tournament && sportOnly.length) {
         // турнир выбран, но в нём сейчас пусто — предлагаем снять фильтр
         const card = el("div", "card");
-        card.append(el("div", "empty", `В турнире «${tournament.label}» сейчас нет матчей.`));
+        card.append(el("div", "empty", `В турнире «${tournament}» сейчас нет матчей.`));
         const all = el("button", "btn ghost", "Показать все турниры");
         all.type = "button";
         all.addEventListener("click", () => { setTournament(null); renderMatches(); });

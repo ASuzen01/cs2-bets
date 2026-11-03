@@ -15,7 +15,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import Database
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
-from app.services.football import FootballMatch, non_football_event_ids, parse_football
+from app.services.football import FootballMatch, parse_football
 from app.services.notify import notify_bettors, notify_map_bettors
 
 log = logging.getLogger(__name__)
@@ -109,7 +109,6 @@ class MatchSyncer:
 
         await self._store(matches, maps_by_parent, stats)
         await self._store_football(football, stats)
-        await self._drop_foreign(football, packet, stats)
         await self._close_started(stats)
         # сначала карты: матч считается в том числе по их результатам
         await self._settle_maps(maps_by_parent, stats)
@@ -281,39 +280,10 @@ class MatchSyncer:
                 score_a=match.score_a,
                 score_b=match.score_b,
                 sport="football",
-                live_minute=match.minute,
             )
             del row
             if created:
                 stats["football_created"] += 1
-
-    async def _drop_foreign(
-        self, football: list[FootballMatch], packet: dict[str, Any], stats: dict[str, Any]
-    ) -> None:
-        """Убирает из футбольной линии матчи другого спорта.
-
-        Fonbet называет «Лигой Чемпионов» и хоккейный турнир: такие события
-        однажды попали в нашу футбольную линию. Если событие из пакета есть, но
-        футболом не является — снимаем его с приёма и возвращаем ставки.
-        """
-        if not football:
-            return
-        foreign = non_football_event_ids(packet)
-        if not foreign:
-            return
-        for row in await self.db.open_matches_of_sport("football", limit=500):
-            if int(row["fonbet_id"]) not in foreign:
-                continue
-            try:
-                result = await self.db.cancel_match(int(row["id"]))
-            except Exception:
-                log.exception("Не смог убрать чужой матч #%s из футбольной линии", row["id"])
-                continue
-            stats["dropped"] = stats.get("dropped", 0) + 1
-            log.info(
-                "Убран из футбольной линии: %s — %s (%s), ставок %s",
-                row["team_a"], row["team_b"], row["tournament"], result.get("bets", 0),
-            )
 
     async def _settle_football(
         self, matches: list[FootballMatch], stats: dict[str, Any]
