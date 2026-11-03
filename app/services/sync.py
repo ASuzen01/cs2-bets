@@ -20,6 +20,14 @@ from app.services.notify import notify_bettors, notify_map_bettors
 
 log = logging.getLogger(__name__)
 
+# Футбольный матч с перерывом и добавленным временем заканчивается за ~100 минут.
+# Fonbet выбрасывает завершённые события из линии и финальный счёт после этого
+# не отдаёт (/events/event возвращает пустоту), поэтому финалом считаем последний
+# счёт, который видели в live, — но только если событие пропало и минуту не
+# появляется снова (пять минут тишины).
+FOOTBALL_FINISH_MINUTES = 100
+FOOTBALL_GONE_QUIET_SECONDS = 300
+
 
 def required_maps(tournament: str) -> int:
     """Сколько карт нужно взять, чтобы выиграть серию."""
@@ -288,7 +296,12 @@ class MatchSyncer:
     async def _settle_football(
         self, matches: list[FootballMatch], stats: dict[str, Any]
     ) -> None:
-        """Считаем футбольные матчи по финальному счёту из линии."""
+        """Считаем футбольные матчи по счёту.
+
+        Счёт берём из линии, пока матч там есть. Завершённые матчи Fonbet из линии
+        убирает и результат после этого не отдаёт — тогда финальным считаем
+        последний счёт, который мы видели в live (он уже лежит в базе).
+        """
         by_fonbet = {match.event_id: match for match in matches}
         now = int(time.time())
 
@@ -296,36 +309,57 @@ class MatchSyncer:
             if str(row["sport"]) != "football":
                 continue
             match = by_fonbet.get(int(row["fonbet_id"]))
-            if match is None:
-                if str(row["status"]) != "awaiting" and now - int(row["start_time"]) > 3 * 3600:
-                    await self._mark_awaiting(row, None)
-                    stats["awaiting"] += 1
-                continue
-            if not match.finished or match.score_a is None or match.score_b is None:
+            if match is not None:
+                if match.finished and match.score_a is not None and match.score_b is not None:
+                    await self._settle_football_row(row, match.score_a, match.score_b, stats)
                 continue
 
-            try:
-                result = await self.db.settle_football(
-                    int(row["id"]), match.score_a, match.score_b, source="fonbet"
-                )
-            except Exception:
-                log.exception("Не смог рассчитать футбольный матч #%s", row["id"])
+            # события нет в линии: либо оно ещё не появилось, либо матч уже сыгран
+            score_a, score_b = row["score_a"], row["score_b"]
+            if (
+                str(row["status"]) in ("live", "awaiting")
+                and score_a is not None
+                and score_b is not None
+                and now - int(row["start_time"]) > FOOTBALL_FINISH_MINUTES * 60
+            ):
+                last_seen = int(row["last_result_check"] or 0)
+                if last_seen and now - last_seen >= FOOTBALL_GONE_QUIET_SECONDS:
+                    await self._settle_football_row(row, int(score_a), int(score_b), stats)
+                else:
+                    # отметим «пропал» и подождём пять минут: вдруг матч вернётся в линию
+                    await self.db.mark_result_check(int(row["id"]))
                 continue
 
-            stats["settled"] += 1
-            score = f"{match.score_a}:{match.score_b}"
-            text = texts.football_settled_text(result, int(row["id"]), score)
-            for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
-                await self._safe_send(chat_id, text)
-            await notify_bettors(self.bot, self.db, result, score=score)
-            for express in result.get("expresses") or []:
-                target = express.get("chat_id") or None
-                if target:
-                    await self._safe_send(int(target), texts.express_result(express))
-            log.info(
-                "Футбол #%s рассчитан: %s — %s (%s), выплачено %s",
-                row["id"], row["team_a"], row["team_b"], score, result["paid"],
+            if str(row["status"]) != "awaiting" and now - int(row["start_time"]) > 3 * 3600:
+                await self._mark_awaiting(row, None)
+                stats["awaiting"] += 1
+
+    async def _settle_football_row(
+        self, row: Any, score_a: int, score_b: int, stats: dict[str, Any]
+    ) -> None:
+        """Расплатиться по футбольному матчу и рассказать об этом в чаты."""
+        try:
+            result = await self.db.settle_football(
+                int(row["id"]), score_a, score_b, source="fonbet"
             )
+        except Exception:
+            log.exception("Не смог рассчитать футбольный матч #%s", row["id"])
+            return
+
+        stats["settled"] += 1
+        score = f"{score_a}:{score_b}"
+        text = texts.football_settled_text(result, int(row["id"]), score)
+        for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
+            await self._safe_send(chat_id, text)
+        await notify_bettors(self.bot, self.db, result, score=score)
+        for express in result.get("expresses") or []:
+            target = express.get("chat_id") or None
+            if target:
+                await self._safe_send(int(target), texts.express_result(express))
+        log.info(
+            "Футбол #%s рассчитан: %s — %s (%s), выплачено %s",
+            row["id"], row["team_a"], row["team_b"], score, result["paid"],
+        )
 
     async def _post_card(self, match: Any, chats: list[Any]) -> None:
         markup = keyboards.app_kb(group=True)  # в группе web_app-кнопка не отрисуется
