@@ -940,21 +940,22 @@
       });
       svg.append(path);
 
-      const center = from + WHEEL_SECTOR_DEG / 2;
-      // нижнюю половину подписываем «наружу» — иначе половина цифр вверх ногами
-      const flipped = center > 90 && center < 270;
-      // джекпот подписываем ближе к ободу — иначе соседние цифры наезжают друг на друга
-      const labelRadius = slot.value >= 1000 ? radius * 0.79 : radius * 0.63;
+      const value = slot.value;
+      if (!value) return;          // пустые сектора не подписываем: меньше визуального шума
+
+      // Подпись ставим горизонтально в своей доле сектора: так она читается
+      // в любой точке колеса и не наезжает на соседнюю (15° — это ~23 px на нашем радиусе).
+      const [lx, ly] = polar(cx, cy, radius * 0.76, from + WHEEL_SECTOR_DEG / 2);
       const label = svgNode("text", {
-        x: "0", y: String(-labelRadius),
-        transform: `rotate(${flipped ? center + 180 : center} ${cx} ${cy}) translate(${cx} ${cy})`,
+        x: lx.toFixed(2),
+        y: ly.toFixed(2),
         "text-anchor": "middle",
-        "font-size": slot.value >= 1000 ? "10" : slot.value ? "9" : "8.5",
+        "dominant-baseline": "middle",
+        "font-size": value >= 1000 ? "10" : value >= 200 ? "9.5" : "9",
         "font-weight": "800",
-        fill: slot.tier > 0 ? "#1b1408" : "#dfe9f2",
-        "letter-spacing": "0.2",
+        fill: slot.tier > 0 ? "#20190a" : "#eaf3fb",
       });
-      label.textContent = slot.value ? String(slot.value) : "0";
+      label.textContent = String(value);
       svg.append(label);
     });
 

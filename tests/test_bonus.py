@@ -42,6 +42,19 @@ def test_layout_keeps_same_prizes_but_mixes_order() -> None:
     assert list(today) != sorted(today, key=WHEEL_VALUES.index)  # и не исходный
 
 
+def test_no_two_equal_sectors_side_by_side() -> None:
+    """Соседние сектора всегда разные — в том числе последний с первым."""
+    for day in range(1, 401):
+        layout = daily_layout(day)
+        dupes = [i for i in range(24) if layout[i] == layout[(i + 1) % 24]]
+        assert not dupes, f"день {day}: одинаковые сектора рядом на позициях {dupes}"
+
+
+def test_layout_shuffles_between_days() -> None:
+    layouts = {daily_layout(day) for day in range(1, 60)}
+    assert len(layouts) > 30      # раскладки реально разные, а не одна на все дни
+
+
 def test_layout_is_stable_within_the_day() -> None:
     assert daily_layout(day=42) == daily_layout(day=42)
 

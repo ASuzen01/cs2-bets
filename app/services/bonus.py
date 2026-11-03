@@ -31,10 +31,29 @@ def day_number(now: float | None = None) -> int:
 
 
 def daily_layout(day: int | None = None) -> tuple[int, ...]:
-    """Раскладка секторов на сутки: у всех игроков одинаковая и не меняется до полуночи."""
-    values = list(WHEEL_VALUES)
-    random.Random(day if day is not None else day_number()).shuffle(values)
-    return tuple(values)
+    """Раскладка секторов на сутки: одна и та же для всех, до полуночи не меняется.
+
+    Сектора раскладываем так, чтобы рядом не оказалось двух одинаковых призов.
+    Призов у нас 12 полтин на 24 сектора — значит они должны стоять через один,
+    а в промежутки надо чередовать пусто и 200/1000. Внутри этого правила
+    порядок перемешивается: группы из четырёх секторов собираются в случайном
+    порядке, призы и пустышки ходят по своим местам, плюс случайный поворот.
+    """
+    rng = random.Random(day if day is not None else day_number())
+    prizes = [200] * 5 + [WHEEL_JACKPOT]
+    rng.shuffle(prizes)
+
+    ring: list[int] = []
+    for index in range(6):
+        # каждая четвёрка — [50, пусто, 50, приз] или [50, приз, 50, пусто]
+        middle = [0, prizes[index]] if rng.random() < 0.5 else [prizes[index], 0]
+        ring.extend([50, middle[0], 50, middle[1]])
+
+    shift = rng.randrange(len(ring))
+    ring = ring[shift:] + ring[:shift]
+    if rng.random() < 0.5:          # отражение — ещё один вариант раскладки
+        ring = [ring[0], *reversed(ring[1:])]
+    return tuple(ring)
 
 
 def spin(layout: tuple[int, ...] | list[int], rng: random.Random | None = None) -> tuple[int, int]:
