@@ -70,4 +70,13 @@ def confirm_result_kb(match: Mapping[str, Any]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-__all__ = ["app_kb", "app_url", "confirm_result_kb", "deep_link"]
+def map_confirm_kb(card: Mapping[str, Any]) -> InlineKeyboardMarkup:
+    """Подтверждение исхода карты, когда авто-расчёт не смог."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🏆 1-я", callback_data=f"ams:{card['id']}:a")
+    builder.button(text="🏆 2-я", callback_data=f"ams:{card['id']}:b")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+__all__ = ["app_kb", "app_url", "confirm_result_kb", "deep_link", "map_confirm_kb"]

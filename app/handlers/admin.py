@@ -5,6 +5,7 @@
 
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
     /players               — список игроков с id, чтобы знать кому начислять
+    /maps                  — карты, которые не удалось рассчитать автоматически
     /results               — матчи, которые ждут подтверждения исхода
     /stats                 — короткая сводка по базе
 
@@ -24,7 +25,7 @@ from aiogram.types import CallbackQuery, Message
 from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
-from app.services.notify import notify_bettors
+from app.services.notify import notify_bettors, notify_map_bettors
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +106,43 @@ async def cmd_results(message: Message, db: Database) -> None:
             f"{row['team_a']} 🆚 {row['team_b']}",
             reply_markup=keyboards.confirm_result_kb(row),
         )
+
+
+@router.message(Command("maps"))
+async def cmd_maps(message: Message, db: Database) -> None:
+    """Карты, по которым не удалось определить победителя автоматически."""
+    rows = await db.maps_by_status(["awaiting"])
+    if not rows:
+        await message.answer("Все карты рассчитаны автоматически — подтверждать нечего ✅")
+        return
+
+    await message.answer(f"Карты без авторасчёта: <b>{len(rows)}</b>")
+    for row in rows[:10]:
+        match = await db.get_match(int(row["match_id"]))
+        title = f"{match['team_a']} 🆚 {match['team_b']}" if match is not None else "матч удалён"
+        score = f" · счёт в линии {row['score_a']}:{row['score_b']}" if row["score_a"] is not None and row["score_b"] is not None else ""
+        await message.answer(
+            f"#{row['id']} карта {row['map_number']}\n{title}{score}",
+            reply_markup=keyboards.map_confirm_kb(row),
+        )
+
+
+@router.callback_query(F.data.startswith("ams:"))
+async def on_map_confirm(callback: CallbackQuery, db: Database) -> None:
+    """Админ нажал «кто взял карту»."""
+    try:
+        _, map_id, winner = str(callback.data).split(":")
+        result = await db.settle_map(int(map_id), winner, source="admin")
+    except BettingError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
+    await notify_map_bettors(callback.bot, db, result)
+    await callback.message.edit_text(
+        f"Карта {result['map_number']} рассчитана: победила <b>{result['team']}</b>\n"
+        f"Выплачено: {texts.money(int(result['paid']))} · ставок: {result['bets']}"
+    )
+    await callback.answer("Готово")
 
 
 @router.message(Command("stats"))
