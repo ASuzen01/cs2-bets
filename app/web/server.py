@@ -73,15 +73,29 @@ def build_app(db: Database, bot_token: str | None = None) -> web.Application:
     return register_routes(app, db)
 
 
-async def health(_: web.Request) -> web.Response:
-    return web.json_response({
+async def health(request: web.Request) -> web.Response:
+    payload: dict[str, Any] = {
         "ok": True,
         "service": "cs2-bets-miniapp",
         "time": int(time.time()),
         # по этим полям видно, с какими настройками реально крутится сервис
         "sync_interval": settings.sync_interval,
         "live_betting": settings.live_betting,
-    })
+        "backup_interval_hours": settings.backup_interval_hours,
+    }
+    # состояние бэкапов: видно, что копии реально снимаются, без захода в бота
+    try:
+        db: Database = request.app[DB_KEY]
+        last = await db.last_backup()
+        if last is not None:
+            payload["last_backup_at"] = int(last["created_at"])
+            payload["last_backup_age_minutes"] = (int(time.time()) - int(last["created_at"])) // 60
+            payload["last_backup_kb"] = round(int(last["size_bytes"]) / 1024, 1)
+        else:
+            payload["last_backup_at"] = None
+    except Exception:      # health не должен падать из-за базы
+        log.debug("Не смог прочитать состояние бэкапов", exc_info=True)
+    return web.json_response(payload)
 
 
 async def _line_with_maps(db: Database, rows: list[Any]) -> list[dict[str, Any]]:
