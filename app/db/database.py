@@ -666,7 +666,8 @@ class Database:
 
     async def mark_result_check(self, match_id: int, when: int | None = None) -> None:
         await self.conn.execute(
-            "UPDATE matches SET last_result_check = ? WHERE id = ?", (when or int(time.time()), match_id)
+            "UPDATE matches SET last_result_check = ? WHERE id = ?",
+            (int(time.time()) if when is None else when, match_id),
         )
         await self.conn.commit()
 

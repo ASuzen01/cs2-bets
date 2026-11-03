@@ -13,6 +13,7 @@ import time
 import pytest
 
 from app.db import Database
+from app.services.football import FootballMatch
 from app.services.sync import FOOTBALL_FINISH_MINUTES, MatchSyncer
 
 
@@ -122,3 +123,44 @@ async def test_match_without_score_is_not_settled(db: Database) -> None:
     assert stats["settled"] == 0
     assert stats["awaiting"] == 1
     assert (await db.match_by_fonbet(424243))["status"] == "awaiting"
+
+
+async def test_marker_is_not_moved_every_tick(db: Database) -> None:
+    """Отметку «матч пропал» нельзя двигать на каждом тике — иначе тишина не истечёт."""
+    row = await _finished_match(db)
+    syncer = _syncer(db)
+    stats = {"settled": 0, "awaiting": 0}
+
+    await syncer._settle_football([], stats)                     # тик 1: отметили
+    first = int((await db.match_by_fonbet(424242))["last_result_check"])
+    assert first > 0
+
+    await syncer._settle_football([], stats)                     # тик 2: отметка та же
+    assert int((await db.match_by_fonbet(424242))["last_result_check"]) == first
+    assert stats["settled"] == 0
+
+
+async def test_seen_match_resets_marker(db: Database) -> None:
+    """Матч снова в линии (например, его вернули) — тишину считаем заново."""
+    row = await _finished_match(db)
+    await db.mark_result_check(int(row["id"]), int(time.time()) - 3600)
+
+    seen = FootballMatch(
+        event_id=424242,
+        tournament="Лига Чемпионов УЕФА. Общий этап",
+        team_a="Барселона",
+        team_b="Астон Вилла",
+        start_time=int(time.time()) - 150 * 60,
+        odds_1=1.8,
+        odds_x=3.6,
+        odds_2=4.2,
+        score_a=2,
+        score_b=1,
+        is_live=True,
+    )
+    stats = {"settled": 0, "awaiting": 0}
+    await _syncer(db)._settle_football([seen], stats)
+
+    assert stats["settled"] == 0
+    assert int((await db.match_by_fonbet(424242))["last_result_check"]) == 0
+    assert (await db.match_by_fonbet(424242))["status"] == "live"

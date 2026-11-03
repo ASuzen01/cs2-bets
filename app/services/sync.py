@@ -312,6 +312,9 @@ class MatchSyncer:
                 continue
             match = by_fonbet.get(int(row["fonbet_id"]))
             if match is not None:
+                if int(row["last_result_check"] or 0):
+                    # матч вернулся в линию — «тишину» начинаем считать заново
+                    await self.db.mark_result_check(int(row["id"]), 0)
                 if match.finished and match.score_a is not None and match.score_b is not None:
                     await self._settle_football_row(row, match.score_a, match.score_b, stats)
                 continue
@@ -325,11 +328,12 @@ class MatchSyncer:
                 and now - int(row["start_time"]) > FOOTBALL_FINISH_MINUTES * 60
             ):
                 last_seen = int(row["last_result_check"] or 0)
-                if last_seen and now - last_seen >= FOOTBALL_GONE_QUIET_SECONDS:
-                    await self._settle_football_row(row, int(score_a), int(score_b), stats)
-                else:
-                    # отметим «пропал» и подождём пять минут: вдруг матч вернётся в линию
+                if not last_seen:
+                    # первый раз не увидели матч — отметим время и подождём пять минут
                     await self.db.mark_result_check(int(row["id"]))
+                elif now - last_seen >= FOOTBALL_GONE_QUIET_SECONDS:
+                    await self._settle_football_row(row, int(score_a), int(score_b), stats)
+                # отметку не двигаем: иначе окно тишины никогда не истечёт
                 continue
 
             if str(row["status"]) != "awaiting" and now - int(row["start_time"]) > 3 * 3600:
