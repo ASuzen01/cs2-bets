@@ -1,8 +1,8 @@
 """Бонусы: колесо фортуны и пасхалка за настойчивость.
 
-Секторов 24: 1 джекпот, 5 призов по 200, 12 по 50 и 6 пустых.
-Порядок секторов на колесе каждый день перемешивается заново: набор призов
-неизменен, но соседство каждый день другое. Шанс джекпота всё равно ровно 1 к 24.
+Секторов 24: 1 джекпот, 7 призов по 200, 8 по 50 и 8 пустых.
+Порядок секторов каждый день перемешивается заново, но так, чтобы рядом никогда
+не стояли два одинаковых приза. Шанс джекпота — ровно 1 к 24.
 """
 
 from __future__ import annotations
@@ -14,11 +14,13 @@ from typing import Final
 WHEEL_JACKPOT: Final = 1000
 WHEEL_VALUES: Final[tuple[int, ...]] = (
     (WHEEL_JACKPOT,)
-    + (200,) * 5
-    + (50,) * 12
-    + (0,) * 6
+    + (200,) * 7
+    + (50,) * 8
+    + (0,) * 8
 )
 """Набор призов: 24 сектора, порядок задаётся раскладкой дня."""
+
+WHEEL_COUNTS: Final[dict[int, int]] = {value: WHEEL_VALUES.count(value) for value in set(WHEEL_VALUES)}
 
 TEASE_TAPS: Final = 10
 TEASE_PRIZE: Final = 50
@@ -30,30 +32,45 @@ def day_number(now: float | None = None) -> int:
     return int((now if now is not None else time.time()) // 86400)
 
 
-def daily_layout(day: int | None = None) -> tuple[int, ...]:
-    """Раскладка секторов на сутки: одна и та же для всех, до полуночи не меняется.
+def _greedy_ring(rng: random.Random) -> list[int] | None:
+    """Собирает колесо с конца: берём самый частый приз, который не равен предыдущему."""
+    left = dict(WHEEL_COUNTS)
+    ring: list[int] = []
+    while left:
+        options = [value for value in left if not ring or value != ring[-1]]
+        if not options:
+            return None
+        most = max(left[value] for value in options)
+        value = rng.choice([value for value in options if left[value] == most])
+        ring.append(value)
+        left[value] -= 1
+        if not left[value]:
+            del left[value]
+    if len(ring) > 1 and ring[0] == ring[-1]:   # стык последнего сектора с первым
+        return None
+    return ring
 
-    Сектора раскладываем так, чтобы рядом не оказалось двух одинаковых призов.
-    Призов у нас 12 полтин на 24 сектора — значит они должны стоять через один,
-    а в промежутки надо чередовать пусто и 200/1000. Внутри этого правила
-    порядок перемешивается: группы из четырёх секторов собираются в случайном
-    порядке, призы и пустышки ходят по своим местам, плюс случайный поворот.
+
+def _fallback_ring() -> list[int]:
+    """Гарантированно валидная раскладка: 50 · 200 · 0 по кругу, один 200 — джекпот."""
+    ring = [50, 200, 0] * 8
+    ring[1] = WHEEL_JACKPOT
+    return ring
+
+
+def daily_layout(day: int | None = None) -> tuple[int, ...]:
+    """Раскладка секторов на сутки: одна для всех, до полуночи не меняется.
+
+    Правило одно: два одинаковых приза не стоят рядом (включая стык круга).
+    Порядок подбирается случайно, но с проверкой — если стык не сошёлся,
+    перемешиваем заново; есть и заранее проверенный запасной вариант.
     """
     rng = random.Random(day if day is not None else day_number())
-    prizes = [200] * 5 + [WHEEL_JACKPOT]
-    rng.shuffle(prizes)
-
-    ring: list[int] = []
-    for index in range(6):
-        # каждая четвёрка — [50, пусто, 50, приз] или [50, приз, 50, пусто]
-        middle = [0, prizes[index]] if rng.random() < 0.5 else [prizes[index], 0]
-        ring.extend([50, middle[0], 50, middle[1]])
-
-    shift = rng.randrange(len(ring))
-    ring = ring[shift:] + ring[:shift]
-    if rng.random() < 0.5:          # отражение — ещё один вариант раскладки
-        ring = [ring[0], *reversed(ring[1:])]
-    return tuple(ring)
+    for _ in range(200):
+        ring = _greedy_ring(rng)
+        if ring is not None:
+            return tuple(ring)
+    return tuple(_fallback_ring())
 
 
 def spin(layout: tuple[int, ...] | list[int], rng: random.Random | None = None) -> tuple[int, int]:

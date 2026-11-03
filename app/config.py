@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     daily_bonus: int = 250
     bonus_cooldown_hours: int = 24
     wheel_cooldown_hours: int = 24   # колесо: одна бесплатная крутка в сутки
-    wheel_cost: int = 100            # цена платной крутки сверх бесплатной
+    wheel_cost: int = 150            # цена платной крутки сверх бесплатной
     tease_cooldown_hours: int = 24   # пасхалка за 10 нажатий — тоже раз в сутки
     min_bet: int = 10
     max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери

@@ -888,12 +888,19 @@
 
   // ------------------------------------------------------------- БОНУСЫ
   const WHEEL_SECTOR_DEG = 360 / 24;
+  // контрастная палитра: джекпот — жёлтый, дальше фиолетовый, бирюзовый и графит
   const WHEEL_COLORS = {
-    2: ["#f7d774", "#e8b53c"],   // джекпот
-    1: ["#8b7bf0", "#6d5ae0"],   // 200
-    0: ["#3fb8a6", "#2f9c8c"],   // 50
-    "-1": ["#2b3542", "#232c37"], // пусто
+    2: ["#ffd23f", "#f7c012"],   // 1000 — главный приз
+    1: ["#8b3dff", "#7423e8"],   // 200
+    0: ["#00e0c6", "#00c2ab"],   // 50
+    "-1": ["#202a36", "#161e27"], // пусто
   };
+  const WHEEL_LEGEND = [
+    [2, 1000],
+    [1, 200],
+    [0, 50],
+    [-1, 0],
+  ];
 
   function svgNode(tag, attrs) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -941,19 +948,18 @@
       svg.append(path);
 
       const value = slot.value;
-      if (!value) return;          // пустые сектора не подписываем: меньше визуального шума
 
       // Подпись ставим горизонтально в своей доле сектора: так она читается
       // в любой точке колеса и не наезжает на соседнюю (15° — это ~23 px на нашем радиусе).
-      const [lx, ly] = polar(cx, cy, radius * 0.76, from + WHEEL_SECTOR_DEG / 2);
+      const [lx, ly] = polar(cx, cy, radius * 0.78, from + WHEEL_SECTOR_DEG / 2);
       const label = svgNode("text", {
         x: lx.toFixed(2),
         y: ly.toFixed(2),
         "text-anchor": "middle",
         "dominant-baseline": "middle",
-        "font-size": value >= 1000 ? "10" : value >= 200 ? "9.5" : "9",
+        "font-size": "9",
         "font-weight": "800",
-        fill: slot.tier > 0 ? "#20190a" : "#eaf3fb",
+        fill: slot.tier > 0 ? "#20190a" : slot.tier < 0 ? "#5f7183" : "#eaf3fb",
       });
       label.textContent = String(value);
       svg.append(label);
@@ -1057,14 +1063,19 @@
     card.append(result);
 
     const legend = el("div", "wheel-legend");
-    [["#f7d774", "1000 × 1"], ["#8b7bf0", "200 × 5"], ["#3fb8a6", "50 × 12"], ["#2b3542", "0 × 6"]]
-      .forEach(([color, text]) => {
-        const item = el("span");
-        const dot = el("i");
-        dot.style.background = color;
-        item.append(dot, document.createTextNode(text));
-        legend.append(item);
-      });
+    const counts = {};
+    (wheel.slots || []).forEach((slot) => {
+      counts[slot.value] = (counts[slot.value] || 0) + 1;
+    });
+    WHEEL_LEGEND.forEach(([tier, value]) => {
+      const amount = counts[value] || 0;
+      if (!amount) return;
+      const item = el("span");
+      const dot = el("i");
+      dot.style.background = WHEEL_COLORS[String(tier)][0];
+      item.append(dot, document.createTextNode(`${value} × ${amount}`));
+      legend.append(item);
+    });
     card.append(legend);
     return card;
   }
@@ -1076,7 +1087,7 @@
     card.append(el("div", "hint",
       `Ежедневный бонус капает раз в 24 часа. Колесо крутится один раз в сутки бесплатно, ` +
       `дальше каждая крутка стоит ${money(cost)}. Приз определяет сервер: все 24 сектора равновероятны, ` +
-      "поэтому 1000 падает в среднем раз на 24 прокрута, 200 — пять раз, 50 — двенадцать, пусто — шесть. " +
+      "поэтому 1000 падает в среднем раз на 24 прокрута, 200 — семь раз, 50 — восемь, пусто — восемь. " +
       "Сектора каждый день перемешиваются заново, так что запоминать расположение бесполезно. " +
       "Монеты зачисляются сразу и видны в истории операций."));
     return card;

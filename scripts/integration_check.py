@@ -246,9 +246,11 @@ async def check(bot, db, dp) -> None:
         slots = state["bonus"]["wheel"]["slots"]
         assert len(slots) == 24, len(slots)
         assert [s["value"] for s in slots].count(1000) == 1
-        assert [s["value"] for s in slots].count(200) == 5
-        assert [s["value"] for s in slots].count(50) == 12
-        assert [s["value"] for s in slots].count(0) == 6
+        assert [s["value"] for s in slots].count(200) == 7
+        assert [s["value"] for s in slots].count(50) == 8
+        assert [s["value"] for s in slots].count(0) == 8
+        assert all(slots[i]["value"] != slots[(i + 1) % 24]["value"] for i in range(24)), \
+            "рядом стоят одинаковые сектора"
 
         wheel = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
         wheel_body = await wheel.json()

@@ -30,7 +30,7 @@ async def db(tmp_path):
 # --------------------------------------------------------------- раскладка
 def test_prize_set() -> None:
     assert len(WHEEL_VALUES) == 24
-    assert Counter(WHEEL_VALUES) == {0: 6, 50: 12, 200: 5, WHEEL_JACKPOT: 1}
+    assert Counter(WHEEL_VALUES) == {0: 8, 50: 8, 200: 7, WHEEL_JACKPOT: 1}
 
 
 def test_layout_keeps_same_prizes_but_mixes_order() -> None:
@@ -64,8 +64,9 @@ def test_jackpot_chance_is_one_in_24() -> None:
     rng = random.Random(2026)
     winners = Counter(spin(layout, rng)[1] for _ in range(24_000))
     assert winners[WHEEL_JACKPOT] / 24_000 == pytest.approx(1 / 24, abs=0.004)
-    assert winners[200] / 24_000 == pytest.approx(5 / 24, abs=0.008)
-    assert winners[50] / 24_000 == pytest.approx(12 / 24, abs=0.008)
+    assert winners[200] / 24_000 == pytest.approx(7 / 24, abs=0.008)
+    assert winners[50] / 24_000 == pytest.approx(8 / 24, abs=0.008)
+    assert winners[0] / 24_000 == pytest.approx(8 / 24, abs=0.008)
 
 
 def test_slot_index_matches_payload() -> None:
