@@ -615,6 +615,24 @@ class Database:
         rows = await self._fetchall(sql, (sport,) if sport else ())
         return {str(row["status"]): int(row["n"]) for row in rows}
 
+    async def started_open_count(self, sport: str) -> int:
+        """Сколько матчей уже начались, но всё ещё висят в линии (не переехали в live)."""
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS n FROM matches WHERE status = 'open' AND sport = ? "
+            "AND start_time <= ?",
+            (sport, int(time.time())),
+        )
+        return int(row["n"]) if row else 0
+
+    async def sample_matches(self, sport: str, statuses: Sequence[str], limit: int = 4) -> list[Any]:
+        """Несколько матчей для диагностики в /health (без игроков и ставок)."""
+        marks = ", ".join("?" for _ in statuses)
+        return await self._fetchall(
+            f"SELECT id, team_a, team_b, status, start_time, score_a, score_b FROM matches "
+            f"WHERE sport = ? AND status IN ({marks}) ORDER BY start_time LIMIT ?",
+            (sport, *statuses, limit),
+        )
+
     async def matches_by_status(self, statuses: Sequence[str]) -> list[Any]:
         placeholders = ",".join("?" for _ in statuses)
         return await self._fetchall(

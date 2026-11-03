@@ -10,6 +10,7 @@ import asyncio
 import fcntl
 import logging
 import os
+import time
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -215,6 +216,21 @@ def run_webhook(bot: Bot, dp: Dispatcher, db: Database | None = None) -> None:
                     "football": await db.status_counts("football"),
                     "cs2": await db.status_counts("cs2"),
                 }
+                payload["started_open"] = {
+                    "football": await db.started_open_count("football"),
+                    "cs2": await db.started_open_count("cs2"),
+                }
+                # пара матчей для разбора: что висит и с каким счётом
+                payload["sample"] = [
+                    {
+                        "id": int(row["id"]),
+                        "teams": f"{row['team_a']} — {row['team_b']}",
+                        "status": str(row["status"]),
+                        "started_min_ago": int((time.time() - int(row["start_time"])) // 60),
+                        "score": f"{row['score_a']}:{row['score_b']}",
+                    }
+                    for row in await db.sample_matches("football", ("open", "live", "awaiting"))
+                ]
                 last = await db.last_backup()
                 payload["last_backup_at"] = int(last["created_at"]) if last else None
             except Exception:
