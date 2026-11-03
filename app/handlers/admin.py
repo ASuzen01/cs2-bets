@@ -219,6 +219,14 @@ async def cb_admin_void(callback: CallbackQuery, db: Database) -> None:
     await callback.answer("Матч отменён")
     if callback.bot is not None:
         await notify_bettors(callback.bot, db, result, void=True)
+        # ставки на карты этого матча тоже возвращаем
+        for card in await db.match_maps(match_id):
+            if str(card["status"]) in ("open", "live", "awaiting"):
+                try:
+                    map_result = await db.cancel_map(int(card["id"]))
+                except BettingError:
+                    continue
+                await notify_map_bettors(callback.bot, db, map_result, void=True)
     await _render(
         callback,
         f"⚪️ Матч #{match_id} отменён. Возвращено {texts.money(result['refunded'])} "

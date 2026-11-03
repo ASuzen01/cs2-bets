@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
     balance      INTEGER NOT NULL,
     bonus_at     INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
-    last_seen_at INTEGER NOT NULL
+    last_seen_at INTEGER NOT NULL,
+    last_chat_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS chats (

@@ -76,7 +76,7 @@ Fonbet listBase (gzip JSON)
 | матч отменён | его кэф = 1.0, остальные пересчитываются |
 | отменены все матчи | полный возврат ставки |
 
-Лимиты: минимум 2 исхода, максимум 6 (`MAX_EXPRESS_LEGS`), потолок итогового кэфа 40
+Лимиты: минимум 2 исхода, максимум 6 (`MAX_EXPRESS_LEGS`); потолка по итоговому кэфу нет
 (`MAX_EXPRESS_ODDS`). Один матч нельзя взять дважды в один экспресс.
 
 ## Деньги и кэфы
@@ -166,6 +166,7 @@ TIER1_INCLUDE=IEM,ESL Pro League,ESL One,BLAST Premier,BLAST Rivals,BLAST Bounty
 TIER1_EXCLUDE=Qualifier,Квалификац,Academy,Women,H2H,1x1,2x2,Showmatch,CCT
 ODDS_MODE=real          # real | fair
 SYNC_INTERVAL=45
+STALE_MATCH_HOURS=24
 LIVE_BETTING=true       # ставки по ходу матча (false — приём только до старта)
 ```
 
@@ -235,7 +236,7 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 | `BOT_TOKEN` | — | токен от @BotFather |
 | `ADMIN_IDS` | пусто | id админов через запятую (они же судьи результатов) |
 | `START_BALANCE` / `DAILY_BONUS` / `MIN_BET` | 1000 / 250 / 10 | экономика |
-| `MAX_EXPRESS_LEGS` / `MAX_EXPRESS_ODDS` | 6 / 40 | лимиты экспрессов |
+| `MAX_EXPRESS_LEGS` / `MAX_EXPRESS_ODDS` | 6 / 0 | лимиты экспрессов; `0` — без потолка кэфа |
 | `DATABASE_URL` | пусто | строка Postgres; пусто → SQLite из `DB_PATH` |
 | `DATABASE_SCHEMA` | пусто | схема Postgres (по умолчанию `public`) |
 | `DB_PATH` | `data/bot.db` | файл SQLite, если Postgres не задан |
@@ -243,6 +244,7 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 | `TIER1_INCLUDE` / `TIER1_EXCLUDE` | см. выше | фильтр турниров |
 | `ODDS_MODE` | `real` | `real` (с маржой) или `fair` (без маржи) |
 | `SYNC_INTERVAL` | 45 | период обновления линии, сек (в лайве кэфы свежее) |
+| `STALE_MATCH_HOURS` | 24 | через сколько часов без результата матч отменяется с возвратом ставок |
 | `LIVE_BETTING` | `true` | `true` — ставки по ходу матча, `false` — только до старта |
 | `RUN_MODE` | `polling` | `polling` или `webhook` |
 | `WEBHOOK_BASE_URL` / `WEBHOOK_PATH` / `WEBHOOK_SECRET` | — | для webhook |

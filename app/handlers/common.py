@@ -50,6 +50,8 @@ async def cmd_start(message: Message, db: Database) -> None:
             await db.upsert_user(
                 message.from_user.id, message.from_user.username, message.from_user.full_name
             )
+            # понадобится, если личка закрыта: результат ставки отправим сюда
+            await db.remember_chat(message.from_user.id, message.chat.id)
         await message.answer(
             texts.GROUP_START.format(name=_name(message)),
             reply_markup=keyboards.app_kb(group=True),

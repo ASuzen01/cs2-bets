@@ -12,7 +12,7 @@
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
-    limits: { min_bet: 10, max_legs: 6, max_odds: 40, daily_bonus: 250 },
+    limits: { min_bet: 10, max_legs: 6, max_odds: 0, daily_bonus: 250 },
     cart: readCart(),
     tab: "matches",
     live: false,
@@ -419,9 +419,7 @@
     const summary = el("div", "summary");
     summary.innerHTML = "";
     summary.append(el("div", null, `Исходов: <b>${state.cart.length}</b> · итоговый кэф: <b>${oddsText(total)}</b>`));
-    if (total > state.limits.max_odds) {
-      summary.append(el("div", "hint", `Кэф выше потолка ${state.limits.max_odds} — убери лишний исход.`));
-    }
+
     card.append(summary);
 
     const broken = state.cart.some((leg) => leg.missing);
@@ -558,7 +556,7 @@
       "Экспресс — несколько исходов в одной ставке, кэфы перемножаются. " +
       "Зашли все — выплата по итоговому кэфу, не зашёл хотя бы один — сгорает вся ставка. " +
       "Отменённый матч считается с кэфом 1.0. " +
-      `Исходов: 2–${state.limits.max_legs}, потолок итогового кэфа ${state.limits.max_odds}. ` +
+      `Исходов: 2–${state.limits.max_legs}, потолка по кэфу нет. ` +
       `Минимальная ставка — ${money(state.limits.min_bet)}.`));
     host.append(rules);
   }
@@ -681,7 +679,6 @@
   function openExpressSheet() {
     if (state.cart.length < 2) { toast("Нужно минимум 2 исхода", "bad"); return; }
     const total = cartOdds();
-    if (total > state.limits.max_odds) { toast(`Кэф выше потолка ${state.limits.max_odds}`, "bad"); return; }
 
     openSheet((sheet) => {
       sheet.append(el("h3", null, `Экспресс · ${state.cart.length} исхода`));
