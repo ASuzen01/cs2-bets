@@ -914,9 +914,15 @@ class Database:
     async def user_active_bets(self, user_id: int) -> list[Any]:
         return await self._fetchall(
             """
-            SELECT b.*, m.team_a, m.team_b, m.start_time, m.status, m.fonbet_id
-            FROM bets b JOIN matches m ON m.id = b.match_id
-            WHERE b.user_id = ? AND m.status IN ('open', 'live', 'awaiting')
+            SELECT b.*, m.team_a, m.team_b, m.start_time, m.status, m.fonbet_id,
+                   mm.map_number, mm.status AS map_status
+            FROM bets b
+            JOIN matches m ON m.id = b.match_id
+            LEFT JOIN match_maps mm ON mm.id = b.map_id
+            WHERE b.user_id = ? AND (
+                (b.market = 'match' AND m.status IN ('open', 'live', 'awaiting'))
+                OR (b.market = 'map' AND mm.status IN ('open', 'live', 'awaiting'))
+            )
             ORDER BY m.start_time
             """,
             (user_id,),
@@ -930,7 +936,8 @@ class Database:
             SELECT b.id, b.match_id, b.side, b.amount, b.odds, b.payout, b.created_at,
                    b.market, mm.map_number,
                    m.tournament, m.team_a, m.team_b, m.start_time,
-                   m.status AS match_status, m.winner, m.finished_at
+                   m.status AS match_status, m.winner, m.finished_at,
+                   mm.status AS map_status, mm.winner AS map_winner
             FROM bets b
             JOIN matches m ON m.id = b.match_id
             LEFT JOIN match_maps mm ON mm.id = b.map_id

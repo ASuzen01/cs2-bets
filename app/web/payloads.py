@@ -65,6 +65,9 @@ def bet_payload(row: Any) -> dict[str, Any]:
     side = str(row["side"])
     amount = int(row["amount"])
     odds = float(row["odds"])
+    cells = dict(row)
+    map_number = cells.get("map_number")
+    market = "map" if map_number else "match"
     return {
         "match_id": int(row["match_id"]),
         "side": side,
@@ -73,6 +76,8 @@ def bet_payload(row: Any) -> dict[str, Any]:
         "team": row["team_a"] if side == "a" else row["team_b"],
         "team_a": row["team_a"],
         "team_b": row["team_b"],
+        "market": market,
+        "market_label": f"Карта {int(map_number)}" if map_number else None,
         "potential": round(amount * odds),
     }
 
@@ -178,7 +183,10 @@ async def bets_history(db: Database, user_id: int, *, singles_limit: int = 50, e
 
     for row in single_rows:
         item = _single_item(row)
-        match_status = str(row["match_status"])
+        cells = dict(row)
+        # ставка на карту живёт по статусу карты, ставка на матч — по статусу матча
+        is_map = cells.get("market") == "map" and cells.get("map_status")
+        match_status = str(cells.get("map_status") if is_map else row["match_status"])
         item["match_status"] = match_status
 
         if match_status in ("open", "live", "awaiting"):
@@ -189,6 +197,8 @@ async def bets_history(db: Database, user_id: int, *, singles_limit: int = 50, e
         paid = int(row["payout"] or 0)
         item["payout"] = paid if match_status != "cancelled" else (paid or item["stake"])
         item["result"] = "void" if match_status == "cancelled" else ("won" if paid > 0 else "lost")
+        if is_map:
+            item["map_winner"] = cells.get("map_winner")
         settled_items.append(item)
 
     for row in express_rows:

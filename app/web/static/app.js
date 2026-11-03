@@ -12,7 +12,7 @@
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
-    limits: { min_bet: 10, max_legs: 6, max_odds: 0, daily_bonus: 250 },
+    limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250 },
     cart: readCart(),
     tab: "matches",
     live: false,
@@ -368,7 +368,7 @@
 
     if (!state.cart.length) {
       const card = el("div", "card");
-      card.append(el("div", "empty", "Корзина пуста.\nОткрой матч и жми «🎟 В экспресс» — можно собрать до " + state.limits.max_legs + " исходов."));
+      card.append(el("div", "empty", "Корзина пуста.\nОткрой матч и жми «🎟 В экспресс» — исходов можно брать сколько угодно (минимум два)."));
       host.append(card);
       return;
     }
@@ -537,7 +537,10 @@
         const row = el("div", "rowcard");
         const grow = el("div", "grow");
         grow.append(el("b", null, bet.team));
-        grow.append(el("span", null, `${bet.team_a} — ${bet.team_b} · кэф ${oddsText(bet.odds)}`));
+        grow.append(el("span", null,
+          `${bet.team_a} — ${bet.team_b}` +
+          (bet.market_label ? ` · ${bet.market_label}` : "") +
+          ` · кэф ${oddsText(bet.odds)}`));
         row.append(grow, el("div", "money", money(bet.amount)));
         host.append(row);
       });
@@ -556,7 +559,7 @@
       "Экспресс — несколько исходов в одной ставке, кэфы перемножаются. " +
       "Зашли все — выплата по итоговому кэфу, не зашёл хотя бы один — сгорает вся ставка. " +
       "Отменённый матч считается с кэфом 1.0. " +
-      `Исходов: 2–${state.limits.max_legs}, потолка по кэфу нет. ` +
+      "Исходов: от 2, потолка по кэфу нет. " +
       `Минимальная ставка — ${money(state.limits.min_bet)}.`));
     host.append(rules);
   }
@@ -757,8 +760,9 @@
       toast("Этот матч уже в корзине", "bad");
       return;
     }
-    if (state.cart.length >= state.limits.max_legs) {
-      toast(`Максимум ${state.limits.max_legs} исходов`, "bad");
+    const maxLegs = Number(state.limits.max_legs) || 0;
+    if (maxLegs && state.cart.length >= maxLegs) {
+      toast(`Максимум ${maxLegs} исходов`, "bad");
       return;
     }
     openSheet((sheet) => {

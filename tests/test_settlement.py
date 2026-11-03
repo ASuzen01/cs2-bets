@@ -242,3 +242,46 @@ async def test_stale_match_is_cancelled_and_refunded(db: Database) -> None:
     assert settled["status"] == "cancelled"
     assert await db.get_balance(1) == 1000                      # ставка вернулась
     assert any("возвращена" in text.lower() for _, text in bot.messages)
+
+
+async def test_express_without_leg_limit(db: Database) -> None:
+    """Лимита в 6 исходов больше нет — собираем экспресс из восьми."""
+    legs = []
+    for index in range(1, 9):
+        row, _ = await db.upsert_match(
+            fonbet_id=8000 + index,
+            tournament="Counter-Strike. IEM. Bo3",
+            team_a=f"A{index}",
+            team_b=f"B{index}",
+            start_time=int(time.time()) + 3600,
+            odds_a=1.5,
+            odds_b=2.5,
+        )
+        legs.append({"match_id": int(row["id"]), "side": "a"})
+
+    express_id, odds, balance = await db.place_express(1, None, 100, legs, max_odds=0)
+    assert express_id > 0
+    assert odds == pytest.approx(1.5 ** 8, rel=1e-3)
+    assert balance == 900
+
+
+async def test_map_bet_stays_open_after_match_finished(db: Database) -> None:
+    """Матч посчитан, карта ещё нет — ставка на карту не должна считаться проигранной."""
+    from app.web.payloads import bets_history
+
+    match = await _match(db)
+    card = await _map(db, int(match["id"]), 2)
+    await db.place_map_bet(int(card["id"]), 1, None, "a", 100)
+    await db.settle_match(int(match["id"]), "a")      # матч рассчитан, карта ещё ждёт
+
+    data = await bets_history(db, 1)
+    open_items = data["open"]
+    assert len(open_items) == 1
+    item = open_items[0]
+    assert item["market"] == "map"
+    assert item["market_label"] == "Карта 2"
+    assert item["status"] == "open"
+    assert data["settled"] == []                      # и в проигранные не попала
+
+    active = await db.user_active_bets(1)
+    assert [int(row["map_number"]) for row in active] == [2]

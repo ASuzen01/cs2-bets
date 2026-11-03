@@ -6,6 +6,7 @@
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
     /players               — список игроков с id, чтобы знать кому начислять
     /maps                  — карты, которые не удалось рассчитать автоматически
+    /cleanup [часов]       — отменить зависшие матчи и вернуть ставки
     /results               — матчи, которые ждут подтверждения исхода
     /stats                 — короткая сводка по базе
 
@@ -15,10 +16,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
@@ -30,6 +32,12 @@ from app.services.notify import notify_bettors, notify_map_bettors
 log = logging.getLogger(__name__)
 
 router = Router(name="admin")
+
+
+def callback_bot(message: Message) -> Bot:
+    """Бот из апдейта — нужен для уведомлений игрокам."""
+    assert message.bot is not None
+    return message.bot
 
 
 class IsAdmin(BaseFilter):
@@ -106,6 +114,37 @@ async def cmd_results(message: Message, db: Database) -> None:
             f"{row['team_a']} 🆚 {row['team_b']}",
             reply_markup=keyboards.confirm_result_kb(row),
         )
+
+
+@router.message(Command("cleanup"))
+async def cmd_cleanup(message: Message, command: CommandObject, db: Database) -> None:
+    """Убрать зависшие матчи руками: /cleanup или /cleanup 2 (часов)."""
+    arg = (command.args or "").strip()
+    hours = int(arg) if arg.isdigit() else 3
+    rows = await db.stale_matches(hours)
+    if not rows:
+        await message.answer(f"Зависших матчей старше {hours} ч нет ✅")
+        return
+
+    cancelled = 0
+    refunded = 0
+    for row in rows:
+        try:
+            result = await db.cancel_match(int(row["id"]))
+        except BettingError:
+            continue
+        cancelled += 1
+        refunded += int(result["refunded"])
+        await notify_bettors(callback_bot(message), db, result, void=True)
+        for card in await db.match_maps(int(row["id"])):
+            if str(card["status"]) in ("open", "live", "awaiting"):
+                with contextlib.suppress(BettingError):
+                    await db.cancel_map(int(card["id"]))
+
+    await message.answer(
+        f"Отменил матчей: <b>{cancelled}</b>, вернул игрокам {texts.money(refunded)}.\n"
+        "Ставки больше не висят в приложении."
+    )
 
 
 @router.message(Command("maps"))

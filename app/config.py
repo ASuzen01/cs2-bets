@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     daily_bonus: int = 250
     bonus_cooldown_hours: int = 24
     min_bet: int = 10
-    max_express_legs: int = 6      # сколько исходов можно взять в экспресс
+    max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери
     max_express_odds: float = 0.0   # 0 — без потолка: итоговый кэф экспресса не ограничен
 
     # --- Режим запуска ---
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     autopost_limit: int = 3              # не больше N новых карточек за один цикл
     autopost_horizon_hours: int = 24     # постить только матчи, что начнутся в ближайшие N часов
     result_check_after_minutes: int = 45  # через сколько минут после старта добиваться результата
-    stale_match_hours: int = 24          # через сколько часов без результата матч отменяем с возвратом
+    stale_match_hours: int = 6           # через сколько часов без результата матч отменяем с возвратом
 
     # --- Мини-приложение (Telegram WebApp) ---
     miniapp_url: str = ""        # публичный https-адрес приложения, напр. https://cs2-bets.onrender.com

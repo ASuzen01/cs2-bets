@@ -356,8 +356,12 @@ class MatchSyncer:
             log.info("Матч #%s завис без результата — отменён, ставки возвращены", row["id"])
 
     async def _mark_awaiting(self, row: Any, score: str | None) -> None:
+        already = str(row["status"]) == "awaiting"
         await self.db.set_status(int(row["id"]), "awaiting")
         await self.db.mark_result_check(int(row["id"]))
+        if already:
+            # карточку с кнопками показываем один раз, а не каждые 45 секунд
+            return
         text = texts.awaiting_text(row, score)
         for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
             await self._safe_send(chat_id, text, reply_markup=keyboards.confirm_result_kb(row))
