@@ -257,9 +257,15 @@ async def check(bot, db, dp) -> None:
         balance_after_wheel = wheel_body["balance"]
         assert balance_after_wheel == bet_body["balance"] + wheel_body["prize"], wheel_body
 
-        repeat = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
-        repeat_body = await repeat.json()
-        assert repeat_body["spun"] is False and repeat_body["wait_seconds"] > 0, repeat_body
+        # платная крутка после бесплатной
+        cost = state["bonus"]["wheel"]["cost"]
+        assert cost == settings.wheel_cost, cost
+        paid = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={"paid": True})
+        paid_body = await paid.json()
+        assert paid_body["spun"] is True and paid_body["free"] is False, paid_body
+        assert paid_body["prize"] == slots[paid_body["slot"]]["value"], paid_body
+        assert paid_body["balance"] == balance_after_wheel - cost + paid_body["prize"], paid_body
+        balance_after_wheel = paid_body["balance"]
 
         tease = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
         tease_body = await tease.json()
@@ -281,7 +287,8 @@ async def check(bot, db, dp) -> None:
     print(f"OK: API /health, 401 без подписи, /api/state → баланс {balance_before}")
     print(f"OK: ставка 250 · кэф 2.00 → баланс {bet_body['balance']}")
     print("OK: экспресс из одной ноги отклонён, интерфейс отдаётся")
-    print(f"OK: колесо → приз {wheel_body['prize']} (сектор {wheel_body['slot']}), повтор отклонён")
+    print(f"OK: колесо → бесплатная крутка дала {wheel_body['prize']} (сектор {wheel_body['slot']})")
+    print(f"OK: платная крутка за {cost} → {paid_body['prize']}, баланс {paid_body['balance']}")
     print(f"OK: пасхалка на 10 нажатий → +{tease_body['amount']}, второй раз в сутки нельзя")
 
 

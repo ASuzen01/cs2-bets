@@ -1015,14 +1015,18 @@
 
   function wheelCard() {
     const wheel = state.bonus.wheel;
+    const cost = Number(wheel.cost) || 0;
+    const canPay = !wheel.available && balance() >= cost && cost > 0;
     const card = el("div", "bonuscard wheel");
     card.append(el("div", "glow"));
 
     card.append(el("h3", null, "Колесо фортуны"));
     card.append(el("div", "sub",
       wheel.available
-        ? "Одна бесплатная крутка в сутки. Джекпот 1000 выпадает примерно раз в 24 прокрута."
-        : `Следующая крутка через ${waitText(wheel.wait_seconds)}.`));
+        ? `Первая крутка в сутки бесплатная, следующие по ${money(cost)}. Джекпот 1000 выпадает примерно раз в 24 прокрута.`
+        : canPay
+          ? `Бесплатная на сегодня уже была. Следующая — за ${money(cost)}.`
+          : `Бесплатная на сегодня уже была, платная стоит ${money(cost)} — не хватает монет.`));
 
     const wrap = el("div", "wheelwrap");
     wrap.append(wheelSvg(wheel.slots || []));
@@ -1031,9 +1035,17 @@
     const hub = el("button", "wheel-hub");
     hub.type = "button";
     hub.id = "wheelHub";
-    hub.append(el("b", null, wheel.available ? "Крутить" : "Ждём"));
-    hub.append(el("span", null, wheel.available ? "жми" : waitText(wheel.wait_seconds)));
-    hub.disabled = !wheel.available || state.wheelBusy;
+    if (wheel.available) {
+      hub.append(el("b", null, "Крутить"));
+      hub.append(el("span", null, "бесплатно"));
+    } else if (canPay) {
+      hub.append(el("b", null, "Крутить"));
+      hub.append(el("span", null, `${cost} 🪙`));
+    } else {
+      hub.append(el("b", null, "Ждём"));
+      hub.append(el("span", null, waitText(wheel.wait_seconds)));
+    }
+    hub.disabled = (!wheel.available && !canPay) || state.wheelBusy;
     hub.addEventListener("click", spinWheel);
     wrap.append(hub);
     card.append(wrap);
@@ -1057,49 +1069,59 @@
   }
 
   function wheelRulesCard() {
+    const cost = Number(state.bonus.wheel.cost) || 0;
     const card = el("div", "card");
     card.append(el("h2", null, "Как это работает"));
     card.append(el("div", "hint",
-      "Ежедневный бонус капает раз в 24 часа. Колесо тоже крутится раз в сутки — приз определяет сервер, " +
-      "никакой хитрости: все 24 сектора равновероятны, поэтому 1000 падает в среднем раз на 24 прокрута, " +
-      "200 — пять раз, 50 — двенадцать, пусто — шесть. " +
+      `Ежедневный бонус капает раз в 24 часа. Колесо крутится один раз в сутки бесплатно, ` +
+      `дальше каждая крутка стоит ${money(cost)}. Приз определяет сервер: все 24 сектора равновероятны, ` +
+      "поэтому 1000 падает в среднем раз на 24 прокрута, 200 — пять раз, 50 — двенадцать, пусто — шесть. " +
+      "Сектора каждый день перемешиваются заново, так что запоминать расположение бесполезно. " +
       "Монеты зачисляются сразу и видны в истории операций."));
     return card;
   }
 
   async function spinWheel() {
-    if (state.wheelBusy || !state.bonus || !state.bonus.wheel.available) return;
+    if (state.wheelBusy || !state.bonus) return;
+    const wheel = state.bonus.wheel;
+    const cost = Number(wheel.cost) || 0;
+    const free = wheel.available;
+    if (!free && !(cost > 0 && balance() >= cost)) {
+      toast("Монет не хватает — сначала забери ежедневный бонус", "bad");
+      return;
+    }
     state.wheelBusy = true;
     const hub = $("#wheelHub");
     if (hub) { hub.disabled = true; hub.querySelector("b").textContent = "Крутим"; }
 
     try {
-      const data = await api("/api/wheel", { method: "POST" });
+      const data = await api("/api/wheel", { method: "POST", body: { paid: !free } });
       if (!data.spun) {
-        toast(`Колесо уже крутили, следующее через ${waitText(data.wait_seconds)}`, "bad");
-        state.bonus.wheel.available = false;
-        state.bonus.wheel.wait_seconds = data.wait_seconds;
-        renderBonus();
+        toast(data.error || "Крутка не прошла", "bad");
+        refreshState({ silent: true });
         return;
       }
       await animateWheel(data.slot);
       setBalance(data.balance);
       haptic(data.prize > 0 ? "ok" : "bad");
 
+      const net = data.prize - (data.free ? 0 : Number(data.cost) || 0);
       state.wheelResult = data.prize > 0
-        ? `Выпало ${money(data.prize)} — уже на балансе`
-        : "Пусто. В следующий раз повезёт.";
-      if (data.prize > 0) toast(`Колесо: ${money(data.prize)}`, "ok");
+        ? `Выпало ${money(data.prize)} — уже на балансе` + (data.free ? "" : ` (крутка за ${money(data.cost)})`)
+        : (data.free ? "Пусто. В следующий раз повезёт." : `Пусто. Минус ${money(data.cost)}.`);
+      if (data.prize > 0) toast(`Колесо: ${money(data.prize)}` + (net > 0 ? "" : " · в ноль"), "ok");
 
-      state.bonus.wheel.available = false;
-      state.bonus.wheel.wait_seconds = data.wait_seconds || 24 * 3600;
+      if (data.free) {
+        state.bonus.wheel.available = false;
+        state.bonus.wheel.wait_seconds = 24 * 3600;
+      }
       renderBonusDots();
-      renderBonus();   // карточка встаёт в режим ожидания, угол колеса сохраняется
     } catch (err) {
       toast(err.message, "bad");
-      if (hub) { hub.disabled = false; hub.querySelector("b").textContent = "Крутить"; }
     } finally {
       state.wheelBusy = false;
+      // перерисовываем уже без флага «крутим», иначе кнопка навсегда остаётся неактивной
+      if (state.tab === "bonus") renderBonus();
     }
   }
 

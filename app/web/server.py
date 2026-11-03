@@ -20,7 +20,7 @@ from aiohttp import web
 
 from app.config import settings
 from app.db import Database
-from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, slots_payload, spin
+from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
 from app.services.miniapp import AuthError
 from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.payloads import (
@@ -193,7 +193,8 @@ async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
         "wheel": {
             "available": state["wheel"]["wait_seconds"] == 0,
             "wait_seconds": state["wheel"]["wait_seconds"],
-            "slots": slots_payload(),
+            "slots": slots_payload(daily_layout()),
+            "cost": settings.wheel_cost,
             "tease_taps": TEASE_TAPS,
         },
         "tease": {
@@ -320,35 +321,49 @@ async def api_bonus(request: web.Request) -> web.Response:
 
 
 async def api_wheel(request: web.Request) -> web.Response:
-    """Крутка колеса. Приз определяет сервер — клиент только показывает результат."""
+    """Крутка колеса. Приз определяет сервер — клиент только показывает результат.
+
+    Первая крутка в сутки бесплатная, дальше каждая стоит settings.wheel_cost.
+    """
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     cooldown = settings.wheel_cooldown_hours * 3600
+    layout = daily_layout()
 
     state = await db.bonus_state(
         user_id, settings.bonus_cooldown_hours * 3600, cooldown,
         settings.tease_cooldown_hours * 3600,
     )
-    if state["wheel"]["wait_seconds"]:
+    free_left = state["wheel"]["wait_seconds"] == 0
+    slot, prize = spin(layout)
+
+    if free_left:
+        spun, _, balance = await db.claim_wheel(user_id, prize, cooldown)
+        if spun:
+            return web.json_response(
+                {
+                    "ok": True, "spun": True, "free": True, "slot": slot, "prize": prize,
+                    "wait_seconds": 0, "balance": balance, "cost": settings.wheel_cost,
+                }
+            )
+        # кто-то успел крутнуть параллельно — считаем как платную, если хватает монет
+        free_left = False
+
+    paid, _, balance = await db.claim_paid_wheel(user_id, settings.wheel_cost, prize)
+    if not paid:
         return web.json_response(
             {
-                "ok": True,
-                "spun": False,
-                "wait_seconds": state["wheel"]["wait_seconds"],
-                "balance": await db.get_balance(user_id),
+                "ok": True, "spun": False, "free": False,
+                "wait_seconds": 0, "cost": settings.wheel_cost, "balance": balance,
+                "error": f"Нужно {settings.wheel_cost} 🪙 — приз за бесплатную крутку уже получен",
             }
         )
 
-    slot, prize = spin()
-    spun, wait_seconds, balance = await db.claim_wheel(user_id, prize, cooldown)
     return web.json_response(
         {
-            "ok": True,
-            "spun": spun,
-            "slot": slot,
-            "prize": prize,
-            "wait_seconds": wait_seconds,
-            "balance": balance,
+            "ok": True, "spun": True, "free": False, "paid": True,
+            "slot": slot, "prize": prize, "cost": settings.wheel_cost,
+            "wait_seconds": 0, "balance": balance,
         }
     )
 

@@ -244,6 +244,20 @@ class Database:
                 )
             return await self._credit(conn, user_id, prize, "колесо фортуны", now)
 
+    async def claim_paid_wheel(self, user_id: int, cost: int, prize: int) -> tuple[bool, int, int]:
+        """Платная крутка: списываем стоимость и сразу начисляем приз."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            balance = await self._balance_in(conn, user_id)
+            if balance < cost:
+                return False, 0, balance
+            await conn.execute(
+                "UPDATE users SET balance = balance - ? + ? WHERE user_id = ?",
+                (cost, prize, user_id),
+            )
+            await self._ledger(conn, user_id, prize - cost, "колесо фортуны · платная крутка", now)
+            return True, 0, await self._balance_in(conn, user_id)
+
     async def claim_tease(self, user_id: int, amount: int, cooldown: int) -> tuple[bool, int, int]:
         """Пасхалка за десять нажатий: тоже раз в сутки."""
         now = int(time.time())
