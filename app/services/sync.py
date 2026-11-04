@@ -32,6 +32,9 @@ FOOTBALL_GONE_QUIET_SECONDS = 300
 # Сколько матч формата может идти (минуты): пока не истекло, live-приём открыт,
 # даже если Fonbet убрал событие из линии и результата мы ещё не знаем.
 FORMAT_MINUTES = {1: 90, 2: 170, 3: 260}
+# Запас сверх формата: если счёта мы так и не увидели, результат взять негде —
+# возвращаем ставки, а не держим матч в «ждём результат» сутками.
+FORMAT_GRACE_MINUTES = 30
 
 
 def format_minutes(tournament: str) -> int:
@@ -500,8 +503,25 @@ class MatchSyncer:
                 stats["settled"] += 1
                 continue
 
+            played_out = (now - int(row["start_time"])) // 60
+            expired = played_out > format_minutes(tournament)
+
+            if expired and score_a is None and score_b is None:
+                # счёта не видели ни разу: результата взять негде — возвращаем ставки
+                if played_out <= format_minutes(tournament) + FORMAT_GRACE_MINUTES:
+                    continue
+                try:
+                    result = await self.db.cancel_match(int(row["id"]))
+                except Exception:
+                    log.exception("Не смог вернуть ставки по матчу #%s", row["id"])
+                    continue
+                stats["cancelled"] = stats.get("cancelled", 0) + 1
+                await notify_bettors(self.bot, self.db, result, void=True)
+                await self._edit_card(int(row["id"]))
+                log.info("CS2 #%s без счёта после формата — отменён, ставки возвращены", row["id"])
+                continue
+
             # формат истёк, результата нет — дальше только вручную
-            expired = now - int(row["start_time"]) > format_minutes(tournament) * 60
             if expired and str(row["status"]) != "awaiting":
                 await self._mark_awaiting(row, None)
                 stats["awaiting"] += 1

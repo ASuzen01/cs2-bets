@@ -186,12 +186,13 @@ class FonbetClient:
                 elif factor.get("f") == FACTOR_TEAM_B:
                     odds_b = float(value)
 
-            if odds_a is None or odds_b is None:
-                # В линии без рынка на победителя делать нечего, а вот live-матч
-                # нужен и без кэфов: у него есть счёт по картам, а кэфы Fonbet
-                # иногда снимает по ходу игры — тогда играем по прошлым.
-                if event.get("place") != "live" and event["id"] not in lives:
-                    continue
+            # В линии без рынка на победителя делать нечего, а вот live-матч нужен
+            # и без кэфов: у него есть счёт по картам, а кэфы Fonbet иногда снимает
+            # по ходу игры — тогда играем по прошлым.
+            odds_missing = odds_a is None or odds_b is None
+            is_live_event = event.get("place") == "live" or event["id"] in lives
+            if odds_missing and not is_live_event:
+                continue
 
             misc = miscs.get(event["id"], {})
             live = lives.get(event["id"], {})
