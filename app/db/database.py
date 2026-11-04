@@ -561,8 +561,10 @@ class Database:
         if existing["status"] in ("open", "live"):
             await self.conn.execute(
                 """
-                UPDATE matches SET odds_a = ?, odds_x = ?, odds_b = ?, start_time = ?,
-                                   score_a = ?, score_b = ?
+                UPDATE matches SET odds_a = COALESCE(?, odds_a),
+                                   odds_x = COALESCE(?, odds_x),
+                                   odds_b = COALESCE(?, odds_b),
+                                   start_time = ?, score_a = ?, score_b = ?
                 WHERE id = ?
                 """,
                 (odds_a, odds_x, odds_b, start_time, new_score_a, new_score_b, existing["id"]),

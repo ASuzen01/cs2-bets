@@ -343,3 +343,8 @@
   .tourlist .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hint{font-size:11.5px;color:var(--muted);margin-top:8px}
   .live-hint{color:#ffb3b3}
+
+  /* счёт идущей карты прямо в подписи «Карта 2 · 6:8» */
+  .maprow .mapscore{margin-left:7px;padding:1px 6px;border-radius:6px;background:#20303f;
+    color:#8fd6ff;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .odd.off{opacity:.5}

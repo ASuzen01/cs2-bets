@@ -77,10 +77,24 @@ def test_parse_keeps_only_tier1_root_events() -> None:
 
 
 def test_parse_skips_events_without_winner_market() -> None:
+    """Матч в линии без рынка на победителя не нужен: ставить на него нечего."""
     packet = _packet()
     packet["customFactors"][0]["factors"] = [{"f": 930, "v": 1.85}]
+    packet["liveEventInfos"] = []          # матч именно в линии, не в live
     client = FonbetClient("https://example.invalid", include=INCLUDE, exclude=EXCLUDE)
     assert client.parse(packet) == []
+
+
+def test_parse_keeps_live_event_without_winner_market() -> None:
+    """А live-матч без кэфов нужен: у него есть счёт, а кэфы Fonbet снимает по ходу."""
+    packet = _packet()
+    packet["events"][0]["place"] = "live"
+    packet["customFactors"][0]["factors"] = [{"f": 930, "v": 1.85}]
+    client = FonbetClient("https://example.invalid", include=INCLUDE, exclude=EXCLUDE)
+    matches = client.parse(packet)
+    assert len(matches) == 1
+    assert matches[0].odds_a is None
+    assert matches[0].score_text == "1:0"
 
 
 def test_no_tier1_in_line() -> None:

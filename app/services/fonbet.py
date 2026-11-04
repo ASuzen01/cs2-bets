@@ -187,7 +187,11 @@ class FonbetClient:
                     odds_b = float(value)
 
             if odds_a is None or odds_b is None:
-                continue  # нет рынка на победителя — пропускаем
+                # В линии без рынка на победителя делать нечего, а вот live-матч
+                # нужен и без кэфов: у него есть счёт по картам, а кэфы Fonbet
+                # иногда снимает по ходу игры — тогда играем по прошлым.
+                if event.get("place") != "live" and event["id"] not in lives:
+                    continue
 
             misc = miscs.get(event["id"], {})
             live = lives.get(event["id"], {})
@@ -249,11 +253,11 @@ def parse_maps(packet: dict[str, Any], client: FonbetClient) -> dict[int, list[F
                 odds_a = float(value)
             elif factor.get("f") == FACTOR_TEAM_B:
                 odds_b = float(value)
-        if odds_a is None or odds_b is None:
-            continue
-
         misc = miscs.get(event["id"], {})
         live = lives.get(event["id"], {})
+        if odds_a is None and odds_b is None and not misc:
+            continue  # ни кэфов, ни счёта — карта пустая
+
         cards = result.setdefault(int(parent_id), [])
         cards.append(
             FonbetMap(

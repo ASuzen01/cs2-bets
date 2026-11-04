@@ -29,6 +29,25 @@ FOOTBALL_FINISH_MINUTES = 100
 FOOTBALL_GONE_QUIET_SECONDS = 300
 
 
+# Сколько матч формата может идти (минуты): пока не истекло, live-приём открыт,
+# даже если Fonbet убрал событие из линии и результата мы ещё не знаем.
+FORMAT_MINUTES = {1: 90, 2: 170, 3: 260}
+
+
+def format_minutes(tournament: str) -> int:
+    return FORMAT_MINUTES.get(required_maps(tournament), 170)
+
+
+def decisive_score(tournament: str, score_a: int | None, score_b: int | None) -> bool:
+    """Счёт уже не отыграть: серия выиграна (Bo3 — 2:0/2:1, Bo5 — 3:…)."""
+    if score_a is None or score_b is None:
+        return False
+    need = required_maps(tournament)
+    if need == 1:
+        return False          # у Bo1 в счёте раунды, а не карты — по нему не считаем
+    return score_a >= need or score_b >= need
+
+
 def required_maps(tournament: str) -> int:
     """Сколько карт нужно взять, чтобы выиграть серию."""
     name = (tournament or "").lower()
@@ -166,13 +185,20 @@ class MatchSyncer:
         posted = 0
 
         for match in matches:
-            if match.start_time and match.start_time < now - 6 * 3600:
-                # старую линию не берём, но матч, который уже у нас висит незакрытым,
-                # обязаны довести до результата — иначе он уйдёт в отмену
-                tracked = await self.db.match_by_fonbet(match.event_id)
-                if tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"):
-                    continue
-            odds_a, odds_b = self._prepare_odds(match)
+            tracked = await self.db.match_by_fonbet(match.event_id)
+            old_line = bool(match.start_time) and match.start_time < now - 6 * 3600
+            # старую линию не берём, но матч, который уже у нас висит незакрытым,
+            # обязаны довести до результата — иначе он уйдёт в отмену
+            if old_line and (
+                tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting")
+            ):
+                continue
+            # live-матч без кэфов всё равно нужен: у него есть счёт по картам,
+            # а кэфы Fonbet иногда снимает по ходу игры — тогда оставляем прошлые
+            odds_missing = match.odds_a is None or match.odds_b is None
+            if odds_missing and tracked is None:
+                continue          # в линии матч без кэфов никому не нужен
+            odds_a, odds_b = (None, None) if odds_missing else self._prepare_odds(match)
             row, created = await self.db.upsert_match(
                 fonbet_id=match.event_id,
                 tournament=match.tournament,
@@ -188,7 +214,11 @@ class MatchSyncer:
 
             if created:
                 stats["created"] += 1
-                should_post = posted < settings.autopost_limit and match.start_time <= horizon
+                should_post = (
+                    not odds_missing
+                    and posted < settings.autopost_limit
+                    and match.start_time <= horizon
+                )
                 if should_post and chats:
                     posted += 1
                     await self._post_card(row, chats)
@@ -434,15 +464,47 @@ class MatchSyncer:
             await self._settle_and_announce(row, winner, score, source="fonbet")
             stats["settled"] += 1
 
-        # матчи, которые давно ушли из линии и висят без результата
-        threshold = settings.result_check_after_minutes * 60
-        for row in await self.db.matches_for_result_check(threshold, check_cooldown=900):
+        # матчи, которые ушли из линии, а результата у нас нет
+        await self._settle_gone_cs2(by_fonbet, stats)
+
+    async def _settle_gone_cs2(
+        self, by_fonbet: dict[int, FonbetMatch], stats: dict[str, Any]
+    ) -> None:
+        """Матчи, которых Fonbet больше не отдаёт: считаем по последнему счёту.
+
+        Fonbet убирает событие из линии, как только матч закончился, и результата
+        после этого не отдаёт. Пока формат матча не истёк — держим его live и даём
+        ставить (кэфы прошлые); счёт уже выигранный (2:0 в Bo3) — рассчитываем.
+        """
+        now = int(time.time())
+        for row in await self.db.matches_by_status(["live", "awaiting"]):
             if str(row["sport"]) != "cs2":
                 continue
             if int(row["fonbet_id"]) in by_fonbet:
                 continue
-            await self._mark_awaiting(row, None)
-            stats["awaiting"] += 1
+            score_a, score_b = row["score_a"], row["score_b"]
+            tournament = str(row["tournament"])
+            last_seen = int(row["last_result_check"] or 0)
+
+            if decisive_score(tournament, score_a, score_b) and now - int(row["start_time"]) > 60 * 60:
+                if not last_seen:
+                    await self.db.mark_result_check(int(row["id"]))
+                    continue
+                if now - last_seen < FOOTBALL_GONE_QUIET_SECONDS:
+                    continue
+                winner, score = await self._series_from_maps(row)
+                if winner is None:
+                    winner = "a" if int(score_a) > int(score_b) else "b"
+                    score = f"{int(score_a)}:{int(score_b)}"
+                await self._settle_and_announce(row, winner, score, source="fonbet")
+                stats["settled"] += 1
+                continue
+
+            # формат истёк, результата нет — дальше только вручную
+            expired = now - int(row["start_time"]) > format_minutes(tournament) * 60
+            if expired and str(row["status"]) != "awaiting":
+                await self._mark_awaiting(row, None)
+                stats["awaiting"] += 1
 
     async def _settle_and_announce(
         self, row: Any, winner: str, score: str | None, source: str

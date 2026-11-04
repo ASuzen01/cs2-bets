@@ -239,6 +239,11 @@
     }
     state.oddsPrev[flashKey] = value;
 
+    if (value === null || value === undefined) {
+      // кэф снят (идёт карта или матч уже начался) — ставить не на что
+      btn.disabled = true;
+      btn.classList.add("off");
+    }
     btn.append(name, val);
     btn.addEventListener("click", onPick);
     return btn;
@@ -290,7 +295,9 @@
       const box = el("div", "maps");
       maps.forEach((card_market) => {
         const row = el("div", "maprow");
-        row.append(el("span", "maplabel", `Карта ${card_market.number}`));
+        const label = el("span", "maplabel", `Карта ${card_market.number}`);
+        if (card_market.score) label.append(el("span", "mapscore", card_market.score));
+        row.append(label);
         const closedMap = closed || card_market.status === "finished" ||
           card_market.status === "cancelled";
         ["a", "b"].forEach((side) => {
