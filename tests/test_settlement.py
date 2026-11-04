@@ -217,8 +217,8 @@ async def test_whole_flow_settles_match_by_maps(db: Database) -> None:
     assert "сыграла" in winners[1].lower()
 
 
-async def test_stale_match_is_cancelled_and_refunded(db: Database) -> None:
-    """Матч сутки висел без результата — убираем из Live и возвращаем ставки."""
+async def test_stale_match_with_bets_waits_for_result(db: Database) -> None:
+    """Матч сутки висел без результата, но ставки есть — возврата не будет, ждём исход."""
     row, _ = await db.upsert_match(
         fonbet_id=888,
         tournament="Counter-Strike. IEM. Bo3",
@@ -237,11 +237,11 @@ async def test_stale_match_is_cancelled_and_refunded(db: Database) -> None:
     stats: dict = {}
     await syncer._close_stale(stats)
 
-    assert stats["cancelled"] == 1
+    assert stats.get("cancelled", 0) == 0
     settled = await db.get_match(int(row["id"]))
-    assert settled["status"] == "cancelled"
-    assert await db.get_balance(1) == 1000                      # ставка вернулась
-    assert any("возвращена" in text.lower() for _, text in bot.messages)
+    assert settled["status"] == "awaiting"                      # ждём фактический исход
+    assert await db.get_balance(1) == 700                       # ставка осталась в игре
+    assert not any("возвращена" in text.lower() for _, text in bot.messages)
 
 
 async def test_express_without_leg_limit(db: Database) -> None:

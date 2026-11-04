@@ -508,36 +508,15 @@ class MatchSyncer:
             played_out = (now - int(row["start_time"])) // 60
             expired = played_out > format_minutes(tournament)
 
-            stuck_without_data = (
-                str(row["status"]) == "awaiting"
-                and score_a is None
-                and score_b is None
-                and played_out > AWAITING_NO_SCORE_MINUTES
-            )
-            no_score_at_all = score_a is None and score_b is None
-            if no_score_at_all and (
-                stuck_without_data
-                or (
-                    expired
-                    and played_out > format_minutes(tournament) + FORMAT_GRACE_MINUTES
-                )
-            ):
-                # счёта не видели ни разу: результата взять негде — возвращаем ставки
-                try:
-                    result = await self.db.cancel_match(int(row["id"]))
-                except Exception:
-                    log.exception("Не смог вернуть ставки по матчу #%s", row["id"])
-                    continue
-                stats["cancelled"] = stats.get("cancelled", 0) + 1
-                await notify_bettors(self.bot, self.db, result, void=True)
-                await self._edit_card(int(row["id"]))
-                log.info("CS2 #%s без счёта после формата — отменён, ставки возвращены", row["id"])
-                continue
-
-            # формат истёк, результата нет — дальше только вручную
+            # Сыгранный матч НИКОГДА не отменяем возвратом: держим awaiting и ждём
+            # результат (из live-счёта, по картам или вручную через /recount).
             if expired and str(row["status"]) != "awaiting":
                 await self._mark_awaiting(row, None)
                 stats["awaiting"] += 1
+                log.info(
+                    "CS2 #%s ушёл из линии без счёта — ждём результат вручную",
+                    row["id"],
+                )
 
     async def _settle_and_announce(
         self, row: Any, winner: str, score: str | None, source: str
@@ -580,7 +559,11 @@ class MatchSyncer:
                 log.info("Карта #%s не игралась — возвращено %s", card["id"], result["refunded"])
 
     async def _close_stale(self, stats: dict[str, Any]) -> None:
-        """Матч давно висит без результата: считаем по картам, иначе возвращаем ставки."""
+        """Матч давно висит без результата.
+
+        Сыгранный матч со ставками не отменяем никогда — только ждём исход
+        (карты или ручной ввод). Возврат допустим лишь там, где ставить было некому.
+        """
         for row in await self.db.stale_matches(settings.stale_match_hours):
             if str(row["sport"]) != "cs2":
                 continue          # у футбола своя логика ожидания результата
@@ -590,6 +573,19 @@ class MatchSyncer:
                 await self._settle_and_announce(row, winner, series_score, source="maps")
                 stats["settled"] = stats.get("settled", 0) + 1
                 log.info("Зависший матч #%s рассчитан по картам (%s)", row["id"], series_score)
+                continue
+
+            bets = await self.db.match_bet_count(int(row["id"]))
+            if bets:
+                # ставки есть — матч игрался, значит исход будет. Никаких возвратов.
+                if str(row["status"]) != "awaiting":
+                    await self._mark_awaiting(row, None)
+                    stats["awaiting"] += 1
+                log.warning(
+                    "Матч #%s висит без результата, но ставок %s — оставляю в awaiting",
+                    row["id"],
+                    bets,
+                )
                 continue
 
             try:
@@ -606,7 +602,7 @@ class MatchSyncer:
                     except Exception:
                         log.exception("Не смог вернуть карту #%s", card["id"])
             await self._edit_card(int(row["id"]))
-            log.info("Матч #%s завис без результата — отменён, ставки возвращены", row["id"])
+            log.info("Матч #%s завис без результата и без ставок — снят с линии", row["id"])
 
     async def _mark_awaiting(self, row: Any, score: str | None) -> None:
         already = str(row["status"]) == "awaiting"

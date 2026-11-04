@@ -674,6 +674,15 @@ class Database:
         )
         await self.conn.commit()
 
+    async def match_bet_count(self, match_id: int) -> int:
+        """Сколько ставок (включая экспрессы) висит на матче — решает, можно ли его снимать."""
+        row = await self._fetchone(
+            "SELECT (SELECT COUNT(*) FROM bets WHERE match_id = ?)"
+            " + (SELECT COUNT(*) FROM express_items WHERE match_id = ?) AS c",
+            (match_id, match_id),
+        )
+        return int(row["c"]) if row else 0
+
     async def stale_matches(self, hours: int) -> list[Any]:
         """Матчи, которые давно идут (или ждут), а результата так и нет."""
         threshold = int(time.time()) - hours * 3600
@@ -1608,8 +1617,15 @@ class Database:
             "expresses": expresses,
         }
 
-    async def recount_match(self, match_id: int, winner: str) -> dict[str, Any]:
-        """Отменённый матч считаем заново по реальному исходу: откат возвратов + выплаты."""
+    async def recount_match(
+        self, match_id: int, winner: str, *, allow_express_legs: bool = False
+    ) -> dict[str, Any]:
+        """Отменённый матч считаем заново по реальному исходу: откат возвратов + выплаты.
+
+        `allow_express_legs` — считать одиночные ставки, даже если матч был ногой
+        экспресса. Экспрессы, уже возвращённые при отмене, не пересчитываются: людям
+        деньги вернули, забирать их назад нельзя.
+        """
         if winner not in ("a", "b"):
             raise InvalidBet("Победитель должен быть 1 или 2")
 
@@ -1625,7 +1641,7 @@ class Database:
                 "SELECT COUNT(*) AS c FROM express_items WHERE match_id = ?", (match_id,)
             ) as cur:
                 in_express = int((await cur.fetchone())["c"])
-            if in_express:
+            if in_express and not allow_express_legs:
                 raise BettingError("Матч входит в экспресс — такой пересчёт не поддержан")
 
             async with conn.execute(

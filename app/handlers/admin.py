@@ -144,9 +144,10 @@ async def cmd_cleanup(message: Message, command: CommandObject, db: Database) ->
     bot = callback_bot(message)
     settled = 0
     cancelled = 0
+    waiting = 0
     refunded = 0
     for row in rows:
-        # сначала пытаемся посчитать по факту, и только потом отменяем
+        # сначала пытаемся посчитать по факту, и только потом решаем, что делать дальше
         winner, score = await series_from_maps(db, row)
         if winner is not None:
             with contextlib.suppress(BettingError):
@@ -154,6 +155,14 @@ async def cmd_cleanup(message: Message, command: CommandObject, db: Database) ->
                 await notify_bettors(bot, db, result, score=score)
                 settled += 1
                 continue
+
+        # матч со ставками не отменяем: он игрался, значит исход будет — ждём его
+        if await db.match_bet_count(int(row["id"])):
+            with contextlib.suppress(BettingError):
+                await db.set_status(int(row["id"]), "awaiting")
+                waiting += 1
+            continue
+
         try:
             result = await db.cancel_match(int(row["id"]))
         except BettingError:
@@ -164,12 +173,13 @@ async def cmd_cleanup(message: Message, command: CommandObject, db: Database) ->
         for card in await db.match_maps(int(row["id"])):
             if str(card["status"]) in ("open", "live", "awaiting"):
                 with contextlib.suppress(BettingError):
-                    await db.cancel_map(int(card["id"]))
+                    await db.cancel_map(card["id"])
 
     await message.answer(
         f"Рассчитал по картам: <b>{settled}</b>\n"
-        f"Отменил без результата: <b>{cancelled}</b>, вернул {texts.money(refunded)}.\n"
-        "Если матч отменился, а результат известен — поправь командой "
+        f"Ждут фактический исход (ставки в игре): <b>{waiting}</b>\n"
+        f"Снял без ставок: <b>{cancelled}</b>, вернул {texts.money(refunded)}.\n"
+        "Матчи из второй строки считаются по победителю командой "
         "<code>/recount ID 1</code> (1 — команда A, 2 — команда B)."
     )
 

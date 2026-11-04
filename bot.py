@@ -36,6 +36,7 @@ from app.handlers.errors import last_errors
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
+from app.services.manual_result import apply_manual_results
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -110,6 +111,15 @@ async def on_startup(
     backup: BackupService | None = None,
 ) -> None:
     await db.connect()
+
+    # ручные результаты сыгранных матчей (Fonbet счёт после матча не отдаёт)
+    try:
+        applied = await apply_manual_results(db, bot)
+        for line in applied:
+            log.info("Ручной результат: %s", line)
+    except Exception:
+        log.exception("Не смог применить ручные результаты")
+
     syncer.start()
     if backup is not None:
         backup.start()

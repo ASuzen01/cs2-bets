@@ -127,7 +127,7 @@ async def test_match_without_score_is_not_settled(db: Database) -> None:
 
 async def test_marker_is_not_moved_every_tick(db: Database) -> None:
     """Отметку «матч пропал» нельзя двигать на каждом тике — иначе тишина не истечёт."""
-    row = await _finished_match(db)
+    await _finished_match(db)
     syncer = _syncer(db)
     stats = {"settled": 0, "awaiting": 0}
 
