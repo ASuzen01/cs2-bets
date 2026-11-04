@@ -76,8 +76,9 @@ def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
         "short_tournament": short_tournament(str(row["tournament"])),
         "team_a": str(row["team_a"]),
         "team_b": str(row["team_b"]),
-        "odds_a": float(row["odds_a"]),
-        "odds_b": float(row["odds_b"]),
+        # кэф может быть снят: в лайве Fonbet иногда убирает рынок на победителя
+        "odds_a": float(row["odds_a"]) if row["odds_a"] else None,
+        "odds_b": float(row["odds_b"]) if row["odds_b"] else None,
         "start_time": int(row["start_time"]),
         "status": status,
         "live": status == "live",

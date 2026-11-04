@@ -249,3 +249,17 @@ async def test_bets_endpoint_express(client: TestClient, db: Database, match) ->
     assert {leg["team"] for leg in item["legs"]} == {"Aurora", "MOUZ"}
     assert item["stake"] == 50
     assert item["potential"] == round(50 * 1.65 * 2.0)
+
+
+def test_payload_survives_match_without_odds() -> None:
+    """Fonbet снимает кэфы в лайве — карточка обязана отрисоваться, а не падать."""
+    from app.web.payloads import match_payload
+
+    row = {
+        "id": 1, "tournament": "Counter-Strike. IEM. Bo3", "team_a": "A", "team_b": "B",
+        "odds_a": None, "odds_b": None, "odds_x": None, "start_time": 1_800_000_000,
+        "status": "live", "score_a": None, "score_b": None, "sport": "cs2",
+    }
+    payload = match_payload(row)
+    assert payload["odds_a"] is None and payload["odds_b"] is None
+    assert payload["status"] == "live"

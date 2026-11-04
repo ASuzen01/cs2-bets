@@ -41,7 +41,8 @@
     return node;
   };
   const money = (n) => Number(n).toLocaleString("ru-RU").replace(/\u00a0/g, " ") + " 🪙";
-  const oddsText = (n) => Number(n).toFixed(2);
+  // кэф может быть снят (идёт матч, Fonbet убрал рынок) — тогда прочерк, а не 0.00
+  const oddsText = (n) => (n === null || n === undefined ? "—" : Number(n).toFixed(2));
   const balance = () => (state.user ? state.user.balance : 0);
 
   function timeText(ts) {
