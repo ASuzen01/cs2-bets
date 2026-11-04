@@ -35,6 +35,8 @@ FORMAT_MINUTES = {1: 90, 2: 170, 3: 260}
 # Запас сверх формата: если счёта мы так и не увидели, результат взять негде —
 # возвращаем ставки, а не держим матч в «ждём результат» сутками.
 FORMAT_GRACE_MINUTES = 5
+# Матч уже в «ждём результат», а счёта так и не было: держать его дальше нет смысла.
+AWAITING_NO_SCORE_MINUTES = 90
 
 
 def format_minutes(tournament: str) -> int:
@@ -506,10 +508,21 @@ class MatchSyncer:
             played_out = (now - int(row["start_time"])) // 60
             expired = played_out > format_minutes(tournament)
 
-            if expired and score_a is None and score_b is None:
+            stuck_without_data = (
+                str(row["status"]) == "awaiting"
+                and score_a is None
+                and score_b is None
+                and played_out > AWAITING_NO_SCORE_MINUTES
+            )
+            no_score_at_all = score_a is None and score_b is None
+            if no_score_at_all and (
+                stuck_without_data
+                or (
+                    expired
+                    and played_out > format_minutes(tournament) + FORMAT_GRACE_MINUTES
+                )
+            ):
                 # счёта не видели ни разу: результата взять негде — возвращаем ставки
-                if played_out <= format_minutes(tournament) + FORMAT_GRACE_MINUTES:
-                    continue
                 try:
                     result = await self.db.cancel_match(int(row["id"]))
                 except Exception:

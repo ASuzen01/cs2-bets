@@ -221,3 +221,25 @@ async def test_match_without_score_is_refunded_after_format(db: Database) -> Non
     assert stats["cancelled"] == 1
     assert str((await db.match_by_fonbet(600))["status"]) == "cancelled"
     assert await db.get_balance(1) == 1000      # ставка вернулась
+
+
+async def test_stuck_awaiting_without_score_is_refunded(db: Database) -> None:
+    """Старая «зависшая» карточка без счёта не должна висеть сутками."""
+    row, _ = await db.upsert_match(
+        fonbet_id=601,
+        tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
+        team_a="BB Team",
+        team_b="Aurora",
+        start_time=int(time.time()) - 130 * 60,
+        odds_a=1.6,
+        odds_b=2.2,
+    )
+    await db.place_bet(int(row["id"]), 1, None, "b", 100)
+    await db.set_status(int(row["id"]), "awaiting")
+    stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
+
+    await MatchSyncer(bot=None, db=db)._settle_gone_cs2({}, stats)
+
+    assert stats["cancelled"] == 1
+    assert str((await db.match_by_fonbet(601))["status"]) == "cancelled"
+    assert await db.get_balance(1) == 1000
