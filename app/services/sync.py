@@ -34,7 +34,7 @@ FOOTBALL_GONE_QUIET_SECONDS = 300
 FORMAT_MINUTES = {1: 90, 2: 170, 3: 260}
 # Запас сверх формата: если счёта мы так и не увидели, результат взять негде —
 # возвращаем ставки, а не держим матч в «ждём результат» сутками.
-FORMAT_GRACE_MINUTES = 30
+FORMAT_GRACE_MINUTES = 5
 
 
 def format_minutes(tournament: str) -> int:

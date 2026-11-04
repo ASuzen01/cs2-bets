@@ -630,7 +630,8 @@ class Database:
         """Несколько матчей для диагностики в /health (без игроков и ставок)."""
         marks = ", ".join("?" for _ in statuses)
         return await self._fetchall(
-            f"SELECT id, team_a, team_b, status, start_time, score_a, score_b FROM matches "
+            f"SELECT id, team_a, team_b, tournament, status, start_time, score_a, score_b "
+            f"FROM matches "
             f"WHERE sport = ? AND status IN ({marks}) ORDER BY start_time LIMIT ?",
             (sport, *statuses, limit),
         )

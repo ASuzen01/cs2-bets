@@ -233,6 +233,7 @@ def run_webhook(
                         {
                             "id": int(row["id"]),
                             "teams": f"{row['team_a']} — {row['team_b']}",
+                            "tour": str(row["tournament"])[-24:],
                             "status": str(row["status"]),
                             "started_min_ago": int((time.time() - int(row["start_time"])) // 60),
                             "score": f"{row['score_a']}:{row['score_b']}",
