@@ -228,16 +228,21 @@ def run_webhook(
                     "cs2": await db.started_open_count("cs2"),
                 }
                 # пара матчей для разбора: что висит и с каким счётом
-                payload["sample"] = [
-                    {
-                        "id": int(row["id"]),
-                        "teams": f"{row['team_a']} — {row['team_b']}",
-                        "status": str(row["status"]),
-                        "started_min_ago": int((time.time() - int(row["start_time"])) // 60),
-                        "score": f"{row['score_a']}:{row['score_b']}",
-                    }
-                    for row in await db.sample_matches("football", ("open", "live", "awaiting"))
-                ]
+                payload["sample"] = {
+                    sport: [
+                        {
+                            "id": int(row["id"]),
+                            "teams": f"{row['team_a']} — {row['team_b']}",
+                            "status": str(row["status"]),
+                            "started_min_ago": int((time.time() - int(row["start_time"])) // 60),
+                            "score": f"{row['score_a']}:{row['score_b']}",
+                        }
+                        for row in await db.sample_matches(
+                            sport, ("live", "awaiting", "open")
+                        )
+                    ]
+                    for sport in ("football", "cs2")
+                }
                 last = await db.last_backup()
                 payload["last_backup_at"] = int(last["created_at"]) if last else None
             except Exception:
