@@ -37,6 +37,7 @@
     casinoPick: { roulette: "red", dice: "over" },
     casinoStake: { roulette: 50, dice: 50 },
     casinoBusy: false,
+    casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResult: null,       // последний раунд: переживает перерисовку
     recentNumbers: [],        // дорожка выпавших чисел
     rouletteAngle: 0,
@@ -1061,6 +1062,142 @@
   }
   function closeSheet() { $("#sheetWrap").classList.remove("show"); }
 
+  // ------------------------------------------------- сумма ставки: хелперы
+  // Единые правила для всех, кто спрашивает «сколько?»: листы ординаров,
+  // экспрессов и вкладка «Игры». Ручной ввод — везде, пресеты — только помощь.
+
+  function stakeBounds() {
+    return {
+      min: Math.max(1, Number((state.limits && state.limits.min_bet) || 10)),
+      max: Math.max(1, Number((state.casino && state.casino.max_bet) || 5000)),
+    };
+  }
+
+  // подсказки: минимум, ×5, ×10, ×50 — всё, что влезает в лимит и в баланс
+  function pickPresets(min, cap, count) {
+    const limit = count || 4;
+    const raw = [min, min * 5, min * 10, min * 50, min * 100, min * 250];
+    const list = [];
+    raw.forEach((value) => {
+      if (value >= min && value <= cap && list.indexOf(value) === -1) list.push(value);
+    });
+    if (!list.length) list.push(Math.min(cap, min));
+    return list.slice(0, limit);
+  }
+
+  function clampStake(value, min, max) {
+    const number = Math.round(Number(value) || 0);
+    if (!number) return min;
+    return Math.min(max, Math.max(min, number));
+  }
+
+  // Сумма для листа: пресеты + поле «своя сумма» + «Макс».
+  // Возвращает { value, ok, set, on } — лист сам решает, что делать с суммой.
+  function stakePicker(sheet, opts) {
+    const bounds = stakeBounds();
+    const cap = Math.max(bounds.min, Math.min(bounds.max, Math.floor(Number(opts.cap === undefined ? balance() : opts.cap) || bounds.min)));
+    const min = bounds.min;
+    const odds = Number(opts.odds) || 0;
+    const handlers = { change: null, submit: null };
+    let chosen = clampStake(opts.initial === undefined ? pickPresets(min, cap, 1)[0] : opts.initial, min, cap);
+
+    const summary = el("div", "summary");
+    const sumText = el("div");
+    summary.append(sumText);
+    sheet.append(summary);
+
+    const presets = el("div", "presets");
+    const chips = [];
+    pickPresets(min, cap, 6).forEach((amount) => {
+      const chip = el("button", null, money(amount));
+      chip.type = "button";
+      chip.dataset.value = String(amount);
+      chip.addEventListener("click", () => { set(amount); if (input) input.blur(); haptic("light"); });
+      chips.push(chip);
+      presets.append(chip);
+    });
+    const allBtn = el("button", "wide", `💥 Всё · ${money(cap)}`);
+    allBtn.type = "button";
+    allBtn.dataset.value = String(cap);
+    allBtn.addEventListener("click", () => { set(cap); if (input) input.blur(); haptic("light"); });
+    chips.push(allBtn);
+    presets.append(allBtn);
+    sheet.append(presets);
+
+    const custom = el("div", "custom");
+    const input = el("input");
+    input.type = "number";
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    input.min = String(min);
+    input.max = String(cap);
+    input.placeholder = `своя сумма · от ${min}`;
+    input.value = String(chosen);
+    input.addEventListener("input", () => {
+      const parsed = parseInt(input.value, 10);
+      chosen = isNaN(parsed) ? 0 : parsed;
+      paint();
+    });
+    input.addEventListener("blur", () => {
+      // клампим только когда игрок закончил печатать — чтобы не мешать вводу
+      if (input.value === "") { set(chosen); return; }
+      if (chosen !== clampStake(chosen, min, cap)) set(chosen);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (handlers.submit) handlers.submit();
+      }
+    });
+    const maxBtn = el("button", "btn small", "Макс");
+    maxBtn.type = "button";
+    maxBtn.style.flex = "0 0 82px";
+    maxBtn.addEventListener("click", () => { set(cap); haptic("light"); });
+    custom.append(input, maxBtn);
+    sheet.append(custom);
+
+    function set(value) {
+      chosen = clampStake(value, min, cap);
+      if (input) input.value = String(chosen);
+      paint();
+    }
+
+    function ok() {
+      return chosen >= min && chosen <= cap;
+    }
+
+    function paint() {
+      sumText.textContent = "";
+      const line = el("div");
+      line.append(document.createTextNode("Ставка: "));
+      line.append(el("b", null, chosen ? money(chosen) : "—"));
+      line.append(document.createTextNode(" · выигрыш: "));
+      line.append(el("span", "big", odds ? money(Math.round((chosen || 0) * odds)) : "—"));
+      sumText.append(line);
+      if (chosen && chosen < min) {
+        sumText.append(el("div", "hint bad", `Минимум — ${money(min)}`));
+      } else if (chosen > cap) {
+        sumText.append(el("div", "hint bad", `Максимум — ${money(cap)}`));
+      }
+      chips.forEach((chip) => chip.classList.toggle("chosen", Number(chip.dataset.value) === chosen));
+      if (handlers.change) handlers.change(chosen, ok());
+    }
+
+    paint();
+    return {
+      value: () => chosen,
+      ok,
+      set,
+      paint,
+      focus: () => input.focus(),
+      on: (next) => {
+        if (next.change !== undefined) handlers.change = next.change;
+        if (next.submit !== undefined) handlers.submit = next.submit;
+        paint();
+      },
+    };
+  }
+
   function openAmountSheet(match, side, map, market) {
     haptic("light");
     const team = market ? market.label : teamName(match, side);
@@ -1086,71 +1223,20 @@
       sheet.append(el("div", "sub",
         `${match.short_tournament} · ${team} · кэф ${oddsText(odd)} · ${timeText(match.start_time)}`));
 
-      const summary = el("div", "summary");
-      const sumText = el("div");
-      sumText.innerHTML = `Ставка: <b>—</b> · выигрыш: <span class="big">—</span>`;
-      summary.append(sumText);
-      sheet.append(summary);
-
-      const presets = el("div", "presets");
-      const amounts = [50, 100, 250, 500, 1000].filter((value) => value <= balance());
-      if (!amounts.length) amounts.push(state.limits.min_bet);
-
-      let chosen = amounts[0];
+      const picker = stakePicker(sheet, { odds: odd, cap: balance() });
 
       const place = el("button", "btn", "Поставить");
       place.type = "button";
-      const paint = () => {
-        sumText.innerHTML = `Ставка: <b>${money(chosen)}</b> · выигрыш: <span class="big">${money(Math.round(chosen * odd))}</span>`;
-      };
-
-      const markChosen = (btn) => {
-        [...presets.children].forEach((node) => { node.style.borderColor = "#2a3b4f"; node.style.background = ""; });
-        if (btn) { btn.style.borderColor = "#3d8fd8"; btn.style.background = "#21384e"; }
-      };
-
-      amounts.forEach((amount) => {
-        const btn = el("button", null, money(amount));
-        btn.type = "button";
-        btn.addEventListener("click", () => { chosen = amount; paint(); markChosen(btn); haptic("light"); });
-        presets.append(btn);
-      });
-
-      const allBtn = el("button", "wide", `💥 Всё · ${money(balance())}`);
-      allBtn.type = "button";
-      allBtn.addEventListener("click", () => { chosen = balance(); paint(); markChosen(allBtn); haptic("light"); });
-      if (balance() >= state.limits.min_bet) presets.append(allBtn);
-
-      const custom = el("div", "custom");
-      const input = el("input");
-      input.type = "number";
-      input.inputMode = "numeric";
-      input.min = String(state.limits.min_bet);
-      input.placeholder = "своя сумма";
-      input.addEventListener("input", () => {
-        const value = parseInt(input.value, 10);
-        if (!isNaN(value) && value > 0) { chosen = value; paint(); markChosen(null); }
-      });
-      custom.append(input);
-      const customBtn = el("button", "btn small", "OK");
-      customBtn.type = "button";
-      customBtn.style.flex = "0 0 74px";
-      customBtn.addEventListener("click", () => { input.focus(); haptic("light"); });
-      custom.append(customBtn);
-
-      sheet.append(presets, custom);
-      paint();
-      markChosen(presets.children[0]);
-
       place.addEventListener("click", async () => {
-        if (chosen < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
-        if (chosen > balance()) { toast("Не хватает монет", "bad"); return; }
+        const amount = picker.value();
+        if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
+        if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
         place.disabled = true;
         place.textContent = "Отправляю…";
         try {
           const data = await api("/api/bet", {
             method: "POST",
-            body: Object.assign({}, body, { amount: chosen }),
+            body: Object.assign({}, body, { amount }),
           });
           setBalance(data.balance);
           closeSheet();
@@ -1164,6 +1250,12 @@
           place.disabled = false;
           place.textContent = "Поставить";
         }
+      });
+
+      // сумма вне лимитов → кнопка гаснет, Enter в поле сразу ставит
+      picker.on({
+        change: (amount, valid) => { place.disabled = !valid; },
+        submit: () => { if (picker.ok()) place.click(); },
       });
       sheet.append(place);
 
@@ -1183,46 +1275,20 @@
       sheet.append(el("h3", null, `Экспресс · ${state.cart.length} исхода`));
       sheet.append(el("div", "sub", `итоговый кэф ${oddsText(total)}`));
 
-      const summary = el("div", "summary");
-      const sumText = el("div");
-      summary.append(sumText);
-      sheet.append(summary);
-
-      const presets = el("div", "presets");
-      const amounts = [50, 100, 250, 500, 1000].filter((value) => value <= balance());
-      if (!amounts.length) amounts.push(state.limits.min_bet);
-      let chosen = amounts[0];
-      const paint = () => {
-        sumText.innerHTML = `Ставка: <b>${money(chosen)}</b> · выигрыш: <span class="big">${money(Math.round(chosen * total))}</span>`;
-      };
-      const markChosen = (btn) => {
-        [...presets.children].forEach((node) => { node.style.borderColor = "#2a3b4f"; node.style.background = ""; });
-        if (btn) { btn.style.borderColor = "#3d8fd8"; btn.style.background = "#21384e"; }
-      };
-      amounts.forEach((amount) => {
-        const btn = el("button", null, money(amount));
-        btn.type = "button";
-        btn.addEventListener("click", () => { chosen = amount; paint(); markChosen(btn); });
-        presets.append(btn);
-      });
-      const allBtn = el("button", "wide", `💥 Всё · ${money(balance())}`);
-      allBtn.type = "button";
-      allBtn.addEventListener("click", () => { chosen = balance(); paint(); markChosen(allBtn); });
-      if (balance() >= state.limits.min_bet) presets.append(allBtn);
-      sheet.append(presets);
-      paint();
-      markChosen(presets.children[0]);
+      const picker = stakePicker(sheet, { odds: total, cap: balance() });
 
       const place = el("button", "btn", "Поставить экспресс");
       place.type = "button";
       place.addEventListener("click", async () => {
-        if (chosen > balance()) { toast("Не хватает монет", "bad"); return; }
+        const amount = picker.value();
+        if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
+        if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
         place.disabled = true;
         place.textContent = "Отправляю…";
         try {
           const data = await api("/api/express", {
             method: "POST",
-            body: { amount: chosen, legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })) },
+            body: { amount, legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })) },
           });
           setBalance(data.balance);
           state.cart = [];
@@ -1240,6 +1306,11 @@
           place.disabled = false;
           place.textContent = "Поставить экспресс";
         }
+      });
+
+      picker.on({
+        change: (amount, valid) => { place.disabled = !valid; },
+        submit: () => { if (picker.ok()) place.click(); },
       });
       sheet.append(place);
 
@@ -1846,7 +1917,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.user = boot.user || null;
@@ -1877,7 +1948,6 @@
     1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36,
   ]);
   const ROULETTE_STEP = 360 / 37;
-  const STAKE_PRESETS = [10, 50, 100, 500];
 
   // поворот куба, при котором нужная грань смотрит на игрока (в лицо, не вверх):
   // камера смотрит почти прямо, поэтому читается именно лицевая грань.
@@ -1906,8 +1976,66 @@
 
   function stakeFor(game) {
     const { min, max } = casinoLimits();
-    const value = Number(state.casinoStake[game]) || min;
-    return Math.min(max, Math.max(min, Math.round(value)));
+    return clampStake(state.casinoStake[game], min, max);
+  }
+
+  // что игрок реально ввёл и куда это годится
+  function stakeState(game) {
+    const { min, max } = casinoLimits();
+    const raw = Math.round(Number(state.casinoStake[game]) || 0);
+    return {
+      min,
+      max,
+      raw,
+      value: clampStake(raw, min, max),
+      low: raw < min,
+      high: raw > max,
+      poor: raw > balance(),
+    };
+  }
+
+  function stakeOk(game) {
+    const info = stakeState(game);
+    return !info.low && !info.high && !info.poor;
+  }
+
+  // Обновляет только сумму: поле, пресеты, подпись и кнопку. Колесо и кубики
+  // не перерисовываются — иначе ввод с клавиатуры терял бы фокус.
+  function syncStakeUI(game, options) {
+    const info = stakeState(game);
+    const keepInput = Boolean(options && options.keepInput);
+    const input = $("#stakeInput");
+    if (input && !keepInput && document.activeElement !== input) {
+      input.value = String(info.raw || info.min);
+    }
+
+    document.querySelectorAll("#games .stake-chip").forEach((chip) => {
+      chip.classList.toggle("active", Number(chip.dataset.stake) === info.raw);
+    });
+    const minus = document.querySelector('#games .stake-step[data-step="-1"]');
+    if (minus) minus.disabled = state.casinoBusy || info.raw <= info.min;
+    const plus = document.querySelector('#games .stake-step[data-step="1"]');
+    if (plus) plus.disabled = state.casinoBusy || info.raw >= info.max;
+
+    const odds = potential(game).odds;
+    const meta = $("#betMeta");
+    if (meta) {
+      meta.textContent = "";
+      meta.classList.toggle("warn", !stakeOk(game));
+      meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
+      meta.append(el("span", null,
+        "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выигрыш " + money(Math.round((info.raw || 0) * odds))));
+    }
+
+    const play = $("#playBtn");
+    if (play) {
+      const ok = stakeOk(game);
+      play.disabled = state.casinoBusy || !ok;
+      if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
+      else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
+      else if (info.poor) play.textContent = "Не хватает монет";
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(info.raw);
+    }
   }
 
   function pickFor(game) {
@@ -2089,35 +2217,62 @@
     return board;
   }
 
+  // Сумма раунда: пресеты-чипы + поле, куда можно вписать любую сумму.
   function stakeRow(game) {
     const { min, max } = casinoLimits();
-    const stake = stakeFor(game);
+    const cap = Math.max(min, Math.min(max, balance()));
+    const info = stakeState(game);
     const block = el("div", "stake-block");
 
     const presets = el("div", "stake-presets");
-    const values = STAKE_PRESETS.filter((value) => value >= min && value <= max);
-    if (!values.length) values.push(min);
-    values.forEach((value) => {
-      const chip = el("button", "stake-chip" + (value === stake ? " active" : ""), money(value));
+    const cells = pickPresets(min, max, 4).map((value) => ({ value, label: money(value) }));
+    if (cap > cells[cells.length - 1].value) cells.push({ value: cap, label: "Всё" });
+    cells.forEach((cell) => {
+      const chip = el("button", "stake-chip" + (cell.value === info.raw ? " active" : ""), cell.label);
       chip.type = "button";
-      chip.dataset.stake = String(value);
+      chip.dataset.stake = String(cell.value);
       presets.append(chip);
     });
-    presets.style.gridTemplateColumns = "repeat(" + values.length + ",1fr)";
+    presets.style.gridTemplateColumns = "repeat(" + cells.length + ",1fr)";
 
     const row = el("div", "stake-row");
     const minus = el("button", "stake-step", "−");
     minus.type = "button";
     minus.dataset.step = "-1";
-    minus.disabled = stake <= min;
+    minus.disabled = info.raw <= min;
     const plus = el("button", "stake-step", "+");
     plus.type = "button";
     plus.dataset.step = "1";
-    plus.disabled = stake >= max;
-    const sum = el("div", "stake-sum", money(stake));
-    sum.id = "stakeSum";
-    row.append(minus, sum, plus);
+    plus.disabled = info.raw >= max;
 
+    const input = el("input", "stake-input");
+    input.id = "stakeInput";
+    input.type = "number";
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    input.min = String(min);
+    input.max = String(max);
+    input.value = String(info.raw || min);
+    input.setAttribute("aria-label", "Сумма ставки");
+    input.addEventListener("focus", () => { state.casinoTyping = true; });
+    input.addEventListener("input", () => {
+      const parsed = parseInt(input.value, 10);
+      state.casinoStake[game] = isNaN(parsed) ? 0 : parsed;
+      syncStakeUI(game, { keepInput: true });
+    });
+    input.addEventListener("blur", () => {
+      state.casinoTyping = false;
+      const raw = Number(state.casinoStake[game]) || 0;
+      if (raw > max) toast(`Максимум за раунд — ${money(max)}`, "bad");
+      state.casinoStake[game] = clampStake(raw, min, max);
+      input.value = String(state.casinoStake[game]);
+      syncStakeUI(game);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+    });
+
+    row.append(minus, input, plus);
     block.append(presets, row);
     return block;
   }
@@ -2431,7 +2586,7 @@
       play.disabled = busy;
       if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : "Бросаем…";
     }
-    document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .stake-chip, #games .stake-step")
+    document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => { node.disabled = busy; });
   }
 
@@ -2440,25 +2595,17 @@
     if (summary) summary.replaceWith(summaryNode());
     const hist = $("#casinoHist");
     if (hist) hist.replaceWith(historyNode());
-    const meta = $("#betMeta");
-    if (meta) {
-      const info = potential(state.game);
-      meta.textContent = "";
-      meta.append(el("span", null, "Ставка: " + money(info.stake)));
-      meta.append(el("span", null, "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выигрыш " + money(info.win)));
-    }
-    const play = $("#playBtn");
-    if (play) {
-      play.disabled = false;
-      play.textContent = (state.game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(stakeFor(state.game));
-    }
+    syncStakeUI(state.game);
   }
 
   async function playCasinoRound() {
     if (state.casinoBusy || !state.casino || !state.user) return;
     const game = state.game;
     const selection = pickFor(game);
-    const amount = stakeFor(game);
+    const amount = Math.round(Number(state.casinoStake[game]) || 0);
+    const info = stakeState(game);
+    if (info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return; }
+    if (info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return; }
     if (amount > balance()) {
       toast("Монет не хватает — загляни в бонусы", "bad");
       haptic("bad");
@@ -2549,17 +2696,18 @@
       if (node.dataset.stake) {
         state.casinoStake[game] = Number(node.dataset.stake);
         haptic("light");
-        renderGames();
+        syncStakeUI(game);
         return;
       }
       if (node.dataset.step) {
-        const { min, max } = casinoLimits();
-        const step = node.dataset.step === "1" ? 1 : -1;
-        const base = stakeFor(game);
-        const next = Math.min(max, Math.max(min, Math.round(base * (step > 0 ? 1.5 : 1 / 1.5))));
-        state.casinoStake[game] = next === base ? base + step * min : next;
+        const info = stakeState(game);
+        const up = node.dataset.step === "1";
+        const base = info.raw || info.min;
+        let next = Math.round(up ? base * 1.5 : base / 1.5);
+        if (up) next = Math.round(next / 10) * 10 || base + 10;
+        state.casinoStake[game] = Math.min(info.max, Math.max(info.min, next));
         haptic("light");
-        renderGames();
+        syncStakeUI(game);
       }
     });
   }

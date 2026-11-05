@@ -208,6 +208,10 @@
   .custom input{flex:1;background:#101a24;border:1px solid #27374a;border-radius:12px;padding:12px;
     color:var(--text);font-size:16px;font-variant-numeric:tabular-nums;outline:none}
   .custom input:focus{border-color:#3d8fd8}
+  .custom input::-webkit-outer-spin-button,.custom input::-webkit-inner-spin-button{
+    -webkit-appearance:none;margin:0}
+  .presets button.chosen{background:#21384e;border-color:#3d8fd8;color:#dcefff}
+  .summary .hint.bad{color:#ff9a9a;font-size:11.5px;margin-top:5px;font-weight:600}
   .summary{background:#101a24;border:1px solid #24344a;border-radius:13px;padding:11px 13px;
     margin-bottom:12px;font-size:13px;color:#c7d6e4}
   .summary b{color:#fff}
@@ -475,9 +479,17 @@
     display:grid;place-items:center;font-size:19px;font-weight:800;color:#c7d6e4}
   .stake-step:active{background:#243244}
   .stake-step:disabled{opacity:.4}
-  .stake-sum{flex:1;min-width:96px;height:40px;border-radius:12px;background:#101a24;border:1px solid #27374a;
-    display:grid;place-items:center;font-weight:800;font-variant-numeric:tabular-nums;font-size:15px;
-    color:#ffe8a3}
+  /* поле ручной суммы: главный способ ввести ставку, пресеты — подсказка */
+  .stake-input{flex:1;min-width:0;height:44px;text-align:center;background:#101a24;
+    border:1px solid #27374a;border-radius:12px;color:#ffe8a3;font-size:18px;font-weight:800;
+    font-variant-numeric:tabular-nums;outline:none;appearance:textfield;-moz-appearance:textfield;
+    transition:border-color .16s,box-shadow .16s}
+  .stake-input:focus{border-color:#3d8fd8;box-shadow:0 0 0 3px rgba(77,171,247,.16)}
+  .stake-input::-webkit-outer-spin-button,.stake-input::-webkit-inner-spin-button{
+    -webkit-appearance:none;margin:0}
+  .stake-input::placeholder{color:#5d7085;font-weight:600;font-size:14px}
+  .bet-meta.warn{color:#ffb3b3}
+
 
   .btn.play{background:linear-gradient(180deg,#48b96a,#2f8a4c);color:#04160b;font-weight:800;
     box-shadow:0 10px 24px rgba(47,138,76,.3)}
