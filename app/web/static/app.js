@@ -67,6 +67,62 @@
     if (text !== undefined && text !== null) node.textContent = text;
     return node;
   };
+
+  // В системных шрифтах Windows/Linux эмодзи 🪙 может отсутствовать.
+  // Заменяем его локальной SVG-иконкой, не зависящей от emoji-шрифтов.
+  const COIN_EMOJI = "🪙";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function coinIcon() {
+    const label = document.createElement("span");
+    label.className = "currency-coin";
+    label.setAttribute("role", "img");
+    label.setAttribute("aria-label", "виртуальные монеты");
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 20 20");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", "#i-coin");
+    svg.append(use);
+    label.append(svg);
+    return label;
+  }
+  function replaceCoinText(node) {
+    if (!node || !node.nodeValue || !node.nodeValue.includes(COIN_EMOJI)) return;
+    const text = node.nodeValue;
+    const parent = node.parentElement;
+    if (parent && parent.namespaceURI === SVG_NS) {
+      // SVG <text> не принимает HTML-иконки: используем стабильный текстовый fallback.
+      node.nodeValue = text.replaceAll(COIN_EMOJI, "◉");
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    const parts = text.split(COIN_EMOJI);
+    parts.forEach((part, index) => {
+      if (part) fragment.append(document.createTextNode(part));
+      if (index < parts.length - 1) fragment.append(coinIcon());
+    });
+    node.replaceWith(fragment);
+  }
+  function replaceCoinEmoji(root) {
+    if (!root) return;
+    if (root.nodeType === Node.TEXT_NODE) {
+      replaceCoinText(root);
+      return;
+    }
+    if (root.nodeType !== Node.ELEMENT_NODE || /^(SCRIPT|STYLE|TEXTAREA)$/.test(root.tagName)) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    textNodes.forEach(replaceCoinText);
+  }
+  replaceCoinEmoji(document.body);
+  new MutationObserver((records) => {
+    records.forEach((record) => {
+      if (record.type === "characterData") replaceCoinText(record.target);
+      record.addedNodes.forEach(replaceCoinEmoji);
+    });
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+
   const money = (n) => Number(n).toLocaleString("ru-RU").replace(/\u00a0/g, " ") + " 🪙";
   // для строк, где перенос внутри суммы выглядит как ошибка
   const moneySolid = (n) => money(n).replace(/ /g, "\u00a0");

@@ -760,3 +760,19 @@
 }
 
 .ticket-time { color: #ffcf65; font-size: 12px; white-space: nowrap; }
+
+/* Единая монетка SVG вместо системного эмодзи: одинаково в desktop и mobile. */
+.currency-coin {
+  display: inline-flex;
+  width: .96em;
+  height: .96em;
+  margin-left: .1em;
+  vertical-align: -.12em;
+  flex: 0 0 auto;
+}
+.currency-coin svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
