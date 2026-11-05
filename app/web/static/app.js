@@ -3636,6 +3636,15 @@
     return box;
   }
 
+  function ladderDoorCount(count) {
+    const value = Math.abs(Number(count)) % 100;
+    const last = value % 10;
+    if (value >= 11 && value <= 14) return `${count} дверей`;
+    if (last === 1) return `${count} дверь`;
+    if (last >= 2 && last <= 4) return `${count} двери`;
+    return `${count} дверей`;
+  }
+
   function ladderMultiplier(roundNo) {
     let factorial = 1;
     for (let n = 2; n <= roundNo + 1; n += 1) factorial *= n;
@@ -3670,7 +3679,7 @@
     const card = el("section", "ladder-card");
     card.append(el("div", "ladder-kicker", "РИСКНИ — ИЛИ ЗАБЕРИ СВОЁ"));
     card.append(el("h2", "ladder-title", "Лесенка"));
-    card.append(el("p", "ladder-copy", "Найди приз за закрытым окном. Каждый этаж — новый выбор и больше окон."));
+    card.append(el("p", "ladder-copy", "Найди приз за одной из закрытых дверей. С каждым этажом дверей становится больше."));
 
     const active = game && ["choosing", "won"].includes(game.status);
     if (active) {
@@ -3685,7 +3694,7 @@
       card.append(progress);
       const bar = el("div", "ladder-floorhead");
       bar.append(el("b", null, `Этаж ${round} из 8`));
-      bar.append(el("span", null, `${windows} окна · выплата ${money(payout)}`));
+      bar.append(el("span", null, `${ladderDoorCount(windows)} · выплата ${money(payout)}`));
       card.append(bar);
 
       const doors = el("div", "ladder-doors");
@@ -3694,7 +3703,7 @@
         door.type = "button";
         door.dataset.ladderWindow = String(i);
         door.disabled = game.status !== "choosing" || state.ladderBusy;
-        door.append(el("span", "ladder-door-icon", "▧"), el("b", null, `Окно ${i + 1}`));
+        door.append(el("span", "ladder-door-icon"), el("b", null, `Дверь ${i + 1}`));
         if (game.status === "won" && Number(game.picked_index) === i) {
           door.classList.add("prize");
           door.append(el("small", null, "ПРИЗ"));
@@ -3711,7 +3720,7 @@
       card.append(doors);
 
       if (game.status === "choosing") {
-        card.append(el("div", "ladder-note", "Выбери одно окно. Положение приза определяется сервером."));
+        card.append(el("div", "ladder-note", "Выбери дверь — приз спрятан за одной из них."));
       } else if (round < 8) {
         card.append(el("div", "ladder-success", "Нашёл приз! Забирай выплату или поднимайся выше."));
         const actions = el("div", "ladder-actions");
@@ -3719,7 +3728,7 @@
         cash.type = "button";
         cash.dataset.ladderAction = "cashout";
         cash.disabled = state.ladderBusy;
-        const next = el("button", "btn ladder-next", `Дальше · ${windows + 1} окон`);
+        const next = el("button", "btn ladder-next", `Дальше · ${ladderDoorCount(windows + 1)}`);
         next.type = "button";
         next.dataset.ladderAction = "continue";
         next.disabled = state.ladderBusy;
@@ -3732,7 +3741,7 @@
         const doors = el("div", "ladder-doors final");
         for (let i = 0; i < Number(game.windows); i += 1) {
           const door = el("div", "ladder-door revealed" + (i === Number(game.revealed_index) ? " prize" : "") + (i === Number(game.picked_index) ? " miss" : ""));
-          door.append(el("span", "ladder-door-icon", i === Number(game.revealed_index) ? "✦" : "▧"), el("b", null, `Окно ${i + 1}`));
+          door.append(el("span", "ladder-door-icon"), el("b", null, `Дверь ${i + 1}`));
           if (i === Number(game.revealed_index)) door.append(el("small", null, "ПРИЗ"));
           doors.append(door);
         }

@@ -1291,7 +1291,7 @@ class Database:
             return await self._balance_in(conn, user_id), round_id
 
     async def ladder_state(self, user_id: int) -> dict[str, Any] | None:
-        """Последняя партия: текущее окно никогда не раскрываем до выбора игрока."""
+        """Последняя партия: текущую дверь никогда не раскрываем до выбора игрока."""
         row = await self._fetchone(
             "SELECT * FROM ladder_games WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
         )
@@ -1366,7 +1366,7 @@ class Database:
     async def pick_ladder(
         self, user_id: int, game_id: int, picked_index: int, payout: int
     ) -> dict[str, Any]:
-        """Выбирает окно. Промах завершает игру; успех открывает cashout или продолжение."""
+        """Выбирает дверь. Промах завершает игру; успех открывает cashout или продолжение."""
         from app.services.ladder import MAX_ROUNDS
 
         now = int(time.time())
@@ -1383,7 +1383,7 @@ class Database:
             round_no = int(game["round"])
             windows = round_no + 1
             if not 0 <= picked_index < windows:
-                raise InvalidBet("Выбери одно из закрытых окон")
+                raise InvalidBet("Выбери одну из закрытых дверей")
             correct = picked_index == int(game["prize_index"])
             status = "won" if correct else "lost"
             final = correct and round_no == MAX_ROUNDS
@@ -1420,7 +1420,7 @@ class Database:
     async def continue_ladder(
         self, user_id: int, game_id: int, prize_index: int
     ) -> dict[str, Any]:
-        """Переходит на следующий этаж и прячет новый приз среди добавившихся окон."""
+        """Переходит на следующий этаж и прячет новый приз среди добавившихся дверей."""
         from app.services.ladder import MAX_ROUNDS
 
         now = int(time.time())

@@ -1007,7 +1007,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
 
 
 async def api_ladder_start(request: web.Request) -> web.Response:
-    """Начинает «Лесенку»: ставку и призовое окно фиксирует сервер."""
+    """Начинает «Лесенку»: ставку и призовая дверь фиксирует сервер."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     amount = _as_int((await _json_body(request)).get("amount"))
@@ -1029,7 +1029,7 @@ async def api_ladder_start(request: web.Request) -> web.Response:
 
 
 async def api_ladder_pick(request: web.Request) -> web.Response:
-    """Выбирает закрытое окно и только после выбора раскрывает результат."""
+    """Выбирает закрытая дверь и только после выбора раскрывает результат."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     body = await _json_body(request)
@@ -1047,7 +1047,7 @@ async def api_ladder_pick(request: web.Request) -> web.Response:
 
 
 async def api_ladder_continue(request: web.Request) -> web.Response:
-    """Продолжает после найденного приза: добавляет окно и прячет новый приз."""
+    """Продолжает после найденного приза: добавляет дверь и прячет новый приз."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     game_id = _as_int((await _json_body(request)).get("game_id"))

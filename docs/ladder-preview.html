@@ -23,19 +23,19 @@ details{margin-top:13px;color:#b7c6d5}summary{cursor:pointer;color:#dce5ee;font-
   <header class="top"><div class="brand"><span class="brandmark">↟</span><span>ЛЕСЕНКА<br><small style="font-size:10px;color:#93a4b7;font-weight:600;letter-spacing:.08em">ИГРА НА РИСК</small></span></div><div class="balance" id="balance">12 804 ◉</div></header>
   <main>
     <section class="card game">
-      <div class="head"><div><div class="eyebrow">8 ЭТАЖЕЙ · ОДИН ПРИЗ</div><h1 class="title">Лесенка</h1><div class="subtitle">Угадай окно — забери выигрыш или поднимайся дальше.</div></div><div class="tag">RTP 95,5 %</div></div>
+      <div class="head"><div><div class="eyebrow">8 ЭТАЖЕЙ · ОДИН ПРИЗ</div><h1 class="title">Лесенка</h1><div class="subtitle">Угадай дверь — забери выигрыш или поднимайся дальше.</div></div><div class="tag">RTP 95,5 %</div></div>
       <div class="disclaimer"><i></i><span>виртуальные монеты · без реальных ставок</span></div>
       <div class="stakebar"><div class="stake-label"><small>СТАВКА НА ВСЮ ИГРУ</small><span class="stake-value"><span id="stake">10</span> <em>◉</em></span></div><button class="stake-ctrl" id="minus" aria-label="Уменьшить">−</button><button class="stake-ctrl" id="plus" aria-label="Увеличить">+</button></div>
       <div class="presets"><button class="preset active" data-stake="10">10</button><button class="preset" data-stake="25">25</button><button class="preset" data-stake="50">50</button></div>
-      <div class="progress-wrap"><div class="progress-head"><span class="round-title" id="roundTitle">ЭТАЖ 1 / 8</span><span class="round-meta" id="roundMeta">2 окна · 1 приз</span></div><div class="track" id="track"></div></div>
-      <div class="game-note"><span id="note">Выбери одно из двух окон</span><span class="odds" id="multiplier">Выплата ×1,91</span></div>
+      <div class="progress-wrap"><div class="progress-head"><span class="round-title" id="roundTitle">ЭТАЖ 1 / 8</span><span class="round-meta" id="roundMeta">2 двери · 1 приз</span></div><div class="track" id="track"></div></div>
+      <div class="game-note"><span id="note">Выбери одну из двух дверей</span><span class="odds" id="multiplier">Выплата ×1,91</span></div>
       <div class="doors" id="doors"></div>
       <div class="result" id="result">Ставка спишется при старте. Ошибка — ставка сгорает.</div>
       <div class="actions" id="actions"><button class="btn gold" id="start">Начать за 10 ◉</button><button class="btn secondary" id="rules">Как играть</button></div>
       <p class="helper" id="helper">После каждого успеха можно забрать сумму или продолжить. Без автопродолжения.</p>
-      <details><summary>Шансы и выплаты</summary><table><thead><tr><th>Этаж</th><th>Окон</th><th>Дойти</th><th>Множитель</th></tr></thead><tbody id="payouts"></tbody></table><p class="tiny">Выплата включает исходную ставку. Приз прячет сервер; клиент узнаёт результат только после выбора.</p></details>
+      <details><summary>Шансы и выплаты</summary><table><thead><tr><th>Этаж</th><th>Дверей</th><th>Дойти</th><th>Множитель</th></tr></thead><tbody id="payouts"></tbody></table><p class="tiny">Выплата включает исходную ставку. Приз прячет сервер; клиент узнаёт результат только после выбора.</p></details>
     </section>
-    <section class="card secondary-card" id="howCard"><h2 class="section-title">КАК ЭТО РАБОТАЕТ</h2><div class="how"><div><b>01 · Выбери</b>Одно закрытое окно на этаже.</div><div><b>02 · Забери</b>Успех — и выплата уже доступна.</div><div><b>03 · Рискни</b>Ещё этаж — больше окон, больше приз.</div></div></section>
+    <section class="card secondary-card" id="howCard"><h2 class="section-title">КАК ЭТО РАБОТАЕТ</h2><div class="how"><div><b>01 · Выбери</b>Одну закрытую дверь на этаже.</div><div><b>02 · Забери</b>Успех — и выплата уже доступна.</div><div><b>03 · Рискни</b>Ещё этаж — больше дверей, выше приз.</div></div></section>
     <section class="card history"><h2 class="section-title">ИСТОРИЯ РАУНДОВ</h2><div class="history-list" id="history"><div class="history-row"><span>Пока нет раундов</span><span>—</span></div></div></section>
   </main>
 </div>
@@ -45,6 +45,7 @@ details{margin-top:13px;color:#b7c6d5}summary{cursor:pointer;color:#dce5ee;font-
   const RTP=.955, startBalance=12804, maxStake=50;
   let balance=startBalance, stake=10, round=1, safe=-1, phase='ready', cashout=0, history=[];
   const $=s=>document.querySelector(s), money=n=>Math.round(n).toLocaleString('ru-RU').replace(/\u00a0/g,' '), windows=()=>round+1, mult=k=>RTP*factorial(k+1), factorial=n=>{let x=1;for(let i=2;i<=n;i++)x*=i;return x};
+  const doorWord=count=>{const n=count%100,last=n%10;return `${count} ${n>=11&&n<=14||last===0||last>=5?'дверей':last===1?'дверь':'двери'}`};
   const chance=k=>1/factorial(k+1);
   function toast(s){const n=$('#toast');n.textContent=s;n.classList.add('on');setTimeout(()=>n.classList.remove('on'),2200)}
   function renderTrack(){ $('#track').innerHTML=''; for(let i=1;i<=8;i++){const d=document.createElement('i');d.className='step'+(i<round?' done':i===round?' current':'');$('#track').append(d)} }
@@ -55,21 +56,21 @@ details{margin-top:13px;color:#b7c6d5}summary{cursor:pointer;color:#dce5ee;font-
       const isSafe=i===safe;
       if(reveal&&isSafe)b.classList.add(i===chosen?'correct':'open-other');
       if(reveal&&i===chosen&&!isSafe)b.classList.add('wrong');
-      b.innerHTML=`<span class="num">ОКНО ${String(i+1).padStart(2,'0')}</span><span class="glyph">${reveal&&isSafe?'✦':reveal&&i===chosen?'×':'?'}</span><span class="door-foot">${reveal&&isSafe?'ПРИЗ':reveal&&i===chosen?'ПУСТО':'ЗАКРЫТО'}</span>`;
+      b.innerHTML=`<span class="num">ДВЕРЬ ${String(i+1).padStart(2,'0')}</span><span class="glyph">${reveal&&isSafe?'✦':reveal&&i===chosen?'×':'?'}</span><span class="door-foot">${reveal&&isSafe?'ПРИЗ':reveal&&i===chosen?'ПУСТО':'ЗАКРЫТО'}</span>`;
       b.addEventListener('click',()=>choose(i));box.append(b);
     }
   }
   function sync(){
     $('#balance').textContent=money(balance)+' ◉';$('#stake').textContent=money(stake);$('#roundTitle').textContent=`ЭТАЖ ${round} / 8`;
-    $('#roundMeta').textContent=`${windows()} окна · 1 приз`;$('#multiplier').textContent=`Выплата ×${mult(round).toLocaleString('ru-RU',{maximumFractionDigits:2})}`;
-    $('#note').textContent=phase==='ready'?'Выбери одно из двух окон':phase==='pick'?`Где приз? · шанс ${Math.round(100/windows())}%`:phase==='won'?`Приз найден · ${money(cashout)} ◉`:phase==='lost'?'Этот ход оказался пустым':'Раунд завершён';
+    $('#roundMeta').textContent=`${doorWord(windows())} · 1 приз`;$('#multiplier').textContent=`Выплата ×${mult(round).toLocaleString('ru-RU',{maximumFractionDigits:2})}`;
+    $('#note').textContent=phase==='ready'?'Выбери одну из двух дверей':phase==='pick'?`Где приз? · шанс ${Math.round(100/windows())}%`:phase==='won'?`Приз найден · ${money(cashout)} ◉`:phase==='lost'?'Этот ход оказался пустым':'Раунд завершён';
     document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',Number(b.dataset.stake)===stake));
-    $('#start').disabled=phase!=='ready'||stake>balance;$('#start').textContent=phase==='ready'?`Начать за ${money(stake)} ◉`:phase==='pick'?'Выбери окно':'Начать заново';
+    $('#start').disabled=phase!=='ready'||stake>balance;$('#start').textContent=phase==='ready'?`Начать за ${money(stake)} ◉`:phase==='pick'?'Выбери дверь':'Начать заново';
     $('#start').style.display=phase==='ready'||phase==='lost'||phase==='done'?'block':'none';
     $('#actions').querySelectorAll('.dynamic').forEach(x=>x.remove());
     if(phase==='won'){
       const take=document.createElement('button');take.className='btn gold dynamic';take.textContent=`Забрать ${money(cashout)} ◉`;take.onclick=collect;$('#actions').prepend(take);
-      if(round<8){const go=document.createElement('button');go.className='btn continue dynamic';go.textContent=`Дальше · ${windows()+1} окна`;go.onclick=continueGame;$('#actions').prepend(go)}
+      if(round<8){const go=document.createElement('button');go.className='btn continue dynamic';go.textContent=`Дальше · ${doorWord(windows()+1)}`;go.onclick=continueGame;$('#actions').prepend(go)}
     }
     if(phase==='lost'||phase==='done'){
       const again=document.createElement('button');again.className='btn gold dynamic';again.textContent='Сыграть ещё';again.onclick=reset;$('#actions').prepend(again);$('#start').style.display='none';

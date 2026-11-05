@@ -778,7 +778,7 @@
 }
 .currency-unit { white-space: nowrap; }
 
-/* «Лесенка» — отдельный компактный экран с крупными интерактивными окнами. */
+/* «Лесенка» — отдельный компактный экран с интерактивными дверями. */
 .ladder-card {
   margin: 12px 0 22px;
   padding: 18px 16px 15px;
@@ -802,11 +802,14 @@
 .ladder-door { position: relative; display: flex; min-height: 82px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px 4px; border: 1px solid #3c5367; border-radius: 13px; color: #d9e8f3; background: linear-gradient(145deg, #24384b, #172535); cursor: pointer; transition: transform .12s, border-color .12s, background .12s; }
 .ladder-door:not(:disabled):active { transform: translateY(2px) scale(.98); }
 .ladder-door:disabled { cursor: default; opacity: 1; }
-.ladder-door-icon { color: #83a9bd; font-size: 25px; line-height: 1; }
+.ladder-door-icon { position: relative; display: block; width: 22px; height: 28px; border: 1.5px solid #83a9bd; border-radius: 4px 4px 1px 1px; color: #83a9bd; background: linear-gradient(90deg, rgba(131, 169, 189, .08), rgba(131, 169, 189, .2)); box-shadow: inset 3px 0 0 rgba(131, 169, 189, .08); }
+.ladder-door-icon::before { content: ""; position: absolute; inset: 4px 5px; border: 1px solid rgba(131, 169, 189, .38); border-radius: 2px 2px 0 0; }
+.ladder-door-icon::after { content: ""; position: absolute; right: 3px; top: 13px; width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
 .ladder-door b { font-size: 11px; }
 .ladder-door small { color: #76f0b0; font-size: 8px; font-weight: 900; letter-spacing: .1em; }
 .ladder-door.prize { border-color: #5fbd91; background: linear-gradient(145deg, #1b513e, #16362f); }
-.ladder-door.prize .ladder-door-icon { color: #9affc8; }
+.ladder-door.prize .ladder-door-icon { color: #9affc8; border-color: #9affc8; background: linear-gradient(90deg, rgba(154, 255, 200, .1), rgba(154, 255, 200, .24)); }
+.ladder-door.prize .ladder-door-icon::before { border-color: rgba(154, 255, 200, .52); }
 .ladder-door.miss { border-color: #d47470; background: linear-gradient(145deg, #512c36, #302432); }
 .ladder-door.miss small { color: #ffb2a5; }
 .ladder-note { margin: 12px 0 0; color: #92a7b8; font-size: 11px; line-height: 1.45; text-align: center; }
