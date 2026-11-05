@@ -35,6 +35,8 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "last_chat_id", "ALTER TABLE users ADD COLUMN last_chat_id BIGINT"),
     ("matches", "sport", "ALTER TABLE matches ADD COLUMN sport TEXT NOT NULL DEFAULT 'cs2'"),
     ("matches", "odds_x", "ALTER TABLE matches ADD COLUMN odds_x REAL"),
+    ("matches", "team_a_en", "ALTER TABLE matches ADD COLUMN team_a_en TEXT"),
+    ("matches", "team_b_en", "ALTER TABLE matches ADD COLUMN team_b_en TEXT"),
 )
 
 
@@ -673,6 +675,27 @@ class Database:
             (int(time.time()) if when is None else when, match_id),
         )
         await self.conn.commit()
+
+    async def recent_matches(self, limit: int = 500) -> list[Any]:
+        """Последние матчи — для поиска по названиям команд (без SQL-lower: кириллица)."""
+        return await self._fetchall(
+            "SELECT * FROM matches ORDER BY start_time DESC LIMIT ?", (limit,)
+        )
+
+    async def set_match_names_en(self, match_id: int, team_a_en: str, team_b_en: str) -> None:
+        """Английские названия команд: по ним ищем финальный результат во внешнем фиде."""
+        await self.conn.execute(
+            "UPDATE matches SET team_a_en = ?, team_b_en = ? WHERE id = ?",
+            (team_a_en, team_b_en, match_id),
+        )
+        await self.conn.commit()
+
+    async def matches_without_names_en(self, sport: str = "football") -> list[Any]:
+        return await self._fetchall(
+            "SELECT * FROM matches WHERE sport = ? AND status IN ('open', 'live', 'awaiting') "
+            "AND (team_a_en IS NULL OR team_b_en IS NULL) ORDER BY start_time",
+            (sport,),
+        )
 
     async def match_bet_count(self, match_id: int) -> int:
         """Сколько ставок (включая экспрессы) висит на матче — решает, можно ли его снимать."""
@@ -1665,6 +1688,117 @@ class Database:
                     (amount, int(bet["user_id"])),
                 )
                 await self._ledger(conn, int(bet["user_id"]), amount, f"возврат · матч #{match_id}")
+
+            await conn.execute(
+                "UPDATE matches SET status = 'cancelled', finished_at = ? WHERE id = ?",
+                (int(time.time()), match_id),
+            )
+
+            expresses = await self._resolve_expresses(conn, match_id, None)
+
+        return {
+            "refunded": refunded,
+            "bets": len(bets),
+            "settlements": settlements,
+            "team_a": str(match["team_a"]),
+            "team_b": str(match["team_b"]),
+            "expresses": expresses,
+        }
+
+    async def resettle_football(
+        self, match_id: int, score_a: int, score_b: int, source: str = "manual"
+    ) -> dict[str, Any]:
+        """Пересчитать УЖЕ рассчитанный футбольный матч по правильному счёту.
+
+        Нужно, когда финальный счёт пришёл позже (гол на 90+4, добавленное время)
+        или когда матч посчитали по последнему live-счёту. Возвраты/выплаты
+        откатываются, матч считается заново — уже по фактическому счёту.
+        """
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+
+            async with conn.execute(
+                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map'", (match_id,)
+            ) as cur:
+                bets = list(await cur.fetchall())
+
+            reversed_total = 0
+            for bet in bets:
+                payout = int(bet["payout"] or 0)
+                if not payout:
+                    continue
+                reversed_total += payout
+                async with conn.execute(
+                    "SELECT balance FROM users WHERE user_id = ?", (int(bet["user_id"]),)
+                ) as cur:
+                    user = await cur.fetchone()
+                balance = int(user["balance"]) if user else 0
+                await conn.execute(
+                    "UPDATE users SET balance = ? WHERE user_id = ?",
+                    (max(0, balance - payout), int(bet["user_id"])),
+                )
+                await self._ledger(
+                    conn, int(bet["user_id"]), -payout, f"сторно расчёта · матч #{match_id}"
+                )
+                await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
+
+            await conn.execute(
+                "UPDATE matches SET status = 'live', winner = NULL, finished_at = NULL, "
+                "result_source = NULL, score_a = ?, score_b = ? WHERE id = ?",
+                (score_a, score_b, match_id),
+            )
+
+        result = await self.settle_football(match_id, score_a, score_b, source=source)
+        result["reversed"] = reversed_total
+        return result
+
+    async def cancel_football_match(self, match_id: int, reason: str = "матч не состоялся") -> dict[str, Any]:
+        """Матч не состоялся (перенесён/отменён) — возвращаем ставки по всем рынкам.
+
+        У футбола ставки лежат с `market = 'football'`, поэтому `cancel_match`
+        (он про CS2) их не видит: возврат уходил бы в пустоту.
+        """
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if match["status"] in ("finished", "cancelled"):
+                raise MatchAlreadySettled("Матч уже рассчитан или отменён")
+
+            async with conn.execute(
+                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map'", (match_id,)
+            ) as cur:
+                bets = list(await cur.fetchall())
+
+            refunded = 0
+            settlements: list[dict[str, Any]] = []
+            for bet in bets:
+                amount = int(bet["amount"])
+                refunded += amount
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "chat_id": int(bet["chat_id"]) if bet["chat_id"] else None,
+                        "side": str(bet["side"]),
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": amount,
+                        "won": False,
+                    }
+                )
+                await conn.execute("UPDATE bets SET payout = ? WHERE id = ?", (amount, bet["id"]))
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (amount, int(bet["user_id"])),
+                )
+                await self._ledger(
+                    conn, int(bet["user_id"]), amount, f"возврат · матч #{match_id} ({reason})"
+                )
 
             await conn.execute(
                 "UPDATE matches SET status = 'cancelled', finished_at = ? WHERE id = ?",

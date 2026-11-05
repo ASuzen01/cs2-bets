@@ -1,14 +1,29 @@
 [
   {
-    "teams": ["Team Liquid", "TYLOO"],
+    "teams": [
+      "Team Liquid",
+      "TYLOO"
+    ],
     "score": "2:0",
     "winner": "a",
     "note": "IEM Beijing 2026, Group B lower bracket semi-final, 4 Nov 2026 — Liquid 2:0 TYLOO"
   },
   {
-    "teams": ["BB Team", "Aurora"],
+    "teams": [
+      "BB Team",
+      "Aurora"
+    ],
     "score": "2:0",
     "winner": "a",
     "note": "IEM Beijing 2026, Group B lower bracket semi-final, 4 Nov 2026 — BetBoom 2:0 Aurora"
+  },
+  {
+    "teams": [
+      "АЕК Афины",
+      "Реал Мадрид"
+    ],
+    "score": "2:3",
+    "sport": "football",
+    "note": "Лига чемпионов УЕФА, 4 ноя 2026 — АЕК 2:3 Реал (посчитали по live-счёту, исправляем по факту)"
   }
 ]

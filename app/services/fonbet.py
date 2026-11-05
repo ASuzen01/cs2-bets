@@ -132,10 +132,10 @@ class FonbetClient:
             await self._session.close()
         self._session = None
 
-    async def fetch_packet(self) -> dict[str, Any]:
+    async def fetch_packet(self, *, lang: str = "ru") -> dict[str, Any]:
         """Скачивает и распаковывает пакет линии."""
         url = f"{self._base}/events/listBase"
-        params = {"scopeMarket": self._scope, "lang": "ru"}
+        params = {"scopeMarket": self._scope, "lang": lang}
         async with self._lock, self.session.get(url, params=params) as response:
             response.raise_for_status()  # не ддосим: один запрос за раз
             raw = await response.read()
@@ -144,6 +144,23 @@ class FonbetClient:
         packet = json.loads(raw)
         log.debug("Линия Fonbet: %s событий", len(packet.get("events", [])))
         return packet
+
+    async def english_names(self) -> dict[int, tuple[str, str]]:
+        """Английские названия команд по id события: нужны для поиска результатов.
+
+        Русские названия (`АЕК Афины`) с фидом результатов (`AEK Athens`) не
+        сопоставить, а Fonbet умеет отдавать ту же линию по-английски.
+        """
+        packet = await self.fetch_packet(lang="en")
+        names: dict[int, tuple[str, str]] = {}
+        for event in packet.get("events") or []:
+            if event.get("level") != 1:
+                continue
+            team_a, team_b = event.get("team1"), event.get("team2")
+            if team_a and team_b:
+                names[int(event["id"])] = (str(team_a), str(team_b))
+        log.info("Английские названия: %s событий", len(names))
+        return names
 
     # --------------------------------------------------------------- parse
     def parse(self, packet: dict[str, Any]) -> list[FonbetMatch]:

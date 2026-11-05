@@ -19,6 +19,7 @@ from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, parse_football
 from app.services.maps import finish_maps_of_match, settle_map_by_score
 from app.services.notify import notify_bettors
+from app.services.results import FootballResult, ResultsClient
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +30,10 @@ log = logging.getLogger(__name__)
 # появляется снова (пять минут тишины).
 FOOTBALL_FINISH_MINUTES = 100
 FOOTBALL_GONE_QUIET_SECONDS = 300
+# Как часто переспрашивать фид результатов по матчу, который уже ушёл из линии.
+FOOTBALL_RESULT_RETRY_SECONDS = 600
+# Как часто обновлять английские названия команд (для поиска результатов).
+FOOTBALL_NAMES_TTL_SECONDS = 1800
 
 
 # Сколько матч формата может идти (минуты): пока не истекло, live-приём открыт,
@@ -78,9 +83,17 @@ async def series_from_maps(db: Database, row: Any) -> tuple[str | None, str | No
 
 
 class MatchSyncer:
-    def __init__(self, bot: Bot, db: Database, client: FonbetClient | None = None) -> None:
+    def __init__(
+        self,
+        bot: Bot,
+        db: Database,
+        client: FonbetClient | None = None,
+        results: ResultsClient | None = None,
+    ) -> None:
         self.bot = bot
         self.db = db
+        self.results = results or ResultsClient()
+        self._names_en_at = 0
         self.client = client or FonbetClient(
             settings.fonbet_base_url,
             scope_market=settings.fonbet_scope_market,
@@ -105,6 +118,7 @@ class MatchSyncer:
                 await self._task
             self._task = None
         await self.client.close()
+        await self.results.close()
 
     async def _run(self) -> None:
         while True:
@@ -143,6 +157,7 @@ class MatchSyncer:
         # сначала карты: матч считается в том числе по их результатам
         await self._settle_maps(maps_by_parent, stats)
         await self._settle(matches, stats)
+        await self._refresh_english_names()
         await self._settle_football(football, stats)
         await self._close_stale(stats)
 
@@ -325,11 +340,13 @@ class MatchSyncer:
     async def _settle_football(
         self, matches: list[FootballMatch], stats: dict[str, Any]
     ) -> None:
-        """Считаем футбольные матчи по счёту.
+        """Считаем футбольные матчи по фактическому финальному счёту.
 
-        Счёт берём из линии, пока матч там есть. Завершённые матчи Fonbet из линии
-        убирает и результат после этого не отдаёт — тогда финальным считаем
-        последний счёт, который мы видели в live (он уже лежит в базе).
+        Счёт из линии берём, только пока матч там есть и Fonbet сам пометил его
+        завершённым. Как только событие пропало, финальный счёт спрашиваем у фида
+        результатов: последний live-счёт брать нельзя — гол на 90+4 или в
+        добавленное время меняет исход, а мы бы уже расплатились по старому счёту.
+        Если результата нигде нет, матч ждёт (`awaiting`) и переспрашивает фид.
         """
         by_fonbet = {match.event_id: match for match in matches}
         now = int(time.time())
@@ -340,32 +357,91 @@ class MatchSyncer:
             match = by_fonbet.get(int(row["fonbet_id"]))
             if match is not None:
                 if int(row["last_result_check"] or 0):
-                    # матч вернулся в линию — «тишину» начинаем считать заново
+                    # матч вернулся в линию — отметку сбрасываем
                     await self.db.mark_result_check(int(row["id"]), 0)
                 if match.finished and match.score_a is not None and match.score_b is not None:
                     await self._settle_football_row(row, match.score_a, match.score_b, stats)
                 continue
 
             # события нет в линии: либо оно ещё не появилось, либо матч уже сыгран
-            score_a, score_b = row["score_a"], row["score_b"]
-            if (
-                str(row["status"]) in ("live", "awaiting")
-                and score_a is not None
-                and score_b is not None
-                and now - int(row["start_time"]) > FOOTBALL_FINISH_MINUTES * 60
-            ):
-                last_seen = int(row["last_result_check"] or 0)
-                if not last_seen:
-                    # первый раз не увидели матч — отметим время и подождём пять минут
-                    await self.db.mark_result_check(int(row["id"]))
-                elif now - last_seen >= FOOTBALL_GONE_QUIET_SECONDS:
-                    await self._settle_football_row(row, int(score_a), int(score_b), stats)
-                # отметку не двигаем: иначе окно тишины никогда не истечёт
+            if now - int(row["start_time"]) < FOOTBALL_FINISH_MINUTES * 60:
                 continue
 
-            if str(row["status"]) != "awaiting" and now - int(row["start_time"]) > 3 * 3600:
+            last_check = int(row["last_result_check"] or 0)
+            if last_check and now - last_check < FOOTBALL_RESULT_RETRY_SECONDS:
+                continue          # не долбим фид каждые 45 секунд
+            await self.db.mark_result_check(int(row["id"]), now)
+
+            result = await self._football_result_from_feed(row)
+            if result is not None and result.void:
+                await self._cancel_football_row(row, stats, reason=f"статус {result.status}")
+                continue
+            if result is not None and result.finished:
+                await self._settle_football_row(row, result.score_home, result.score_away, stats)
+                continue
+
+            if str(row["status"]) != "awaiting":
                 await self._mark_awaiting(row, None)
                 stats["awaiting"] += 1
+                log.info(
+                    "Футбол #%s %s — %s: результата пока нет, ждём фид",
+                    row["id"], row["team_a"], row["team_b"],
+                )
+
+    async def _football_result_from_feed(self, row: Any) -> FootballResult | None:
+        """Финальный счёт из внешнего фида результатов (None — не нашли/не готово)."""
+        try:
+            return await self.results.find(
+                str(row["team_a"]),
+                str(row["team_b"]),
+                int(row["start_time"]),
+                english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
+                english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
+            )
+        except Exception:
+            log.exception("Не смог получить результат футбольного матча #%s", row["id"])
+            return None
+
+    async def _refresh_english_names(self) -> None:
+        """Подтягиваем английские названия команд — по ним ищем результаты.
+
+        Делаем редко и только когда есть футбольные матчи без английских имён:
+        лишний мегабайт линии на каждом тике ни к чему.
+        """
+        now = int(time.time())
+        if now - self._names_en_at < FOOTBALL_NAMES_TTL_SECONDS:
+            return
+        pending = await self.db.matches_without_names_en("football")
+        if not pending:
+            return
+        self._names_en_at = now
+        try:
+            names = await self.client.english_names()
+        except Exception:
+            log.exception("Не смог получить английские названия команд")
+            return
+        for row in pending:
+            pair = names.get(int(row["fonbet_id"]))
+            if pair is None:
+                continue
+            await self.db.set_match_names_en(int(row["id"]), pair[0], pair[1])
+
+    async def _cancel_football_row(
+        self, row: Any, stats: dict[str, Any], *, reason: str
+    ) -> None:
+        """Матч не состоялся (перенесён/отменён) — только здесь возврат и уместен."""
+        if await self.db.match_bet_count(int(row["id"])) == 0:
+            await self.db.set_status(int(row["id"]), "cancelled")
+            log.info("Футбол #%s не состоялся (%s), ставок нет", row["id"], reason)
+            return
+        try:
+            result = await self.db.cancel_football_match(int(row["id"]))
+        except Exception:
+            log.exception("Не смог вернуть ставки по матчу #%s", row["id"])
+            return
+        stats["cancelled"] = stats.get("cancelled", 0) + 1
+        await notify_bettors(self.bot, self.db, result, void=True)
+        log.info("Футбол #%s не состоялся (%s) — ставки возвращены", row["id"], reason)
 
     async def _settle_football_row(
         self, row: Any, score_a: int, score_b: int, stats: dict[str, Any]

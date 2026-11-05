@@ -48,18 +48,24 @@ def load_results(path: Path | str = RESULTS_PATH) -> list[dict[str, Any]]:
 
 
 async def _find_match(db: Database, item: dict[str, Any]) -> Any | None:
+    """Ищет матч по обеим командам.
+
+    Сравниваем в Python, а не в SQL: `lower()` в SQLite не трогает кириллицу,
+    и «АЕК Афины» с «аек афины» в запросе не сходились бы.
+    """
     if item.get("match_id"):
         return await db.get_match(int(item["match_id"]))
 
-    teams = [str(team).strip().lower() for team in item.get("teams") or []]
+    teams = sorted(str(team).strip().lower() for team in item.get("teams") or [])
     if len(teams) != 2:
         return None
-    rows = await db._fetchall(
-        "SELECT * FROM matches WHERE lower(team_a) IN (?, ?) AND lower(team_b) IN (?, ?) "
-        "ORDER BY start_time DESC LIMIT 1",
-        (teams[0], teams[1], teams[0], teams[1]),
-    )
-    return rows[0] if rows else None
+
+    rows = await db.recent_matches(limit=500)
+    for row in rows:
+        names = sorted([str(row["team_a"]).strip().lower(), str(row["team_b"]).strip().lower()])
+        if names == teams:
+            return row
+    return None
 
 
 async def apply_manual_results(
@@ -69,9 +75,6 @@ async def apply_manual_results(
     done: list[str] = []
     for item in load_results(path):
         winner = str(item.get("winner") or "").lower()
-        if winner not in ("a", "b"):
-            log.warning("Ручной результат без победителя: %s", item)
-            continue
 
         match = await _find_match(db, item)
         if match is None:
@@ -79,18 +82,44 @@ async def apply_manual_results(
             continue
 
         status = str(match["status"])
-        if status == "finished" and str(match["winner"] or "") == winner:
-            continue  # уже рассчитан именно так — ничего не делаем
-        if status == "finished":
-            log.warning("Матч #%s уже рассчитан иначе — ручной результат пропущен", match["id"])
+        sport = str(match["sport"]) if "sport" in match.keys() else "cs2"  # noqa: SIM118
+        if sport != "football" and winner not in ("a", "b"):
+            log.warning("Ручной результат без победителя: %s", item)
             continue
-
         score = str(item.get("score") or "")
         score_a = score_b = None
         if ":" in score:
             left, right = score.split(":", 1)
             if left.strip().isdigit() and right.strip().isdigit():
                 score_a, score_b = int(left), int(right)
+
+        if sport == "football":
+            if score_a is None or score_b is None:
+                log.warning("Футбольному матчу #%s нужен счёт вида 2:3", match["id"])
+                continue
+            winner = "a" if score_a > score_b else ("b" if score_b > score_a else "x")
+            if status == "finished":
+                if (match["score_a"], match["score_b"]) == (score_a, score_b):
+                    continue  # уже посчитан по этому счёту
+                result = await db.resettle_football(int(match["id"]), score_a, score_b)
+            elif status == "cancelled":
+                result = await db.resettle_football(int(match["id"]), score_a, score_b)
+            else:
+                result = await db.settle_football(int(match["id"]), score_a, score_b, source="manual")
+            if bot is not None:
+                await notify_bettors(bot, db, result, score=score)
+            done.append(
+                f"#{match['id']} {match['team_a']} — {match['team_b']}: {score}, "
+                f"итог {winner}, выплачено {result['paid']}"
+            )
+            log.info("Ручной футбольный результат применён: %s", done[-1])
+            continue
+
+        if status == "finished" and str(match["winner"] or "") == winner:
+            continue  # уже рассчитан именно так — ничего не делаем
+        if status == "finished":
+            log.warning("Матч #%s уже рассчитан иначе — ручной результат пропущен", match["id"])
+            continue
 
         try:
             if status == "cancelled":
