@@ -21,3 +21,6 @@ venv/
 # дампы базы не должны попадать в публичный репозиторий
 backups/
 *.json.gz
+
+# CI включается добавлением файла в GitHub (токен без scope workflow)
+.github/workflows/
