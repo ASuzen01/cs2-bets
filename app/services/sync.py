@@ -20,6 +20,7 @@ from app.services.cs2_settle import settle_from_feed
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, is_placeholder_team, parse_football
 from app.services.hockey import HockeyMatch, parse_hockey
+from app.services.khl_results import KhlResult, KhlResultsClient
 from app.services.maps import finish_maps_of_match, settle_map_by_score
 from app.services.notify import notify_bettors
 from app.services.results import FootballResult, ResultsClient
@@ -109,6 +110,7 @@ class MatchSyncer:
         self.db = db
         self.results = results or ResultsClient()
         self.hockey_results = ResultsClient(sport="hockey")
+        self.khl_results = KhlResultsClient()
         self.cs2_results = cs2_results or Cs2ResultsClient()
         self._feed_checked: dict[int, int] = {}
         # матч_id → сколько тиков подряд его нет в линии (снимаем на LINE_GONE_TICKS)
@@ -140,6 +142,8 @@ class MatchSyncer:
         await self.client.close()
         await self.results.close()
         await self.cs2_results.close()
+        await self.hockey_results.close()
+        await self.khl_results.close()
 
     async def _run(self) -> None:
         while True:
@@ -428,6 +432,15 @@ class MatchSyncer:
             await self.db.mark_result_check(int(row["id"]), now)
 
             result = await self._hockey_result_from_feed(row)
+            if result is None and settings.khl_results_enabled:
+                # НХЛ есть в livescore, КХЛ — только в фиде Flashscore
+                khl = await self._khl_result_from_feed(row)
+                if khl is not None:
+                    await self._settle_hockey_row(
+                        row, khl.reg_home, khl.reg_away,
+                        khl.final_home, khl.final_away, stats, source="flashscore",
+                    )
+                    continue
             if result is not None and result.void:
                 await self._cancel_market_row(row, stats, reason=f"статус {result.status}")
                 continue
@@ -465,6 +478,20 @@ class MatchSyncer:
             log.exception("Не смог получить результат хоккейного матча #%s", row["id"])
             return None
 
+    async def _khl_result_from_feed(self, row: Any) -> KhlResult | None:
+        """Счёт КХЛ из фида Flashscore: основное время по периодам и итог с овертаймом."""
+        try:
+            return await self.khl_results.find(
+                str(row["team_a"]),
+                str(row["team_b"]),
+                int(row["start_time"]),
+                english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
+                english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
+            )
+        except Exception:
+            log.exception("Не смог получить результат КХЛ для матча #%s", row["id"])
+            return None
+
     async def _settle_hockey_row(
         self,
         row: Any,
@@ -473,11 +500,13 @@ class MatchSyncer:
         final_a: int,
         final_b: int,
         stats: dict[str, Any],
+        *,
+        source: str = "feed",
     ) -> None:
         """Расплатиться по хоккейному матчу и рассказать об этом в чаты."""
         try:
             result = await self.db.settle_hockey(
-                int(row["id"]), reg_a, reg_b, final_a, final_b, source="feed"
+                int(row["id"]), reg_a, reg_b, final_a, final_b, source=source
             )
         except Exception:
             log.exception("Не смог рассчитать хоккейный матч #%s", row["id"])
