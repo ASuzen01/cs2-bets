@@ -43,6 +43,7 @@ from app.services.backup import (
 )
 from app.services.maps import finish_maps_of_match
 from app.services.notify import notify_bettors, notify_map_bettors
+from app.services.recheck import recheck_recent, report_text
 from app.services.sync import series_from_maps
 
 log = logging.getLogger(__name__)
@@ -221,6 +222,22 @@ async def cmd_recount(message: Message, command: CommandObject, db: Database) ->
         f"Карты: рассчитано {maps['settled']}, возвращено {maps['refunded']}, "
         f"ждут результата {maps['waiting']}."
     )
+
+
+@router.message(Command("recheck"))
+async def cmd_recheck(message: Message, command: CommandObject, db: Database) -> None:
+    """Перепроверить расчёты: /recheck или /recheck 72 (часов)."""
+    arg = (command.args or "").strip()
+    hours = int(arg) if arg.isdigit() else 48
+    bot = callback_bot(message)
+
+    progress = await message.answer(f"Перепроверяю расчёты за {hours} ч…")
+    report = await recheck_recent(db, bot, hours=hours)
+    text = report_text(report)
+    with contextlib.suppress(Exception):
+        await progress.edit_text(text)
+        return
+    await message.answer(text)
 
 
 @router.message(Command("maps"))

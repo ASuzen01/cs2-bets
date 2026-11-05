@@ -38,6 +38,7 @@ from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
 from app.services.manual_result import apply_manual_results
 from app.services.maps import repair_refunded_maps
+from app.services.recheck import notify_admins, recheck_recent, report_text
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -132,6 +133,14 @@ async def on_startup(
             log.info("Ручной результат: %s", line)
     except Exception:
         log.exception("Не смог применить ручные результаты")
+
+    # перепроверка расчётов за последние двое суток: футбол — по фиду, CS2 — по картам
+    try:
+        report = await recheck_recent(db, bot, hours=48)
+        if report["football"] or report["cs2"] or report["maps_settled"]:
+            await notify_admins(bot, db, report_text(report))
+    except Exception:
+        log.exception("Перепроверка расчётов не удалась")
 
     syncer.start()
     if backup is not None:

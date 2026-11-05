@@ -1825,6 +1825,28 @@ class Database:
         экспресса. Экспрессы, уже возвращённые при отмене, не пересчитываются: людям
         деньги вернули, забирать их назад нельзя.
         """
+        match = await self.get_match(match_id)
+        if match is None:
+            raise MatchNotFound("Матч не найден")
+        if str(match["status"]) != "cancelled":
+            raise BettingError("Пересчитать можно только отменённый матч")
+        return await self.resettle_match(
+            match_id, winner, allow_express_legs=allow_express_legs, source="recount"
+        )
+
+    async def resettle_match(
+        self,
+        match_id: int,
+        winner: str,
+        *,
+        allow_express_legs: bool = False,
+        source: str = "recheck",
+    ) -> dict[str, Any]:
+        """Пересчитать матч по другому исходу: откат прошлых выплат и новый расчёт.
+
+        Нужно, когда исход выяснился позже (или раньше посчитали неверно): выплаты
+        откатываются, матч считается заново по факту.
+        """
         if winner not in ("a", "b"):
             raise InvalidBet("Победитель должен быть 1 или 2")
 
@@ -1833,8 +1855,6 @@ class Database:
                 match = await cur.fetchone()
             if match is None:
                 raise MatchNotFound("Матч не найден")
-            if str(match["status"]) != "cancelled":
-                raise BettingError("Пересчитать можно только отменённый матч")
 
             async with conn.execute(
                 "SELECT COUNT(*) AS c FROM express_items WHERE match_id = ?", (match_id,)
@@ -1874,7 +1894,7 @@ class Database:
                 (match_id,),
             )
 
-        result = await self.settle_match(match_id, winner, source="recount")
+        result = await self.settle_match(match_id, winner, source=source)
         result["reversed"] = reversed_total
         return result
 
