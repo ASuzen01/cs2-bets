@@ -68,7 +68,7 @@ Fonbet listBase (gzip JSON)
 |---|---|
 | Одна база | бот и приложение читают/пишут один и тот же Postgres (или SQLite локально) |
 | Авторизация | `initData` от Telegram, HMAC-SHA256 (`app/services/miniapp.py`), просрочка > 24 ч отсекается |
-| API | `GET /health`, `GET /`, `GET /api/state`, `POST /api/bet`, `POST /api/express`, `POST /api/bonus`, `GET /api/top`, `GET /api/history` |
+| API | `GET /health`, `GET /ping`, `GET /`, `GET /api/state`, `POST /api/bet`, `POST /api/express`, `POST /api/bonus`, `GET /api/top`, `GET /api/history` |
 | Защита | без валидной подписи любой `/api/*` отдаёт `401` |
 | Локальная отладка | `MINIAPP_DEV_USER=<telegram_id> python miniapp.py` → `http://localhost:8081` в браузере |
 
@@ -220,8 +220,38 @@ DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source d
 DATABASE_URL='postgresql://...' python scripts/migrate_to_postgres.py --source data/bot.db
 ```
 
-**Ограничения free-плана:** сервис засыпает через ~15 минут без запросов, первый заход после
-сна — 30–50 секунд (лечится пингом `/health` раз в 10 минут через cron-job.org или UptimeRobot).
+**Free-план и сон сервиса.** Бесплатный инстанс Render выключается после ~15 минут без
+входящих запросов: первый заход после сна — 30–50 секунд, а вебхук Telegram в это время
+отвечает ошибкой. Поэтому сервис будит себя сам:
+
+* в приложении есть лёгкий `GET /ping` (без обращения к базе);
+* фоновая задача `app/services/keepalive.py` дёргает собственный публичный
+  `https://<сервис>.onrender.com/ping` каждые `KEEPALIVE_INTERVAL` секунд (по умолчанию 600);
+* адрес берётся из `KEEPALIVE_URL` → `WEBHOOK_BASE_URL` → `RENDER_EXTERNAL_URL`
+  (Render подставляет последний сам, так что обычно ничего настраивать не нужно);
+* результат виден в `/health` в блоке `keepalive` (`last_ok_at`, `pings`, `fails`).
+
+Само-пинг работает, пока сервис жив. Если он всё же заснул (деплой, долгая пауза,
+исчерпанные часы), разбудить его изнутри нельзя — нужен запрос снаружи. Поэтому
+дополнительно поставьте бесплатный внешний пингер на **`/ping` раз в 10 минут**:
+
+| Сервис | Что настроить |
+|---|---|
+| cron-job.org | URL `https://<сервис>.onrender.com/ping`, каждые 10 минут, метод GET |
+| UptimeRobot | monitor типа HTTP(s), тот же адрес, интервал 5–10 минут |
+
+Проверить, что сервис не спит:
+
+```bash
+curl -s https://<сервис>.onrender.com/ping     # {"ok": true, "at": 1793...}
+```
+
+Через cron-job.org/UptimeRobot `/ping` отвечает мгновенно (база не читается), а `/health`
+показывает состояние линии и keep-alive: `keepalive.last_ok_at` должен быть не старше
+пары минут.
+
+⚠️ На free-плане 750 инстанс-часов в месяц, а круглосуточная работа — это ~730 часов:
+запас есть, но если сервис работает 24/7, следите за расходом в Billing Overview.
 
 ---
 
@@ -429,6 +459,9 @@ python scripts/restore_db.py backups/file.json.gz --yes    # восстанов�
 | `MINIAPP_URL` | пусто | публичный https-адрес приложения (кнопка и меню-кнопка) |
 | `MINIAPP_PORT` | 8081 | порт `python miniapp.py` |
 | `MINIAPP_DEV_USER` | 0 | id игрока для входа в браузере без Telegram (только отладка) |
+| `KEEPALIVE_ENABLED` | 1 | сервис пингует себя, чтобы Render не усыплял его |
+| `KEEPALIVE_INTERVAL` | 600 | период само-пинга, сек (Render спит после 15 минут тишины) |
+| `KEEPALIVE_URL` | пусто | адрес для пинга; пусто → `WEBHOOK_BASE_URL` или `RENDER_EXTERNAL_URL` |
 | `PORT` | 8080 | порт HTTP-сервера |
 | `POLLING_TIMEOUT` | 10 | таймаут long polling, сек |
 | `THROTTLE_SECONDS` / `LOG_LEVEL` | 0.4 / INFO | анти-спам, логи |

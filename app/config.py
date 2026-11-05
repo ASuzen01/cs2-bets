@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
 
+    # --- Не даём бесплатному инстансу Render заснуть ---
+    keepalive_enabled: bool = True
+    keepalive_interval: int = 600   # секунд между пингами (Render спит после 15 мин тишины)
+    keepalive_url: str = ""         # пусто → WEBHOOK_BASE_URL или RENDER_EXTERNAL_URL
+
     # --- Источник данных: реальная линия Fonbet (CS2 тир-1) ---
     fonbet_base_url: str = "https://line-lb51.bk6bba-resources.com"
     fonbet_scope_market: int = 1600

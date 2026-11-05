@@ -4,7 +4,7 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
-    healthCheckPath: /health
+    healthCheckPath: /health      # и /ping для внешних пингеров (см. docs/deploy-render-neon.md)
     autoDeploy: true
     envVars:
       - key: RUN_MODE
@@ -35,6 +35,11 @@ services:
       - key: DATABASE_URL
         sync: false
       # мини-приложение живёт в этом же сервисе (см. run_webhook) — один адрес и одна база
+      # сервис пингует себя, чтобы Render не засыпал (адрес берётся из RENDER_EXTERNAL_URL)
+      - key: KEEPALIVE_ENABLED
+        value: "1"
+      - key: KEEPALIVE_INTERVAL
+        value: "600"
       - key: MINIAPP_URL
         fromService:
           type: web

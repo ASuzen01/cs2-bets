@@ -44,6 +44,7 @@ from app.services.recheck import (
     recheck_recent,
     report_text,
 )
+from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -147,6 +148,8 @@ async def on_startup(
         log.exception("Перепроверка расчётов не удалась")
 
     syncer.start()
+    # сервис на бесплатном Render засыпает после 15 минут тишины — пингуем себя
+    KEEPALIVE.start()
     if backup is not None:
         backup.start()
 
@@ -170,6 +173,7 @@ async def on_shutdown(
     bot: Bot, db: Database, syncer: MatchSyncer, backup: BackupService | None = None
 ) -> None:
     log.info("Остановка бота")
+    await KEEPALIVE.stop()
     if backup is not None:
         await backup.stop()
     await syncer.stop()
@@ -248,6 +252,8 @@ def run_webhook(
             },
             # как прошла перепроверка расчётов при старте
             "recheck": dict(LAST_REPORT) if LAST_REPORT else None,
+            # держим сервис проснувшимся: когда был последний успешный пинг
+            "keepalive": KEEPALIVE.stats,
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:
@@ -289,6 +295,12 @@ def run_webhook(
         return web.json_response(payload)
 
     app.router.add_get("/health", health)
+
+    async def ping(_: web.Request) -> web.Response:
+        """Лёгкий ответ без базы: его дёргает keep-alive и внешний пингер."""
+        return web.json_response({"ok": True, "at": int(time.time())})
+
+    app.router.add_get(PING_PATH, ping)
 
     # мини-приложение в том же процессе: один адрес, одна база
     if db is not None:
