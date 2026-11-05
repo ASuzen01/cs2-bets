@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -144,6 +145,10 @@ class Database:
         self._schema = (schema or "").strip()
         self.start_balance = start_balance
         self._backend: SQLiteBackend | PostgresBackend | None = None
+        # одно соединение на процесс: записи сериализуем (см. transaction())
+        self._write_lock = asyncio.Lock()
+        self._tx_owner: asyncio.Task[Any] | None = None
+        self._tx_depth = 0
 
     # ------------------------------------------------------------------ infra
     @property
@@ -223,15 +228,62 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[Any]:
-        conn = self.conn
-        await conn.execute(conn.begin_sql)
-        try:
-            yield conn
-        except BaseException:
-            await conn.rollback()
-            raise
-        else:
-            await conn.commit()
+        """Транзакция. Записи идут строго по одной.
+
+        На процесс одно соединение с базой, поэтому два одновременных `BEGIN`
+        (два игрока жмут «поставить» в одну секунду) роняли запрос с
+        «cannot start a transaction within a transaction» — то есть 500 у игрока.
+        Замок сериализует записи: очередь в памяти дешевле потерянной ставки.
+
+        Вложенный `transaction()` из той же задачи не открывает второй `BEGIN`:
+        он просто продолжает внешнюю транзакцию — так расчёт матча может звать
+        общие методы, не думая, кто начал транзакцию.
+        """
+        task = asyncio.current_task()
+        if self._tx_owner is task and self._tx_depth:
+            self._tx_depth += 1
+            try:
+                yield self.conn
+            finally:
+                self._tx_depth -= 1
+            return
+
+        async with self._write_lock:
+            conn = self.conn
+            self._tx_owner = task
+            self._tx_depth = 1
+            try:
+                raw = getattr(conn, "_conn", None)
+                if getattr(raw, "in_transaction", False):
+                    # висящая транзакция от прошлого запроса: спасаем соединение
+                    log.warning("DB: незакрытая транзакция перед BEGIN — откатываю")
+                    await conn.rollback()
+                await conn.execute(conn.begin_sql)
+                try:
+                    yield conn
+                except BaseException:
+                    await conn.rollback()
+                    raise
+                else:
+                    await conn.commit()
+            finally:
+                self._tx_depth = 0
+                self._tx_owner = None
+
+    async def _write(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
+        """Одиночная запись с тем же замком, что и транзакция: без гонок.
+
+        Возвращает результат запроса (`lastrowid`/`rowcount`), как обычный execute.
+        Внутри уже открытой транзакции просто выполняет запрос — коммитит внешняя.
+        """
+        if self._tx_owner is asyncio.current_task() and self._tx_depth:
+            async with self.conn.execute(sql, params) as cur:
+                return cur
+        async with self._write_lock:
+            async with self.conn.execute(sql, params) as cur:
+                result = cur
+            await self.conn.commit()
+            return result
 
     async def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Any | None:
         async with self.conn.execute(sql, params) as cur:
@@ -252,7 +304,7 @@ class Database:
     # ----------------------------------------------------------------- users
     async def upsert_user(self, user_id: int, username: str | None, full_name: str | None) -> None:
         now = int(time.time())
-        await self.conn.execute(
+        await self._write(
             """
             INSERT INTO users (user_id, username, full_name, balance, created_at, last_seen_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -263,7 +315,6 @@ class Database:
             """,
             (user_id, username, full_name, self.start_balance, now, now),
         )
-        await self.conn.commit()
 
     async def get_user(self, user_id: int) -> Any | None:
         return await self._fetchone("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -352,11 +403,10 @@ class Database:
 
     async def log_backup(self, size_bytes: int, users: int, bets: int, kind: str) -> int:
         now = int(time.time())
-        await self.conn.execute(
+        await self._write(
             "INSERT INTO backup_log (created_at, size_bytes, users, bets, kind) VALUES (?, ?, ?, ?, ?)",
             (now, size_bytes, users, bets, kind),
         )
-        await self.conn.commit()
         return now
 
     async def last_backup(self) -> Any | None:
@@ -545,10 +595,9 @@ class Database:
         """Помним, из какого чата игрок заходил: туда напишем, если личка закрыта."""
         if chat_id >= 0:
             return  # личка и так есть
-        await self.conn.execute(
+        await self._write(
             "UPDATE users SET last_chat_id = ? WHERE user_id = ?", (chat_id, user_id)
         )
-        await self.conn.commit()
 
     async def find_user(self, ident: str) -> Any | None:
         """Ищет игрока по id, @username или username — чтобы админу не переписывать цифры."""
@@ -598,24 +647,22 @@ class Database:
 
     # ----------------------------------------------------------------- chats
     async def register_chat(self, chat_id: int, title: str | None) -> None:
-        await self.conn.execute(
+        await self._write(
             """
             INSERT INTO chats (chat_id, title, added_at) VALUES (?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title
             """,
             (chat_id, title, int(time.time())),
         )
-        await self.conn.commit()
 
     async def set_autopost(self, chat_id: int, enabled: bool) -> None:
-        await self.conn.execute(
+        await self._write(
             """
             INSERT INTO chats (chat_id, autopost, added_at) VALUES (?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET autopost = excluded.autopost
             """,
             (chat_id, 1 if enabled else 0, int(time.time())),
         )
-        await self.conn.commit()
 
     async def list_autopost_chats(self) -> list[Any]:
         return await self._fetchall("SELECT chat_id, title FROM chats WHERE autopost = 1")
@@ -649,7 +696,7 @@ class Database:
         now = int(time.time())
         existing = await self._fetchone("SELECT * FROM matches WHERE fonbet_id = ?", (fonbet_id,))
         if existing is None:
-            await self.conn.execute(
+            await self._write(
                 """
                 INSERT INTO matches (fonbet_id, tournament, team_a, team_b, start_time, sport,
                                      odds_a, odds_x, odds_b, score_a, score_b, status, created_at)
@@ -658,7 +705,6 @@ class Database:
                 (fonbet_id, tournament, team_a, team_b, start_time, sport, odds_a, odds_x, odds_b,
                  score_a, score_b, now),
             )
-            await self.conn.commit()
             created = await self._fetchone(
                 "SELECT * FROM matches WHERE fonbet_id = ?", (fonbet_id,)
             )
@@ -671,7 +717,7 @@ class Database:
         new_score_b = score_b if score_b is not None else existing["score_b"]
 
         if existing["status"] in ("open", "live"):
-            await self.conn.execute(
+            await self._write(
                 """
                 UPDATE matches SET odds_a = COALESCE(?, odds_a),
                                    odds_x = COALESCE(?, odds_x),
@@ -681,17 +727,15 @@ class Database:
                 """,
                 (odds_a, odds_x, odds_b, start_time, new_score_a, new_score_b, existing["id"]),
             )
-            await self.conn.commit()
             refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
             return refreshed or existing, False
 
         if existing["status"] == "awaiting" and (score_a is not None or score_b is not None):
             # матч доигран, ждём подтверждения исхода — обновляем хотя бы счёт
-            await self.conn.execute(
+            await self._write(
                 "UPDATE matches SET score_a = ?, score_b = ? WHERE id = ?",
                 (new_score_a, new_score_b, existing["id"]),
             )
-            await self.conn.commit()
             refreshed = await self._fetchone("SELECT * FROM matches WHERE id = ?", (existing["id"],))
             return refreshed or existing, False
 
@@ -756,8 +800,7 @@ class Database:
         )
 
     async def set_status(self, match_id: int, status: str) -> None:
-        await self.conn.execute("UPDATE matches SET status = ? WHERE id = ?", (status, match_id))
-        await self.conn.commit()
+        await self._write("UPDATE matches SET status = ? WHERE id = ?", (status, match_id))
 
     async def close_started_matches(self, now: int | None = None) -> list[Any]:
         """Закрывает приём ставок у матчей, которые уже начались. Возвращает затронутые."""
@@ -765,26 +808,24 @@ class Database:
         started = await self._fetchall(
             "SELECT * FROM matches WHERE status = 'open' AND start_time <= ?", (now,)
         )
-        for match in started:
-            await self.conn.execute(
-                "UPDATE matches SET status = 'live' WHERE id = ?", (match["id"],)
-            )
-        await self.conn.commit()
+        async with self.transaction() as conn:
+            for match in started:
+                await conn.execute(
+                    "UPDATE matches SET status = 'live' WHERE id = ?", (match["id"],)
+                )
         return started
 
     async def set_card(self, match_id: int, chat_id: int, message_id: int) -> None:
-        await self.conn.execute(
+        await self._write(
             "UPDATE matches SET posted_chat_id = ?, posted_message_id = ? WHERE id = ?",
             (chat_id, message_id, match_id),
         )
-        await self.conn.commit()
 
     async def mark_result_check(self, match_id: int, when: int | None = None) -> None:
-        await self.conn.execute(
+        await self._write(
             "UPDATE matches SET last_result_check = ? WHERE id = ?",
             (int(time.time()) if when is None else when, match_id),
         )
-        await self.conn.commit()
 
     async def recent_matches(self, limit: int = 500) -> list[Any]:
         """Последние матчи — для поиска по названиям команд (без SQL-lower: кириллица)."""
@@ -794,11 +835,10 @@ class Database:
 
     async def set_match_names_en(self, match_id: int, team_a_en: str, team_b_en: str) -> None:
         """Английские названия команд: по ним ищем финальный результат во внешнем фиде."""
-        await self.conn.execute(
+        await self._write(
             "UPDATE matches SET team_a_en = ?, team_b_en = ? WHERE id = ?",
             (team_a_en, team_b_en, match_id),
         )
-        await self.conn.commit()
 
     async def matches_without_names_en(self, sport: str = "football") -> list[Any]:
         return await self._fetchall(
@@ -864,7 +904,7 @@ class Database:
             "SELECT * FROM match_maps WHERE fonbet_id = ?", (fonbet_id,)
         )
         if existing is None:
-            await self.conn.execute(
+            await self._write(
                 """
                 INSERT INTO match_maps (match_id, fonbet_id, map_number, odds_a, odds_b,
                                         score_a, score_b, status, created_at)
@@ -872,7 +912,6 @@ class Database:
                 """,
                 (match_id, fonbet_id, map_number, odds_a, odds_b, score_a, score_b, now),
             )
-            await self.conn.commit()
             created = await self._fetchone(
                 "SELECT * FROM match_maps WHERE fonbet_id = ?", (fonbet_id,)
             )
@@ -880,7 +919,7 @@ class Database:
             return created, True
 
         if existing["status"] in ("open", "live"):
-            await self.conn.execute(
+            await self._write(
                 """
                 UPDATE match_maps SET odds_a = ?, odds_b = ?, score_a = ?, score_b = ?
                 WHERE id = ?
@@ -893,7 +932,6 @@ class Database:
                     existing["id"],
                 ),
             )
-            await self.conn.commit()
             refreshed = await self._fetchone(
                 "SELECT * FROM match_maps WHERE id = ?", (existing["id"],)
             )
@@ -936,7 +974,7 @@ class Database:
         return str(row["value"]) if row is not None else None
 
     async def set_meta(self, key: str, value: str) -> None:
-        await self.conn.execute(
+        await self._write(
             """
             INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value,
@@ -944,7 +982,6 @@ class Database:
             """,
             (key, str(value), int(time.time())),
         )
-        await self.conn.commit()
 
     async def get_meta_int(self, key: str, default: int = 0) -> int:
         raw = await self.get_meta(key)
@@ -955,28 +992,24 @@ class Database:
 
     async def set_map_score(self, map_id: int, score_a: int | None, score_b: int | None) -> None:
         """Счёт раундов карты (из внешнего фида): нужен для расчёта и для карточки."""
-        await self.conn.execute(
+        await self._write(
             "UPDATE match_maps SET score_a = ?, score_b = ? WHERE id = ?",
             (score_a, score_b, map_id),
         )
-        await self.conn.commit()
 
     async def set_map_status(self, map_id: int, status: str) -> None:
-        await self.conn.execute(
-            "UPDATE match_maps SET status = ? WHERE id = ?", (status, map_id)
-        )
-        await self.conn.commit()
+        await self._write("UPDATE match_maps SET status = ? WHERE id = ?", (status, map_id))
 
     async def start_maps_of_match(self, match_id: int) -> list[Any]:
         """Матч начался — карты переезжают из линии в live (ставки при live_betting остаются)."""
         rows = await self._fetchall(
             "SELECT * FROM match_maps WHERE match_id = ? AND status = 'open'", (match_id,)
         )
-        for row in rows:
-            await self.conn.execute(
-                "UPDATE match_maps SET status = 'live' WHERE id = ?", (row["id"],)
-            )
-        await self.conn.commit()
+        async with self.transaction() as conn:
+            for row in rows:
+                await conn.execute(
+                    "UPDATE match_maps SET status = 'live' WHERE id = ?", (row["id"],)
+                )
         return rows
 
     async def place_map_bet(
