@@ -633,11 +633,12 @@ class Database:
         """Оплата ординара: либо фрибет (монеты не двигаются), либо обычное списание."""
         if ticket is not None:
             spent = await conn.execute(
-                "UPDATE tickets SET used_at = ? WHERE id = ? AND used_at IS NULL",
-                (now, int(ticket["id"])),
+                "UPDATE tickets SET used_at = ? WHERE id = ? AND used_at IS NULL "
+                "AND (expires_at IS NULL OR expires_at > ?)",
+                (now, int(ticket["id"]), now),
             )
             if spent.rowcount == 0:
-                raise InvalidBet("Фрибет уже использован")
+                raise InvalidBet("Фрибет уже использован или срок его действия истёк")
             return
         cur = await conn.execute(
             "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
