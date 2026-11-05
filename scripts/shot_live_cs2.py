@@ -1,7 +1,6 @@
 """Проверяем лайв CS2: видно ли счёт, можно ли ставить."""
 
 import asyncio
-import json
 
 from playwright.async_api import async_playwright
 

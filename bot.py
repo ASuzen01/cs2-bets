@@ -335,6 +335,14 @@ def build_web_app(
     # мини-приложение в том же процессе: один адрес, одна база
     if db is not None:
         register_routes(app, db, serve_health=False, index_path="/")
+        if settings.admin_ids_list:
+            from app.web.auth import ALERT_KEY
+
+            async def alert_admin(text: str) -> None:
+                """500-е в мини-аппе — админу в личку (не чаще раза в пять минут)."""
+                await bot.send_message(settings.admin_ids_list[0], text)
+
+            app[ALERT_KEY] = alert_admin
         log.info("Мини-приложение доступно по адресу %s/", settings.webhook_base_url or "/")
 
     setup_application(app, dp, bot=bot)

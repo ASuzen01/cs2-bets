@@ -20,14 +20,17 @@ from aiohttp import web
 
 from app.config import settings
 from app.db import Database
-from app.db.database import InsufficientFunds, InvalidBet
+from app.db.database import InsufficientFunds, InvalidBet, bonus_amount
 from app.services import games
 from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
 from app.services.football import market_label, parse_side
 from app.services.hockey import market_label as hockey_label
 from app.services.hockey import parse_side as hockey_side
 from app.services.miniapp import AuthError
+from app.services.quests import day_number
+from app.services.quests import payload as quests_payload
 from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
+from app.web.limits import metrics
 from app.web.payloads import (
     bet_payload,
     bets_history,
@@ -58,6 +61,7 @@ def register_routes(
     if serve_health:
         app.router.add_get("/health", health)
         app.router.add_get("/api/health", health)
+        app.router.add_get("/metrics", metrics_view)
 
     app.router.add_get(index_path, index)
     app.router.add_get("/static/{name}", static_file)
@@ -68,6 +72,8 @@ def register_routes(
     app.router.add_post("/api/bonus", api_bonus)
     app.router.add_post("/api/wheel", api_wheel)
     app.router.add_post("/api/tease", api_tease)
+    app.router.add_post("/api/quest", api_quest)
+    app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
@@ -81,6 +87,11 @@ def build_app(db: Database, bot_token: str | None = None) -> web.Application:
         settings.bot_token = bot_token
     app = web.Application(middlewares=list(MIDDLEWARES))
     return register_routes(app, db)
+
+
+async def metrics_view(request: web.Request) -> web.Response:
+    """Счётчики для мониторинга: обычный текст, читается и глазами, и Prometheus."""
+    return web.Response(text=metrics.text(), content_type="text/plain", charset="utf-8")
 
 
 async def health(request: web.Request) -> web.Response:
@@ -105,6 +116,27 @@ async def health(request: web.Request) -> web.Response:
             payload["last_backup_at"] = None
     except Exception:      # health не должен падать из-за базы
         log.debug("Не смог прочитать состояние бэкапов", exc_info=True)
+
+    # настоящая проверка базы: без неё «ok» значит только «процесс жив»
+    try:
+        db = request.app[DB_KEY]
+        await db.get_meta("health_probe")
+        payload["db"] = "ok"
+    except Exception as exc:
+        payload["db"] = f"error: {exc}"
+        payload["ok"] = False
+        return web.json_response(payload, status=503)
+
+    # свежесть линии: если синк молчит, кэфы и результаты устарели — это видно здесь
+    try:
+        raw = await request.app[DB_KEY].get_meta("last_sync_at")
+        last_sync = int(raw) if raw else 0
+        age = int(time.time()) - last_sync if last_sync else None
+        payload["last_sync_at"] = last_sync or None
+        payload["last_sync_age_seconds"] = age
+        payload["feed_stale"] = bool(age is None or age > max(900, settings.sync_interval * 20))
+    except Exception:
+        payload["feed_stale"] = None
     return web.json_response(payload)
 
 
@@ -182,9 +214,11 @@ async def api_state(request: web.Request) -> web.Response:
     if not user["dev"]:
         await db.upsert_user(user_id, user["username"], user["full_name"])
 
+    quests = quests_payload(await db.quests_state(user_id), day_number())
     return web.json_response(
         {
             "ok": True,
+            "quests": quests,
             "user": {
                 "id": user_id,
                 "name": display_name(user, await db.get_user(user_id)),
@@ -205,6 +239,7 @@ async def api_state(request: web.Request) -> web.Response:
             "casino": await _casino_payload(db, user_id),
             "limits": {
                 "min_bet": settings.min_bet,
+                "max_bet": settings.max_bet,
                 "max_legs": settings.max_express_legs,
                 "max_odds": settings.max_express_odds,
                 "daily_bonus": settings.daily_bonus,
@@ -221,11 +256,17 @@ async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
         settings.wheel_cooldown_hours * 3600,
         settings.tease_cooldown_hours * 3600,
     )
+    streak = int(state["daily"].get("streak") or 0)
+    next_streak = streak + 1 if streak else 1
     return {
         "daily": {
-            "amount": settings.daily_bonus,
+            "amount": bonus_amount(settings.daily_bonus, next_streak),
+            "base_amount": settings.daily_bonus,
             "available": state["daily"]["wait_seconds"] == 0,
             "wait_seconds": state["daily"]["wait_seconds"],
+            "streak": streak,
+            "next_streak": next_streak,
+            "bonus_percent": round(bonus_amount(settings.daily_bonus, next_streak) * 100 / settings.daily_bonus) - 100,
         },
         "wheel": {
             "available": state["wheel"]["wait_seconds"] == 0,
@@ -275,6 +316,13 @@ async def api_bet(request: web.Request) -> web.Response:
     market = str(body.get("market") or "match")
     map_id = _as_int(body.get("map_id"))
 
+    if amount <= 0:
+        return _bad("Сумма должна быть положительной")
+    if amount < settings.min_bet:
+        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
+    if amount > settings.max_bet:
+        return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
+
     hockey = hockey_side(side)
     if hockey is not None:      # рынок хоккея: основное время, победа в матче, тотал
         balance, odds = await db.place_hockey_bet(
@@ -320,6 +368,7 @@ async def api_bet(request: web.Request) -> web.Response:
     if side == "x" and market != "match":
         return _bad("Ничья — только для основного исхода")
 
+    metrics.count_bet()
     if market == "map":
         if not map_id:
             return _bad("Не выбрана карта")
@@ -363,7 +412,12 @@ async def api_express(request: web.Request) -> web.Response:
     ]
     if len(legs) < 2 or any(leg["side"] not in ("a", "x", "b") for leg in legs):
         return _bad("Нужно минимум 2 исхода")
+    if amount < settings.min_bet:
+        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
+    if amount > settings.max_bet:
+        return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
 
+    metrics.count_express()
     express_id, odds, balance = await db.place_express(
         int(user["user_id"]),
         None,
@@ -407,6 +461,7 @@ async def api_express(request: web.Request) -> web.Response:
 async def api_bonus(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
+    metrics.count_bonus()
     received, wait_seconds, balance = await db.daily_bonus(
         int(user["user_id"]), settings.daily_bonus, settings.bonus_cooldown_hours * 3600
     )
@@ -467,6 +522,35 @@ async def api_wheel(request: web.Request) -> web.Response:
             "wait_seconds": 0, "balance": balance,
         }
     )
+
+
+async def api_quest(request: web.Request) -> web.Response:
+    """Забрать награду за задание дня."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    code = str(body.get("code") or "").strip()
+
+    claimed, reward, balance, error = await db.claim_quest(user_id, code)
+    if claimed:
+        await db.log_event(user_id, "quest_claimed", code)
+    return web.json_response(
+        {
+            "ok": True,
+            "claimed": claimed,
+            "reward": reward,
+            "balance": balance,
+            "error": error,
+            "quests": quests_payload(await db.quests_state(user_id), day_number()),
+        }
+    )
+
+
+async def api_stats(request: web.Request) -> web.Response:
+    """Итоги игрока для экрана «Я»: винрейт, ROI, любимый турнир."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    return web.json_response({"ok": True, "stats": await db.player_stats(user_id)})
 
 
 async def api_tease(request: web.Request) -> web.Response:
@@ -603,6 +687,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     if not selection:
         return _bad("Выбери, на что ставишь")
 
+    metrics.count_casino()
     try:
         result = games.play(game, selection, amount)
     except ValueError as exc:

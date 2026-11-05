@@ -196,6 +196,11 @@ class MatchSyncer:
         await self._close_stale(stats)
 
         self.last_sync_at = int(time.time())
+        try:
+            # /health читает эту метку: по ней видно, что линия обновляется
+            await self.db.set_meta("last_sync_at", str(self.last_sync_at))
+        except Exception:
+            log.debug("Не смог записать метку синка", exc_info=True)
         self.last_error = None
         self.last_stats = dict(stats)
         log.info(

@@ -231,6 +231,37 @@
   body.has-cart{padding-bottom:calc(var(--tabbar) + 74px)}
   .btn.bonus.waiting{background:linear-gradient(180deg,#39424f,#333c48);color:#9fb3c8;
     box-shadow:none}
+  /* ---- задания дня ---- */
+  .quest{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed #223143}
+  .quest:last-child{border-bottom:0}
+  .quest:last-child .grow{padding-bottom:0}
+  .quest .grow{flex:1;min-width:0}
+  .quest b{display:block;font-size:13.5px;font-weight:600}
+  .quest .hint{font-size:11.5px;margin-top:2px}
+  .quest .btn.small{flex:0 0 auto;padding:8px 12px;font-size:12px}
+  .quest.done b{color:var(--muted);text-decoration:line-through}
+  .quest.ready{background:rgba(55,178,77,.08);border-radius:12px;padding:10px;margin:4px -10px}
+  .qbar{height:4px;border-radius:99px;background:#22303f;margin-top:6px;overflow:hidden}
+  .qbar i{display:block;height:100%;background:linear-gradient(90deg,#4dabf7,#37b24d);border-radius:99px;
+    transition:width .3s ease}
+
+  /* ---- серия дней ---- */
+  .streak{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin-top:8px;font-size:12px;color:var(--muted)}
+  .streak b{font-size:13px;color:#ffd23f}
+
+  /* ---- статистика игрока ---- */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+  .stat.wide{grid-column:1 / -1}
+  .stat span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .stat b{display:block;font-size:16px;margin-top:3px}
+  .stat i{display:block;font-size:11px;color:var(--muted);font-style:normal;margin-top:2px}
+
+  /* ---- избранные команды ---- */
+  .favstar{padding:2px 4px;font-size:15px;line-height:1;color:#5b6b7c}
+  .favstar.on{color:#ffd23f}
+  .fchip.on{background:rgba(255,210,63,.14);border-color:#6b5a1f;color:#ffd23f}
+
   /* история операций: заголовок дня внутри списка */
   .day{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
     font-weight:700;padding:12px 0 6px}

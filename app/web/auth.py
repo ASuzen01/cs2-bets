@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
@@ -13,11 +14,14 @@ from aiohttp import web
 from app.config import settings
 from app.db import BettingError
 from app.services.miniapp import AuthError, validate_init_data
+from app.web.limits import limiter, metrics
 
 log = logging.getLogger(__name__)
 
 DB_KEY = web.AppKey("db", Any)
 USER_KEY = web.RequestKey("user", dict)
+ALERT_KEY = web.AppKey("alert", Any)
+_ALERT_AT_KEY = web.AppKey("alert_at", float)
 
 
 async def resolve_user(request: web.Request) -> dict[str, Any]:
@@ -64,15 +68,54 @@ async def auth_middleware(request: web.Request, handler):
 @web.middleware
 async def json_error_middleware(request: web.Request, handler):
     """Единый формат ошибок: игровые — 400, остальные — 500 без падения сервера."""
+    metrics.count_request(request.path)
     try:
-        return await handler(request)
+        response = await handler(request)
     except web.HTTPException:
         raise
     except BettingError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
     except Exception as exc:
+        metrics.count_error(request.path)
         log.exception("Ошибка мини-приложения на %s", request.path)
+        await _alert(request.app, request.path, exc)
         return web.json_response({"ok": False, "error": f"Внутренняя ошибка: {exc}"}, status=500)
+    if isinstance(response, web.Response) and response.status >= 500:
+        metrics.count_error(request.path)
+    return response
+
+
+async def _alert(app: web.Application, path: str, exc: Exception) -> None:
+    """Пишем админу в Telegram, но не чаще раза в пять минут: иначе 500-е спамят."""
+    notifier = app.get(ALERT_KEY)
+    if notifier is None:
+        return
+    now = time.monotonic()
+    last = app.get(_ALERT_AT_KEY, 0.0)
+    if now - last < 300:
+        return
+    app[_ALERT_AT_KEY] = now
+    try:
+        await notifier(f"⚠️ 500 в мини-аппе на {path}: {type(exc).__name__}: {exc}"[:900])
+    except Exception:      # алерт не должен ломать ответ игроку
+        log.debug("Не смог отправить алерт админу", exc_info=True)
+
+
+@web.middleware
+async def rate_limit_middleware(request: web.Request, handler):
+    """Тормоз для шквала запросов от одного игрока."""
+    if not request.path.startswith("/api/") or request.path in ("/api/health", "/api/metrics"):
+        return await handler(request)
+    user = request.get(USER_KEY) or {}
+    user_id = int(user.get("user_id") or 0)
+    if user_id and not limiter.allow(user_id, request.path):
+        metrics.rejected += 1
+        return web.json_response(
+            {"ok": False, "error": "Слишком часто — подожди минуту"},
+            status=429,
+            headers={"Retry-After": "60"},
+        )
+    return await handler(request)
 
 
 # Мельче этого ответы не сжимаем: накладные расходы больше выигрыша.
@@ -99,9 +142,10 @@ async def gzip_middleware(request: web.Request, handler):
     return response
 
 
-MIDDLEWARES = [json_error_middleware, auth_middleware, gzip_middleware]
+MIDDLEWARES = [json_error_middleware, auth_middleware, rate_limit_middleware, gzip_middleware]
 
 __all__ = [
+    "ALERT_KEY",
     "COMPRESS_MIN_BYTES",
     "DB_KEY",
     "MIDDLEWARES",
@@ -109,5 +153,6 @@ __all__ = [
     "auth_middleware",
     "gzip_middleware",
     "json_error_middleware",
+    "rate_limit_middleware",
     "resolve_user",
 ]

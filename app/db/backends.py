@@ -168,6 +168,28 @@ CREATE TABLE IF NOT EXISTS casino_bets (
 );
 CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
 
+-- задания дня: прогресс и награда, по строке на игрока в сутки
+CREATE TABLE IF NOT EXISTS quests (
+    user_id    INTEGER NOT NULL,
+    day        INTEGER NOT NULL,
+    code       TEXT    NOT NULL,
+    progress   INTEGER NOT NULL DEFAULT 0,
+    target     INTEGER NOT NULL,
+    reward     INTEGER NOT NULL,
+    claimed_at INTEGER,
+    PRIMARY KEY (user_id, day, code)
+);
+
+-- события для аналитики: что игроки делают на самом деле
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER,
+    name       TEXT    NOT NULL,
+    payload    TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+
 -- идемпотентность действий игрока: один и тот же тап не должен списать дважды
 CREATE TABLE IF NOT EXISTS bet_requests (
     user_id    INTEGER NOT NULL,

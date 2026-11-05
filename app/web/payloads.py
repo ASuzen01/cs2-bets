@@ -225,6 +225,7 @@ def _single_item(row: Any) -> dict[str, Any]:
         "odds": round(odds, 2),
         "potential": round(amount * odds),
         "team": team,
+        "side": side,
         "at": int(row["created_at"]),
         "start_time": int(row["start_time"]),
         "legs": [],

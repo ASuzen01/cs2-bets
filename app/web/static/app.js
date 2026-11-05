@@ -28,6 +28,10 @@
     wheelResult: "",   // текст последнего результата: переживает перерисовку
     wheelAngle: 0,     // текущий угол колеса
     wheelBusy: false,
+    quests: boot.quests || [],   // задания дня (приходят из /api/state)
+    stats: null,       // итоги игрока для «Я» (/api/stats)
+    favorites: readFavorites(),  // любимые команды: живут в localStorage
+    onlyFavorites: false,
     teaseTaps: 0,      // сколько раз подряд жали на бонус
     oddsPrev: {},      // кэфы, которые уже показали: нужно, чтобы заметить сдвиг линии
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
@@ -113,6 +117,27 @@
     try { localStorage.setItem("cs2bets_cart", JSON.stringify(state.cart)); } catch (e) {}
   }
 
+  function readFavorites() {
+    try {
+      const raw = localStorage.getItem("cs2bets_fav");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((name) => typeof name === "string") : [];
+    } catch (e) { return []; }
+  }
+  function saveFavorites() {
+    try { localStorage.setItem("cs2bets_fav", JSON.stringify(state.favorites)); } catch (e) {}
+  }
+  const isFavorite = (name) => state.favorites.indexOf(name) !== -1;
+  function toggleFavorite(name) {
+    if (!name) return;
+    state.favorites = isFavorite(name)
+      ? state.favorites.filter((item) => item !== name)
+      : state.favorites.concat([name]).slice(0, 40);
+    saveFavorites();
+    haptic("light");
+    toast(isFavorite(name) ? `★ ${name} в избранном` : `${name} убран из избранного`);
+  }
+
   // --------------------------------------------------------------------- API
   async function api(path, options) {
     const opts = options || {};
@@ -167,8 +192,9 @@
 
   function bonusReady() {
     const bonus = state.bonus;
-    if (!bonus) return 0;
-    return (bonus.daily.available ? 1 : 0) + (bonus.wheel.available ? 1 : 0);
+    const questsReady = (state.quests || []).filter((quest) => quest.ready).length;
+    if (!bonus) return questsReady;
+    return (bonus.daily.available ? 1 : 0) + (bonus.wheel.available ? 1 : 0) + questsReady;
   }
 
   function renderBonusDots() {
@@ -217,10 +243,17 @@
     $("#balancePill").textContent = "— 🪙";
   }
 
+  // Слушатель на статическую кнопку — строго один раз, сколько бы раз её ни перерисовывали.
+  function once(node, handler) {
+    if (!node || node.dataset.bound === "1") return;
+    node.dataset.bound = "1";
+    node.addEventListener("click", handler);
+  }
+
   function renderSegments() {
     const tourBtn = $("#tourFilter");
     if (tourBtn) {
-      tourBtn.addEventListener("click", () => {
+      once(tourBtn, () => {
         const source = state.segment === "live"
           ? state.liveMatches
           : marketSource();
@@ -231,10 +264,10 @@
     }
     const tourReset = $("#tourReset");
     if (tourReset) {
-      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
+      once(tourReset, () => { setTournament(null); renderMatches(); });
     }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      once(btn, () => {
         if (state.sport === btn.dataset.sport) return;
         state.sport = btn.dataset.sport;
         haptic("light");
@@ -244,7 +277,7 @@
     });
     // «Клубы / Сборные»: фильтр турнира сбрасываем — он был из другой категории
     document.querySelectorAll("#categorySegments .seg").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      once(btn, () => {
         if (state.category === btn.dataset.category) return;
         state.category = btn.dataset.category;
         setTournament(null);
@@ -317,6 +350,7 @@
     else if (isWaiting) top.append(liveTag("⏳ ждём результат", "wait"));
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
+    top.append(favoriteStar(match));
     card.append(top);
 
     if (match.score) {
@@ -749,6 +783,36 @@
     return prefix + market.key + ":" + market.param;
   }
 
+  // Избранные команды: звёздочка на карточке и фильтр «★ Мои».
+  function favoriteStar(match) {
+    const names = [match.team_a, match.team_b];
+    const btn = el("button", "favstar" + (names.some(isFavorite) ? " on" : ""));
+    btn.type = "button";
+    btn.textContent = names.some(isFavorite) ? "★" : "☆";
+    btn.setAttribute("aria-label",
+      names.some(isFavorite) ? "Убрать из избранного" : "Добавить в избранное");
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleFavorite(match.team_a);
+      if (match.team_b !== match.team_a && !isFavorite(match.team_a)) {
+        // повторный тап по звезде снимает обе команды матча
+        state.favorites = state.favorites.filter((name) => name !== match.team_b);
+        saveFavorites();
+      }
+      renderMatches();
+      updateFavFilter();
+    });
+    return btn;
+  }
+
+  function updateFavFilter() {
+    const chip = $("#favFilter");
+    if (!chip) return;
+    chip.classList.toggle("on", state.onlyFavorites);
+    chip.setAttribute("aria-pressed", state.onlyFavorites ? "true" : "false");
+    chip.textContent = state.favorites.length ? `★ Мои · ${state.favorites.length}` : "★ Мои";
+  }
+
   function renderMatches() {
     const host = $("#matches");
     host.textContent = "";
@@ -783,7 +847,15 @@
       setTournament(null);
       renderCategorySegments();     // подсветка должна совпадать с тем, что показали
     }
-    const sportOnly = base.filter(inCategory);
+    let sportOnly = base.filter(inCategory);
+    if (state.onlyFavorites) {
+      const mine = sportOnly.filter((match) => isFavorite(match.team_a) || isFavorite(match.team_b));
+      if (mine.length) sportOnly = mine;
+      else {
+        state.onlyFavorites = false;   // избранное опустело — не показываем пустой экран
+        updateFavFilter();
+      }
+    }
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
     const list = tournament
@@ -1068,6 +1140,14 @@
     kv("Экспрессов в игре", String(state.expresses.length));
     kv("Минимальная ставка", money(state.limits.min_bet));
     host.append(card);
+
+    // итоги: винрейт, ROI, любимый турнир — то, чем игрок хвастается
+    host.append(el("h2", null, "Моя статистика"));
+    const statsHost = el("div", "stats");
+    statsHost.id = "stats";
+    statsHost.append(el("div", "skeleton"));
+    host.append(statsHost);
+    loadStats();
 
     const gift = el("button", "rowcard");
     gift.type = "button";
@@ -1604,8 +1684,69 @@
     }
 
     host.append(dailyBonusCard());
+    const quests = questsCard();
+    if (quests) host.append(quests);
     host.append(wheelCard());
     host.append(wheelRulesCard());
+  }
+
+  // Задания дня: три штуки, прогресс и кнопка «Забрать», когда выполнено.
+  function questsCard() {
+    const list = state.quests || [];
+    if (!list.length) return null;
+    const card = el("div", "card");
+    const head = el("div", "section-title");
+    head.append(el("h2", null, "Задания дня"));
+    const ready = list.filter((quest) => quest.ready).length;
+    if (ready) head.append(el("span", "tag won", `готово ${ready}`));
+    card.append(head);
+
+    list.forEach((quest) => {
+      const row = el("div", "quest" + (quest.claimed ? " done" : quest.ready ? " ready" : ""));
+      const grow = el("div", "grow");
+      grow.append(el("b", null, quest.title));
+      const line = el("div", "hint",
+        quest.claimed ? "Награда получена" : `${quest.progress} из ${quest.target} · ${money(quest.reward)}`);
+      grow.append(line);
+      if (!quest.claimed) {
+        const bar = el("div", "qbar");
+        const fill = el("i");
+        fill.style.width = Math.min(100, Math.round((quest.progress / Math.max(1, quest.target)) * 100)) + "%";
+        bar.append(fill);
+        grow.append(bar);
+      }
+      row.append(grow);
+
+      // не готовая награда выглядит как справка, а не как кнопка
+      const btn = el("button", "btn small" + (quest.claimed || quest.ready ? "" : " ghost"),
+        quest.claimed ? "✓" : quest.ready ? "Забрать" : money(quest.reward));
+      btn.type = "button";
+      btn.disabled = quest.claimed || !quest.ready;
+      if (quest.ready) btn.addEventListener("click", () => claimQuest(quest.code, btn));
+      row.append(btn);
+      card.append(row);
+    });
+    return card;
+  }
+
+  async function claimQuest(code, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+    try {
+      const data = await api("/api/quest", { method: "POST", body: { code } });
+      if (data.claimed) {
+        setBalance(data.balance);
+        haptic("ok");
+        toast(`Задание выполнено: +${money(data.reward)}`, "ok");
+      } else if (data.error) {
+        toast(data.error, "bad");
+      }
+      state.quests = data.quests || state.quests;
+      if (state.tab === "bonus") renderBonus();
+      renderBonusDots();
+    } catch (err) {
+      toast(err.message, "bad");
+      if (state.tab === "bonus") renderBonus();
+    }
   }
 
   function dailyBonusCard() {
@@ -1622,6 +1763,18 @@
 
     const amount = el("div", "bonus-amount", money(daily.amount));
     card.append(amount);
+
+    // серия: показываем только когда она есть — иначе лишний шум на карточке
+    const streak = Number(daily.streak) || 0;
+    if (streak > 0) {
+      const streakBox = el("div", "streak");
+      streakBox.append(el("b", null, `🔥 ${streak} ${streak === 1 ? "день" : streak < 5 ? "дня" : "дней"} подряд`));
+      if (daily.bonus_percent > 0) streakBox.append(el("span", null, `+${daily.bonus_percent} % к бонусу`));
+      else streakBox.append(el("span", null, "завтра будет больше"));
+      card.append(streakBox);
+    } else if (daily.next_streak) {
+      card.append(el("div", "hint", "Заберёшь сегодня — начнётся серия, и бонус вырастет."));
+    }
 
     const btn = el("button", "btn bonus" + (daily.available ? "" : " waiting"));
     btn.type = "button";
@@ -1822,7 +1975,7 @@
     });
     if (tab === "bets") loadBets();
     if (tab === "top") loadTop();
-    if (tab === "me") renderMe();
+    if (tab === "me") { renderMe(); }
     if (tab === "express") renderExpress();
     if (tab === "bonus") renderBonus();
     if (tab === "games") { renderGames(); refreshState({ silent: true }); }
@@ -1899,7 +2052,40 @@
     }
     meta.append(right);
     card.append(meta);
+
+    // повтор: та же сторона, тот же матч — сумма спрашивается заново
+    const matchId = Number(item.match_id || 0);
+    const simpleSide = item.side === "a" || item.side === "b" || item.side === "x";
+    if (matchId && simpleSide && (item.market || "match") === "match") {
+      const again = el("button", "btn ghost small", "Повторить");
+      again.type = "button";
+      again.style.marginTop = "8px";
+      const match = findMatch(matchId);
+      if (!match) {
+        again.disabled = true;
+        again.textContent = "Матч уже не в линии";
+      } else {
+        again.addEventListener("click", () => {
+          const odd = sideOdds(match, item.side);
+          if (odd === null || odd === undefined) {
+            toast("Кэф на этот исход снят", "bad");
+            return;
+          }
+          openAmountSheet(match, item.side, null, null);
+        });
+      }
+      card.append(again);
+    }
     return card;
+  }
+
+  function findMatch(matchId) {
+    const pools = [state.matches, state.liveMatches, state.football, state.hockey];
+    for (let i = 0; i < pools.length; i += 1) {
+      const found = (pools[i] || []).find((match) => Number(match.id) === Number(matchId));
+      if (found) return found;
+    }
+    return null;
   }
 
   function renderBets(data) {
@@ -1936,12 +2122,39 @@
     }
   }
 
+  // Рассчитанные ставки, которые игрок ещё не видел: говорим тостом,
+  // чтобы выигрыш не «появлялся молча» из ниоткуда.
+  function notifySettled(data) {
+    const settled = (data && data.settled) || [];
+    if (!settled.length) return;
+    let seen = [];
+    try { seen = JSON.parse(localStorage.getItem("cs2bets_seen") || "[]"); } catch (e) { seen = []; }
+    const ids = settled.map((item) => String(item.id));
+    const fresh = settled.filter((item) => seen.indexOf(String(item.id)) === -1);
+    try { localStorage.setItem("cs2bets_seen", JSON.stringify(ids.slice(0, 200))); } catch (e) { /* нет места */ }
+    if (!fresh.length || !state.seenOnce) return;   // первый запуск — молча, без шквала тостов
+    const net = fresh.reduce((sum, item) => sum + (Number(item.payout || 0) - Number(item.stake || 0)), 0);
+    const wins = fresh.filter((item) => item.result === "won").length;
+    if (fresh.length === 1) {
+      const item = fresh[0];
+      const delta = Number(item.payout || 0) - Number(item.stake || 0);
+      toast(item.result === "won"
+        ? `Ставка зашла: +${money(Math.max(0, delta))}`
+        : `Ставка рассчитана: ${item.result === "void" ? "возврат" : "мимо"}`, item.result === "won" ? "ok" : "bad");
+    } else {
+      toast(`${fresh.length} ставки рассчитаны: ${wins} зашло, итог ${net >= 0 ? "+" : "−"}${money(Math.abs(net))}`,
+        net >= 0 ? "ok" : "bad");
+    }
+  }
+
   async function loadBets() {
     const host = $("#bets");
     if (!host) return;
     try {
       const data = await api("/api/bets");
       state.betsHistory = data;
+      notifySettled(data);
+      state.seenOnce = true;
       renderBets(data);
       const dot = $("#betsDot");
       if (dot) {
@@ -1962,6 +2175,50 @@
     } catch (err) {
       $("#top").textContent = "";
       $("#top").append(el("div", "empty", err.message));
+    }
+  }
+
+  function renderStats(stats) {
+    const host = $("#stats");
+    if (!host || !stats) return;
+    host.textContent = "";
+    const cells = [
+      ["Винрейт", stats.settled ? stats.winrate + " %" : "—", "зашло " + stats.won + " из " + stats.settled],
+      ["Итог", (stats.roi > 0 ? "+" : stats.roi < 0 ? "−" : "") + Math.abs(stats.roi) + " %", "ROI по всем ставкам"],
+      ["Оборот", money(stats.staked), "поставлено всего"],
+      ["Лучшая выплата", stats.biggest_win ? money(stats.biggest_win) : "—", "самая крупная"],
+      ["Раундов в играх", String(stats.casino_rounds),
+        stats.casino_net >= 0 ? "+" + money(stats.casino_net) : "−" + money(Math.abs(stats.casino_net))],
+    ];
+    cells.forEach(([label, value, hint]) => {
+      const cell = el("div", "stat");
+      cell.append(el("span", null, label));
+      cell.append(el("b", null, value));
+      if (hint) cell.append(el("i", null, hint));
+      host.append(cell);
+    });
+    if (stats.favourite_tournament) {
+      const fav = el("div", "stat wide");
+      fav.append(el("span", null, "Любимый турнир"));
+      fav.append(el("b", null, stats.favourite_tournament));
+      host.append(fav);
+    }
+    if (!stats.bets) {
+      host.textContent = "";
+      host.append(el("div", "empty", "Пока нет данных: сделай первую ставку — и здесь появится статистика."));
+    }
+  }
+
+  async function loadStats() {
+    const host = $("#stats");
+    if (!host) return;
+    try {
+      const data = await api("/api/stats");
+      state.stats = data.stats;
+      renderStats(data.stats);
+    } catch (err) {
+      host.textContent = "";
+      host.append(el("div", "empty", err.message));
     }
   }
 
@@ -1998,6 +2255,7 @@
       state.expresses = data.expresses;
       state.limits = data.limits;
       state.bonus = data.bonus || null;
+      state.quests = data.quests || state.quests;
       state.casino = data.casino || state.casino;
       if (state.casino && !(state.casinoStake.roulette > 0)) state.casinoStake.roulette = 50;
       state.live = true;
@@ -2835,7 +3093,13 @@
   }
 
   // ------------------------------------------------------------------- init
+  let started = false;
   function init() {
+    // скрипт подключён с defer: DOM уже готов, а DOMContentLoaded ещё впереди.
+    // Без этой проверки init() выполнялся дважды и каждый обработчик навешивался
+    // по два раза — двойной тап по фильтру возвращал состояние назад.
+    if (started) return;
+    started = true;
     renderHeader();
     renderMatches();
     renderExpress();
@@ -2879,6 +3143,19 @@
         if (state.segment === "live") refreshState({ silent: true });  // свежий счёт сразу
       });
     });
+    const favChip = $("#favFilter");
+    if (favChip) {
+      once(favChip, () => {
+        state.onlyFavorites = !state.onlyFavorites;
+        haptic("light");
+        updateFavFilter();
+        renderMatches();
+        if (state.onlyFavorites && !state.favorites.length) {
+          toast("Отметь команды звёздочкой — и они будут здесь");
+        }
+      });
+      updateFavFilter();
+    }
     bindGames();
     $("#cartOpen").addEventListener("click", () => switchTab("express"));
     const bell = $("#bonusBell");

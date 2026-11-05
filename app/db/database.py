@@ -27,6 +27,17 @@ from app.db.backends import (
 
 log = logging.getLogger(__name__)
 
+from app.services.quests import by_code, quests_of_day  # noqa: E402  (после log — нужен для логов)
+
+STREAK_STEP: float = 0.1      # каждый день серии даёт +10 % к бонусу
+STREAK_CAP: float = 1.5       # дальше не растёт: 15 дней — потолок
+
+
+def bonus_amount(base: int, streak: int) -> int:
+    """Бонус с учётом серии: 1 день — база, 5 дней — +40 %, с 6-го — +50 %."""
+    multiplier = min(STREAK_CAP, 1 + STREAK_STEP * max(0, streak - 1))
+    return round(base * multiplier)
+
 # колонки, добавленные после первых деплоев: дорисовываем их в старых базах
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "score_a", "ALTER TABLE matches ADD COLUMN score_a INTEGER"),
@@ -39,6 +50,8 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "team_a_en", "ALTER TABLE matches ADD COLUMN team_a_en TEXT"),
     ("matches", "team_b_en", "ALTER TABLE matches ADD COLUMN team_b_en TEXT"),
     # хоккей: score_a/score_b — итоговый счёт (с ОТ и буллитами), reg_* — основное время
+    ("users", "streak_days", "ALTER TABLE users ADD COLUMN streak_days INTEGER NOT NULL DEFAULT 0"),
+    ("users", "bonus_day", "ALTER TABLE users ADD COLUMN bonus_day INTEGER NOT NULL DEFAULT 0"),
     ("matches", "reg_a", "ALTER TABLE matches ADD COLUMN reg_a INTEGER"),
     ("matches", "reg_b", "ALTER TABLE matches ADD COLUMN reg_b INTEGER"),
 )
@@ -56,6 +69,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "wheel_spins",
     "tease_claims",
     "casino_bets",
+    "quests",
     "backup_log",
 )
 """Порядок важен: сначала родители, потом зависимые строки."""
@@ -259,6 +273,10 @@ class Database:
                     log.warning("DB: незакрытая транзакция перед BEGIN — откатываю")
                     await conn.rollback()
                 await conn.execute(conn.begin_sql)
+                if getattr(conn, "name", "") == "postgres":
+                    # два инстанса на одном Postgres: замок в памяти не поможет,
+                    # берём advisory-замок транзакции — он снимается сам на COMMIT
+                    await conn.execute("SELECT pg_advisory_xact_lock(918273645)")
                 try:
                     yield conn
                 except BaseException:
@@ -392,32 +410,48 @@ class Database:
     async def daily_bonus(
         self, user_id: int, amount: int, cooldown_seconds: int
     ) -> tuple[bool, int, int]:
+        """Ежедневный бонус. Чем длиннее серия дней подряд, тем больше начисление.
+
+        Возвращает (получен, ждать_сек, баланс); сумма с множителем — в `bonus_amount`.
+        """
         now = int(time.time())
+        day = now // 86400
         async with self.transaction() as conn:
             async with conn.execute(
-                "SELECT bonus_at, balance FROM users WHERE user_id = ?", (user_id,)
+                "SELECT bonus_at, balance, streak_days, bonus_day FROM users WHERE user_id = ?",
+                (user_id,),
             ) as cur:
                 row = await cur.fetchone()
 
             if row is None:
-                balance = self.start_balance + amount
+                streak = 1
+                credited = bonus_amount(amount, streak)
+                balance = self.start_balance + credited
                 await conn.execute(
-                    "INSERT INTO users (user_id, balance, bonus_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, balance, now, now, now),
+                    "INSERT INTO users (user_id, balance, bonus_at, created_at, last_seen_at,"
+                    " streak_days, bonus_day) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, balance, now, now, now, streak, day),
                 )
-                await self._ledger(conn, user_id, amount, "ежедневный бонус", now)
+                await self._ledger(conn, user_id, credited, "ежедневный бонус", now)
+                await self._bump_quest(conn, user_id, "bonus", now)
                 return True, 0, balance
 
             elapsed = now - int(row["bonus_at"])
             if elapsed < cooldown_seconds:
                 return False, cooldown_seconds - elapsed, int(row["balance"])
 
+            # серия: вчера забирал — продолжаем, пропустил день — начинаем заново
+            last_day = int(row["bonus_day"] or 0)
+            streak = int(row["streak_days"] or 0) + 1 if last_day == day - 1 else 1
+            credited = bonus_amount(amount, streak)
             await conn.execute(
-                "UPDATE users SET balance = balance + ?, bonus_at = ? WHERE user_id = ?",
-                (amount, now, user_id),
+                "UPDATE users SET balance = balance + ?, bonus_at = ?, streak_days = ?,"
+                " bonus_day = ? WHERE user_id = ?",
+                (credited, now, streak, day, user_id),
             )
-            await self._ledger(conn, user_id, amount, "ежедневный бонус", now)
-            return True, 0, int(row["balance"]) + amount
+            await self._ledger(conn, user_id, credited, "ежедневный бонус", now)
+            await self._bump_quest(conn, user_id, "bonus", now)
+            return True, 0, int(row["balance"]) + credited
 
     # ----------------------------------------------------------------- бэкапы
     def is_postgres(self) -> bool:
@@ -492,8 +526,20 @@ class Database:
                 return 0
             return max(0, cooldown - (now - int(ts)))
 
+        streak_row = await self._fetchone(
+            "SELECT streak_days, bonus_day FROM users WHERE user_id = ?", (user_id,)
+        )
+        streak = int(streak_row["streak_days"] or 0) if streak_row else 0
+        last_day = int(streak_row["bonus_day"] or 0) if streak_row else 0
+        today = now // 86400
+        # серия жива, только если бонус забирали вчера (или ещё не забирали сегодня)
+        streak_alive = last_day >= today - 1
         return {
-            "daily": {"wait_seconds": wait(int(user["bonus_at"]) if user else 0, daily_cooldown)},
+            "daily": {
+                "wait_seconds": wait(int(user["bonus_at"]) if user else 0, daily_cooldown),
+                "streak": streak if streak_alive else 0,
+                "streak_alive": streak_alive,
+            },
             "wheel": {"wait_seconds": wait(int(wheel["spun_at"]) if wheel else 0, wheel_cooldown)},
             "tease": {"wait_seconds": wait(int(tease["claimed_at"]) if tease else 0, tease_cooldown)},
         }
@@ -520,6 +566,7 @@ class Database:
                     "INSERT INTO wheel_spins (user_id, spun_at, prize) VALUES (?, ?, ?)",
                     (user_id, now, prize),
                 )
+            await self._bump_quest(conn, user_id, "bonus", now)
             return await self._credit(conn, user_id, prize, "колесо фортуны", now)
 
     async def claim_paid_wheel(self, user_id: int, cost: int, prize: int) -> tuple[bool, int, int]:
@@ -534,6 +581,7 @@ class Database:
                 (cost, prize, user_id),
             )
             await self._ledger(conn, user_id, prize - cost, "колесо фортуны · платная крутка", now)
+            await self._bump_quest(conn, user_id, "bonus", now)
             return True, 0, await self._balance_in(conn, user_id)
 
     async def claim_tease(self, user_id: int, amount: int, cooldown: int) -> tuple[bool, int, int]:
@@ -556,9 +604,106 @@ class Database:
                 await conn.execute(
                     "INSERT INTO tease_claims (user_id, claimed_at) VALUES (?, ?)", (user_id, now)
                 )
+            await self._bump_quest(conn, user_id, "bonus", now)
             return await self._credit(conn, user_id, amount, "за настойчивость", now)
 
-    # ---------------------------------------------------------------- казино
+    # ---------------------------------------------------------------- задания
+    async def quests_state(self, user_id: int) -> list[Any]:
+        """Задания сегодняшнего дня: строки создаются при первом обращении."""
+        day = int(time.time()) // 86400
+        async with self.transaction() as conn:
+            for quest in quests_of_day(day):
+                await conn.execute(
+                    """
+                    INSERT INTO quests (user_id, day, code, progress, target, reward)
+                    VALUES (?, ?, ?, 0, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (user_id, day, quest["code"], int(quest["target"]), int(quest["reward"])),
+                )
+            async with conn.execute(
+                "SELECT code, progress, target, reward, claimed_at FROM quests"
+                " WHERE user_id = ? AND day = ?",
+                (user_id, day),
+            ) as cur:
+                return list(await cur.fetchall())
+
+    async def claim_quest(self, user_id: int, code: str) -> tuple[bool, int, int, str]:
+        """Забрать награду за задание. Возвращает (получено, награда, баланс, текст ошибки)."""
+        now = int(time.time())
+        day = now // 86400
+        quest = by_code(day, code)
+        if quest is None:
+            return False, 0, await self.get_balance(user_id), "Сегодня такого задания нет"
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT progress, target, reward, claimed_at FROM quests"
+                " WHERE user_id = ? AND day = ? AND code = ?",
+                (user_id, day, code),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                return False, 0, await self._balance_in(conn, user_id), "Задание не найдено"
+            if row["claimed_at"] is not None:
+                return False, 0, await self._balance_in(conn, user_id), "Награда уже получена"
+            if int(row["progress"]) < int(row["target"]):
+                return False, 0, await self._balance_in(conn, user_id), "Задание ещё не выполнено"
+
+            reward = int(row["reward"])
+            await conn.execute(
+                "UPDATE quests SET claimed_at = ? WHERE user_id = ? AND day = ? AND code = ?",
+                (now, user_id, day, code),
+            )
+            await self._credit(conn, user_id, reward, f"задание · {quest['title']}", now)
+            return True, reward, await self._balance_in(conn, user_id), ""
+
+    async def _bump_quest(self, conn: Any, user_id: int, code: str, now: int) -> None:
+        """Двигает прогресс задания внутри уже открытой транзакции.
+
+        Строка создаётся здесь же: игрок мог ни разу не открыть экран бонусов,
+        а прогресс за ставку всё равно должен засчитаться.
+        """
+        day = now // 86400
+        quest = by_code(day, code)
+        if quest is None:
+            return
+        await conn.execute(
+            """
+            INSERT INTO quests (user_id, day, code, progress, target, reward)
+            VALUES (?, ?, ?, 0, ?, ?)
+            ON CONFLICT DO NOTHING
+            """,
+            (user_id, day, code, int(quest["target"]), int(quest["reward"])),
+        )
+        await conn.execute(
+            """
+            UPDATE quests
+            SET progress = CASE WHEN progress < target THEN progress + 1 ELSE progress END
+            WHERE user_id = ? AND day = ? AND code = ? AND claimed_at IS NULL
+            """,
+            (user_id, day, code),
+        )
+
+    # --------------------------------------------------------------- события
+    async def log_event(self, user_id: int | None, name: str, payload: str = "") -> None:
+        """Событие для аналитики. Ошибки логирования не должны ломать ставку."""
+        try:
+            await self._write(
+                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, name[:64], payload[:500], int(time.time())),
+            )
+        except Exception:
+            log.debug("Не смог записать событие %s", name, exc_info=True)
+
+    async def event_counts(self, days: int = 7) -> list[Any]:
+        since = int(time.time()) - days * 86400
+        return await self._fetchall(
+            "SELECT name, COUNT(*) AS n FROM events WHERE created_at >= ?"
+            " GROUP BY name ORDER BY n DESC",
+            (since,),
+        )
+
+    # --------------------------------------------------------------- казино
     async def play_casino(
         self,
         user_id: int,
@@ -599,6 +744,7 @@ class Database:
 
             reason = f"{game} · {label}"
             await self._ledger(conn, user_id, -amount, f"ставка · {reason}", now)
+            await self._bump_quest(conn, user_id, "casino", now)
             if payout:
                 await conn.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
@@ -699,6 +845,80 @@ class Database:
             "SELECT user_id, username, full_name, balance FROM users ORDER BY balance DESC, user_id LIMIT ?",
             (limit,),
         )
+
+    async def player_stats(self, user_id: int) -> dict[str, Any]:
+        """Итоги игрока: сколько поставил, сколько вернулось, винрейт и любимый турнир."""
+        bets = await self._fetchall(
+            """
+            SELECT b.amount, b.payout, m.status AS match_status, m.tournament
+            FROM bets b LEFT JOIN matches m ON m.id = b.match_id
+            WHERE b.user_id = ?
+            """,
+            (user_id,),
+        )
+        expresses = await self._fetchall(
+            "SELECT stake, payout, status FROM expresses WHERE user_id = ?", (user_id,)
+        )
+        casino = await self._fetchone(
+            "SELECT COUNT(*) AS rounds, COALESCE(SUM(amount), 0) AS staked,"
+            " COALESCE(SUM(payout), 0) AS paid FROM casino_bets WHERE user_id = ?",
+            (user_id,),
+        )
+
+        staked = 0
+        returned = 0
+        won = 0
+        settled = 0
+        biggest = 0
+        tournaments: dict[str, int] = {}
+
+        for row in bets:
+            staked += int(row["amount"])
+            match_status = str(row["match_status"] or "")
+            paid = int(row["payout"] or 0)
+            if row["payout"] is not None:
+                returned += paid
+                biggest = max(biggest, paid)
+            if match_status in ("finished", "cancelled"):
+                settled += 1
+                if match_status == "finished" and paid > 0:
+                    won += 1
+            if row["tournament"]:
+                name = str(row["tournament"])
+                tournaments[name] = tournaments.get(name, 0) + 1
+
+        for row in expresses:
+            staked += int(row["stake"])
+            paid = int(row["payout"] or 0)
+            if row["payout"] is not None:
+                returned += paid
+                biggest = max(biggest, paid)
+            status = str(row["status"] or "")
+            if status in ("won", "lost", "void"):
+                settled += 1
+                if status == "won":
+                    won += 1
+
+        casino_rounds = int(casino["rounds"]) if casino is not None else 0
+        casino_staked = int(casino["staked"]) if casino is not None else 0
+        casino_paid = int(casino["paid"]) if casino is not None else 0
+
+        favourite = max(tournaments, key=lambda key: tournaments[key]) if tournaments else ""
+        return {
+            "bets": len(bets) + len(expresses),
+            "settled": settled,
+            "won": won,
+            "winrate": round(won * 100 / settled) if settled else 0,
+            "staked": staked + casino_staked,
+            "returned": returned + casino_paid,
+            "roi": round((returned + casino_paid - staked - casino_staked) * 100 / (staked + casino_staked))
+            if (staked + casino_staked)
+            else 0,
+            "biggest_win": biggest,
+            "favourite_tournament": favourite,
+            "casino_rounds": casino_rounds,
+            "casino_net": casino_paid - casino_staked,
+        }
 
     async def rank_of_user(self, user_id: int) -> dict[str, Any] | None:
         """Место игрока в общем зачёте и его баланс — даже если он не попал в топ-10."""
@@ -1306,6 +1526,7 @@ class Database:
                 conn, user_id, "bet", tap, int(inserted.lastrowid or 0)
             )
             await self._ledger(conn, user_id, -amount, f"ставка · {match_tag(match)}", now)
+            await self._bump_quest(conn, user_id, "bet", now)
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)
             ) as cur2:
@@ -1732,6 +1953,7 @@ class Database:
                 )
 
             await self._ledger(conn, user_id, -stake, f"экспресс #{express_id}", now)
+            await self._bump_quest(conn, user_id, "express", now)
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)
             ) as cur2:
