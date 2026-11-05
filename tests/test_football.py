@@ -374,6 +374,62 @@ async def test_unknown_market_rejected(db) -> None:
         await db.place_football_bet(match_id, 1, None, "qualify", "1", 100)   # не плей-офф
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Лига наций УЕФА. Дивизион А. Групповой этап",
+        "Лига наций УЕФА. Дивизион В. Групповой этап",
+        "Лига наций УЕФА. Дивизион С. Групповой этап",
+        "Лига наций УЕФА. Дивизион D. Групповой этап",
+        "Лига наций УЕФА. Дивизион Д. Групповой этап",
+        "Лига наций УЕФА. Лига C. Групповой этап",
+        "Лига наций УЕФА. Плей-офф. Полуфинал",
+        "Лига наций УЕФА. Стыковые матчи",
+    ],
+)
+def test_every_nations_league_division_is_kept(name: str) -> None:
+    """Все дивизионы Лиги наций (A, B, C, D) и их плей-офф — в линии.
+
+    Ловим по общему названию турнира, а не по списку дивизионов: тогда в линию
+    попадёт и дивизион, которого в Фонбете сегодня нет, и стыковые матчи.
+    """
+    from app.services.football import _is_football
+
+    include, exclude = settings.football_include_list, settings.football_exclude_list
+    assert _is_football(name, include, exclude), name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Лига наций УЕФА. Дивизион A. Групповой этап. Итоги",
+        "Лига наций УЕФА. Итоги турнира",
+        "Лига наций КОНКАКАФ. Групповой этап",
+        "Лига наций УЕФА. Женщины. Дивизион А",
+        "Лига наций УЕФА. До 21 года. Групповой этап",
+    ],
+)
+def test_nations_league_markets_and_other_confederations_are_skipped(name: str) -> None:
+    from app.services.football import _is_football
+
+    include, exclude = settings.football_include_list, settings.football_exclude_list
+    assert not _is_football(name, include, exclude), name
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Лига наций УЕФА. Дивизион А. Групповой этап", "Лига наций · Дивизион А"),
+        ("Лига наций УЕФА. Дивизион D. Групповой этап", "Лига наций · Дивизион D"),
+    ],
+)
+def test_nations_league_label_keeps_league(raw: str, expected: str) -> None:
+    """Иначе в фильтре турниров видно только «Дивизион А» без названия турнира."""
+    from app.web.payloads import short_tournament
+
+    assert short_tournament(raw) == expected
+
+
 def test_foreign_sport_segments_are_not_football() -> None:
     """«Лига Чемпионов» есть и в хоккее, «Бундеслига» — и в баскетболе.
 
