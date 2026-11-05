@@ -43,3 +43,12 @@ async def test_health_answers_without_database() -> None:
         assert "recheck" in payload
     finally:
         await app_client.close()
+
+
+def test_render_index_versions_static_assets(monkeypatch) -> None:
+    from app.web.server import render_index
+
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef1234567890")
+    html = render_index({"user": None, "dev": False})
+    assert '/static/app.css?v=abcdef123456' in html
+    assert '/static/app.js?v=abcdef123456' in html

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -174,6 +175,11 @@ async def _line_with_maps(db: Database, rows: list[Any]) -> list[dict[str, Any]]
 def render_index(boot: dict[str, Any]) -> str:
     """Подставляет стартовые данные прямо в HTML — приложению не нужен лишний запрос."""
     html = INDEX_PATH.read_text(encoding="utf-8")
+    # Telegram WebView/CDN иногда удерживают старые app.js даже после выкладки.
+    # Версия коммита заставляет клиента загрузить свежие assets без ручного cache-bust.
+    asset_version = (os.getenv("RENDER_GIT_COMMIT") or "local")[:12]
+    html = html.replace('href="/static/app.css"', f'href="/static/app.css?v={asset_version}"')
+    html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={asset_version}"')
     payload = json.dumps(boot, ensure_ascii=False).replace("</", "<\\/")
     injection = f"<script>window.__BOOT__ = {payload};</script>"
     if BOOTSTRAP_MARKER in html:
@@ -225,7 +231,11 @@ async def index(request: web.Request) -> web.Response:
             db, await db.open_matches(limit=120, sport="hockey")
         )
 
-    return web.Response(text=render_index(boot), content_type="text/html")
+    return web.Response(
+        text=render_index(boot),
+        content_type="text/html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 # ----------------------------------------------------------------------- API
