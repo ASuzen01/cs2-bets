@@ -307,6 +307,8 @@
 
   /* ---------------------------------------------------------- футбол */
   .segments.sports{margin-bottom:6px}
+  .segments.sports.categories{margin-top:-2px}
+  .segments.sports.categories[hidden]{display:none}
   .segments.sports .seg{flex:0 0 auto;padding:6px 14px;border-radius:999px;font-size:13px}
   .segments.sports .seg.active{background:var(--accent-soft);color:#bfe0ff;border-color:#2f5d85}
 

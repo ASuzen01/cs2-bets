@@ -463,3 +463,45 @@ def test_foreign_sport_segments_are_not_football() -> None:
         {"e": 1, "factors": [{"f": 921, "v": 2.0}, {"f": 922, "v": 4.0}, {"f": 923, "v": 3.0}]},
     ]
     assert parse_football(packet, ["лига чемпионов", "бундеслига"], ["азии"]) == []
+
+
+@pytest.mark.parametrize(
+    ("tournament", "category"),
+    [
+        # клубы
+        ("Лига Чемпионов УЕФА. Общий этап", "clubs"),
+        ("Англия. Премьер-Лига. Сезон 26/27", "clubs"),
+        ("Беларусь. Высшая лига", "clubs"),
+        ("НХЛ. Регулярный сезон", "clubs"),
+        ("Фонбет КХЛ. Регулярный сезон", "clubs"),
+        # сборные
+        ("Лига наций УЕФА. Дивизион С. Групповой этап", "national"),
+        ("Чемпионат мира. Групповой этап", "national"),
+        ("Чемпионат Европы. Групповой этап", "national"),
+        ("Кубок Америки. Групповой этап", "national"),
+        ("Олимпийские игры. Групповой этап", "national"),
+    ],
+)
+def test_tournament_category(tournament: str, category: str) -> None:
+    """Подменю «Клубы / Сборные»: турниры сборных отделяются по названию."""
+    from app.services.football import tournament_category
+
+    assert tournament_category(tournament) == category
+
+
+def test_payload_has_category_only_for_team_sports() -> None:
+    from app.web.payloads import match_payload
+
+    base = {
+        "id": 1, "team_a": "А", "team_b": "Б", "start_time": 4102444800,
+        "odds_a": 2.0, "odds_x": None, "odds_b": 2.0, "status": "open",
+        "tournament": "НХЛ. Регулярный сезон",
+    }
+    assert match_payload({**base, "sport": "hockey"})["category"] == "clubs"
+    assert match_payload(
+        {**base, "sport": "hockey", "tournament": "Чемпионат мира. Групповой этап"}
+    )["category"] == "national"
+    # у CS2 подменю нет
+    assert match_payload({**base, "sport": "cs2", "tournament": "Counter-Strike. IEM. Bo3"})[
+        "category"
+    ] is None

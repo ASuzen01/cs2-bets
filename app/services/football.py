@@ -91,6 +91,27 @@ def is_placeholder_team(name: str) -> bool:
     return " ".join(str(name or "").lower().split()) in PLACEHOLDER_TEAMS
 
 
+# Турниры сборных: в приложении они лежат в подменю «Сборные», всё остальное — «Клубы».
+# Признак ищем в названии турнира: клубные турниры сборных в названии не упоминают,
+# а турниры сборных всегда называют либо сам турнир, либо «сборные».
+NATIONAL_TOKENS: tuple[str, ...] = (
+    "лига наций", "чемпионат мира", "чемпионат европы", "кубок америки", "копа америка",
+    "кубок конфедераций", "кубок наций", "олимпийск", "кубок мира",
+    "сборная", "сборных", "еврохоккейтур", "чм ", "чм.", "че ", "че.",
+)
+
+
+def is_national_tournament(name: str) -> bool:
+    """Турнир сборных? «Лига наций УЕФА» — да, «Лига Чемпионов УЕФА» — нет."""
+    text = f"{name.strip().lower()} "
+    return any(token in text for token in NATIONAL_TOKENS)
+
+
+def tournament_category(name: str) -> str:
+    """Подменю матча: 'national' (сборные) или 'clubs' (клубы)."""
+    return "national" if is_national_tournament(name) else "clubs"
+
+
 def _is_football(tournament: str, include: Iterable[str], exclude: Iterable[str]) -> bool:
     name = tournament.lower()
     if not any(word.strip().lower() and word.strip().lower() in name for word in include):

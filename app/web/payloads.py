@@ -13,7 +13,7 @@ from typing import Any
 from app.db import Database
 from app.services import football as football_service
 from app.services import hockey as hockey_service
-from app.services.football import market_label, parse_side
+from app.services.football import market_label, parse_side, tournament_category
 
 # вторая часть названия иногда не лига, а стадия: «Премьер-Лига. 12-й тур»
 _ROUND_PART = re.compile(r"^(\d|тур\b|сезон|этап|раунд|плей-офф|финал|групп|общий)", re.IGNORECASE)
@@ -128,7 +128,17 @@ def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
         "odds_x": float(row["odds_x"]) if ("odds_x" in row.keys() and row["odds_x"]) else None,  # noqa: SIM118
         # роспись футбола и хоккея: тоталы, форы, исходы. Для CS2 список пустой
         "markets": markets_for(row),
+        # подменю «Клубы» / «Сборные»: у CS2 категории нет
+        "category": _category(row),
     }
+
+
+def _category(row: Any) -> str | None:
+    """Клубы или сборные. У CS2 подменю нет — там всегда None."""
+    sport = str(row["sport"]) if "sport" in row.keys() else "cs2"  # noqa: SIM118
+    if sport not in ("football", "hockey"):
+        return None
+    return tournament_category(str(row["tournament"]))
 
 
 def bet_payload(row: Any) -> dict[str, Any]:

@@ -11,6 +11,8 @@
     football: boot.football || [],
     hockey: boot.hockey || [],
     sport: "cs2",
+    // подменю футбола и хоккея: "clubs" — клубы, "national" — сборные
+    category: "clubs",
     fbOpen: {},          // какие футбольные карточки раскрыты до полной росписи
     tournaments: {},     // выбранный турнир по каждому виду спорта
     liveMatches: boot.live || [],   // матчи в эфире (state.live — флаг «данные загружены»)
@@ -186,7 +188,9 @@
         const source = state.segment === "live"
           ? state.liveMatches
           : marketSource();
-        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+        openTournamentSheet(source
+          .filter((m) => (m.sport || "cs2") === state.sport)
+          .filter(inCategory));
       });
     }
     const tourReset = $("#tourReset");
@@ -200,6 +204,16 @@
         haptic("light");
         renderMatches();
         refreshState({ silent: true });
+      });
+    });
+    // «Клубы / Сборные»: фильтр турнира сбрасываем — он был из другой категории
+    document.querySelectorAll("#categorySegments .seg").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (state.category === btn.dataset.category) return;
+        state.category = btn.dataset.category;
+        setTournament(null);
+        haptic("light");
+        renderMatches();
       });
     });
     document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
@@ -378,6 +392,29 @@
     return state.matches;
   }
 
+  // у футбола и хоккея есть подменю «Клубы / Сборные»
+  function hasCategories() {
+    return state.sport === "football" || state.sport === "hockey";
+  }
+
+  function inCategory(match) {
+    if (!hasCategories()) return true;
+    return (match.category || "clubs") === state.category;
+  }
+
+  function categoryWord() {
+    return state.category === "national" ? "сборных" : "клубов";
+  }
+
+  function renderCategorySegments() {
+    const host = $("#categorySegments");
+    if (!host) return;
+    host.hidden = !hasCategories();
+    host.querySelectorAll(".seg").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.category === state.category);
+    });
+  }
+
   function selectedTournament() {
     if (state.tournaments[state.sport] !== undefined) return state.tournaments[state.sport];
     try { return localStorage.getItem(tournamentKey()); } catch (err) { return null; }
@@ -458,7 +495,9 @@
         const source = state.segment === "live"
           ? state.liveMatches
           : marketSource();
-        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+        openTournamentSheet(source
+          .filter((m) => (m.sport || "cs2") === state.sport)
+          .filter(inCategory));
       });
     }
     const tourReset = $("#tourReset");
@@ -668,6 +707,7 @@
     host.textContent = "";
     renderSegments();
     renderSportSegments();
+    renderCategorySegments();
 
     if (!state.user) {
       const message = boot.error && /Откройте/i.test(boot.error)
@@ -689,7 +729,14 @@
     const source = liveMode
       ? state.liveMatches
       : (hockeyMode ? state.hockey : (footballMode ? state.football : state.matches));
-    const sportOnly = source.filter((match) => (match.sport || "cs2") === state.sport);
+    const base = source.filter((match) => (match.sport || "cs2") === state.sport);
+    // пустое подменю — тупик: если матчи есть в другом, переключаемся туда
+    if (hasCategories() && base.length && !base.some(inCategory)) {
+      state.category = state.category === "national" ? "clubs" : "national";
+      setTournament(null);
+      renderCategorySegments();     // подсветка должна совпадать с тем, что показали
+    }
+    const sportOnly = base.filter(inCategory);
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
     const list = tournament
@@ -710,11 +757,9 @@
       }
       host.append(emptyWithMascot(liveMode
         ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
-        : (hockeyMode
-          ? "Хоккейная линия пуста.\nМатчи КХЛ и НХЛ подтянутся к следующему игровому дню."
-          : (footballMode
-            ? "Футбольная линия пуста.\nМатчи подтянутся к следующему туру."
-            : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."))));
+        : (hasCategories()
+          ? `Матчей ${categoryWord()} сейчас нет.\nЗагляни в другое подменю — там линия может быть полнее.`
+          : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже.")));
       return;
     }
 
@@ -1821,7 +1866,9 @@
         const source = state.segment === "live"
           ? state.liveMatches
           : marketSource();
-        openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
+        openTournamentSheet(source
+          .filter((m) => (m.sport || "cs2") === state.sport)
+          .filter(inCategory));
       });
     }
     const tourReset = $("#tourReset");
