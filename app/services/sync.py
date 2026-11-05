@@ -39,6 +39,11 @@ CS2_FEED_RECHECK_SECONDS = 600
 FOOTBALL_RESULT_RETRY_SECONDS = 600
 # Как часто обновлять английские названия команд (для поиска результатов).
 FOOTBALL_NAMES_TTL_SECONDS = 1800
+# Сколько тиков подряд матч должен отсутствовать в линии, чтобы мы его сняли.
+# Один-два пропуска — это сбой фида; три подряд (около двух минут) — событие убрали.
+LINE_GONE_TICKS = 3
+# Ниже этого размера линию считаем битой и ничего по ней не снимаем.
+LINE_MIN_HEALTHY = {"football": 20, "hockey": 10}
 # Хоккейный матч: три периода по 20 минут + перерывы + овертайм — час с небольшим.
 # Раньше этого срока фид результатов не спрашиваем.
 HOCKEY_FINISH_MINUTES = 100
@@ -106,6 +111,8 @@ class MatchSyncer:
         self.hockey_results = ResultsClient(sport="hockey")
         self.cs2_results = cs2_results or Cs2ResultsClient()
         self._feed_checked: dict[int, int] = {}
+        # матч_id → сколько тиков подряд его нет в линии (снимаем на LINE_GONE_TICKS)
+        self._line_gone: dict[int, int] = {}
         self._names_en_at = 0
         self.client = client or FonbetClient(
             settings.fonbet_base_url,
@@ -401,10 +408,16 @@ class MatchSyncer:
         (`Tr1OR`/`Tr2OR`), в линии нет. Поэтому НХЛ закрывается автоматически, а КХЛ
         ждёт ручного расчёта админом — деньги важнее скорости.
         """
-        del matches      # счёт из линии не используем — см. докстринг
+        # счёт из линии не используем (см. докстринг), но список событий нужен:
+        # по нему видно, какие матчи из линии пропали
+        line_ids = {match.event_id for match in matches}
         now = int(time.time())
         for row in await self.db.matches_by_status(["open", "live", "awaiting"]):
             if str(row["sport"]) != "hockey":
+                continue
+            if await self._drop_from_line_if_gone(
+                row, line_ids, len(line_ids), stats, sport="hockey"
+            ):
                 continue
             if now - int(row["start_time"]) < HOCKEY_FINISH_MINUTES * 60:
                 continue
@@ -507,6 +520,10 @@ class MatchSyncer:
             if str(row["sport"]) != "football":
                 continue
             match = by_fonbet.get(int(row["fonbet_id"]))
+            if match is None and await self._drop_from_line_if_gone(
+                row, by_fonbet.keys(), len(matches), stats, sport="football"
+            ):
+                continue
             if match is not None:
                 if int(row["last_result_check"] or 0):
                     # матч вернулся в линию — отметку сбрасываем
@@ -580,6 +597,41 @@ class MatchSyncer:
                 continue
             await self.db.set_match_names_en(int(row["id"]), pair[0], pair[1])
 
+    async def _drop_from_line_if_gone(
+        self,
+        row: Any,
+        line_ids: Any,
+        line_size: int,
+        stats: dict[str, Any],
+        *,
+        sport: str,
+    ) -> bool:
+        """Матч ещё не начался, но пропал из линии — снимаем его с приёма ставок.
+
+        Так из линии уходят события, которые перестали попадать под фильтры
+        турниров (например, отборочные матчи) или которые букмекер убрал сам.
+        Три пропуска подряд — чтобы сбой одного пакета не снимал живые матчи.
+        """
+        match_id = int(row["id"])
+        if int(row["start_time"]) <= int(time.time()):
+            return False                     # матч уже начался: им занимается расчёт
+        if int(row["fonbet_id"]) in line_ids:
+            self._line_gone.pop(match_id, None)
+            return False
+        if line_size < LINE_MIN_HEALTHY.get(sport, 10):
+            return False                     # линия битая/пустая — ничего не снимаем
+        ticks = self._line_gone.get(match_id, 0) + 1
+        if ticks < LINE_GONE_TICKS:
+            self._line_gone[match_id] = ticks
+            return False
+        self._line_gone.pop(match_id, None)
+        await self._cancel_market_row(row, stats, reason="событие убрано из линии")
+        log.info(
+            "Матч #%s %s — %s (%s) пропал из линии — снят",
+            match_id, row["team_a"], row["team_b"], sport,
+        )
+        return True
+
     async def _cancel_market_row(
         self, row: Any, stats: dict[str, Any], *, reason: str
     ) -> None:
@@ -590,10 +642,11 @@ class MatchSyncer:
         """
         if await self.db.match_bet_count(int(row["id"])) == 0:
             await self.db.set_status(int(row["id"]), "cancelled")
-            log.info("Футбол #%s не состоялся (%s), ставок нет", row["id"], reason)
+            stats["cancelled"] = stats.get("cancelled", 0) + 1
+            log.info("Матч #%s (%s) снят (%s), ставок нет", row["id"], row["sport"], reason)
             return
         try:
-            result = await self.db.cancel_football_match(int(row["id"]))
+            result = await self.db.cancel_football_match(int(row["id"]), reason=reason)
         except Exception:
             log.exception("Не смог вернуть ставки по матчу #%s", row["id"])
             return

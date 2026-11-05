@@ -20,6 +20,7 @@ from app.services.hockey import (
     parse_side,
     side_code,
 )
+from app.services.sync import LINE_GONE_TICKS
 
 
 @pytest.fixture
@@ -585,3 +586,64 @@ async def test_express_leg_wins_when_team_wins_in_overtime(db: Database) -> None
     first = next(leg for leg in legs if int(leg["match_id"]) == int(match["id"]))
     assert str(first["result"]) == "won"        # овертайм не превращает ногу в проигрыш
     assert str(express["status"]) == "open"     # вторая нога ещё не сыграна
+
+
+# ------------------------------------------------- матчи, пропавшие из линии
+async def test_match_gone_from_line_is_cancelled_after_three_ticks(db: Database) -> None:
+    """Матч убрали из линии (например, отбор) — снимаем его, деньги возвращаем.
+
+    Один пропуск ничего не значит (сбой пакета), поэтому снимаем на третьем подряд.
+    """
+    row, _ = await db.upsert_match(
+        fonbet_id=555,
+        tournament="Чемпионат Европы. Отборочный турнир",
+        team_a="Норвегия",
+        team_b="Грузия",
+        start_time=int(time.time()) + 7200,
+        odds_a=1.7,
+        odds_x=3.6,
+        odds_b=4.4,
+        sport="football",
+    )
+    await db.place_football_bet(int(row["id"]), 1, None, "result", "1", 100)
+
+    line = [
+        FootballStub(i) for i in range(25)   # здоровая линия без нашего матча
+    ]
+    syncer = _syncer(db, _FakeHockeyFeed())
+    stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
+
+    for _ in range(LINE_GONE_TICKS - 1):
+        await syncer._settle_football(line, stats)
+        assert str((await db.get_match(int(row["id"])))["status"]) == "open"
+    await syncer._settle_football(line, stats)
+
+    assert str((await db.get_match(int(row["id"])))["status"]) == "cancelled"
+    assert await db.get_balance(1) == 1000          # ставка возвращена
+
+
+async def test_broken_line_does_not_cancel_matches(db: Database) -> None:
+    """Пустая линия — это сбой фида, а не повод снимать матчи."""
+    row, _ = await db.upsert_match(
+        fonbet_id=556,
+        tournament="Чемпионат Европы. Отборочный турнир",
+        team_a="Норвегия",
+        team_b="Грузия",
+        start_time=int(time.time()) + 7200,
+        odds_a=1.7,
+        odds_x=3.6,
+        odds_b=4.4,
+        sport="football",
+    )
+    syncer = _syncer(db, _FakeHockeyFeed())
+    stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
+    for _ in range(LINE_GONE_TICKS + 2):
+        await syncer._settle_football([], stats)
+    assert str((await db.get_match(int(row["id"])))["status"]) == "open"
+
+
+class FootballStub:
+    """Минимальный матч линии: нужен только id события."""
+
+    def __init__(self, event_id: int) -> None:
+        self.event_id = 900000 + event_id
