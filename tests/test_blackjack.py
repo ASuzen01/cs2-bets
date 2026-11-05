@@ -11,12 +11,36 @@ from app.services import blackjack
 
 
 def cards_in_draw_order(*ranks: str) -> list[dict[str, str]]:
-    """`new_game` достаёт последнюю карту shoe первой."""
+    """`new_game` достаёт последнюю карту shoe первой; тестовая shoe без дублей."""
     suits = ("♠", "♥", "♦", "♣")
-    return [
-        {"rank": rank, "suit": suits[index % len(suits)]}
-        for index, rank in enumerate(reversed(ranks))
-    ]
+    used: dict[str, set[str]] = {}
+    draw_order = []
+    for rank in ranks:
+        used_suits = used.setdefault(rank, set())
+        suit = next(suit for suit in suits if suit not in used_suits)
+        used_suits.add(suit)
+        draw_order.append({"rank": rank, "suit": suit})
+    return list(reversed(draw_order))
+
+
+def test_shoe_has_one_copy_of_every_physical_card() -> None:
+    shoe = blackjack.make_shoe()
+    faces = {(card["rank"], card["suit"]) for card in shoe}
+    assert len(shoe) == 52
+    assert len(faces) == 52
+
+
+def test_draw_skips_duplicate_face_in_legacy_active_shoe() -> None:
+    queen = {"rank": "Q", "suit": "♦"}
+    other = {"rank": "K", "suit": "♣"}
+    state = {
+        "shoe": [other, queen.copy()],
+        "dealer": [queen.copy()],
+        "hands": [{"cards": [queen.copy()]}],
+    }
+
+    assert blackjack._draw(state) == other
+    assert state["shoe"] == []
 
 
 def test_hand_value_handles_aces_and_soft_totals() -> None:

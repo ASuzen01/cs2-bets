@@ -30,7 +30,7 @@
     expresses: [],
     limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250, ladder_max_bet: 50 },
     cart: readCart(),
-    betsFilter: "all",
+    betsView: "all",
     tickets: [],       // билеты в экспресс с колеса
     topMode: "all",
     chain: null,
@@ -59,7 +59,7 @@
     ladder: null,             // последняя партия в «Лесенку»
     ladderStake: 10,
     ladderBusy: false,
-    game: "roulette",         // какая игра открыта
+    game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over" },
     casinoStake: { roulette: 50, dice: 50 },
     casinoBusy: false,
@@ -2934,77 +2934,58 @@
     return null;
   }
 
-  // фильтры истории: в длинном списке иначе не найти, что ищешь
-  const BETS_FILTERS = [
-    { code: "all", label: "Все" },
-    { code: "open", label: "В игре" },
-    { code: "won", label: "Зашли" },
-    { code: "lost", label: "Не зашли" },
-    { code: "express", label: "Экспрессы" },
-  ];
-
-  function matchesFilter(item, filter) {
-    if (filter === "express") return item.kind === "express";
-    if (filter === "open") return item.status === "open" || item.status === "live" || item.status === "awaiting";
-    if (filter === "won") return item.status === "settled" && item.result === "won";
-    if (filter === "lost") return item.status === "settled" && item.result === "lost";
-    return true;
-  }
-
   function renderBets(data) {
     const host = $("#bets");
     host.textContent = "";
     const open = (data && data.open) || [];
     const settled = (data && data.settled) || [];
-    const filter = state.betsFilter || "all";
+    const view = ["all", "open", "settled"].includes(state.betsView) ? state.betsView : "all";
 
-    if (!open.length && !settled.length) {
-      host.append(emptyWithMascot("Ставок пока нет. Матчи → кэф → сумма."));
-      return;
-    }
-
-    const all = open.concat(settled);
-    const chips = el("div", "chips bets-filters");
-    BETS_FILTERS.forEach((option) => {
-      const count = all.filter((item) => matchesFilter(item, option.code)).length;
-      const chip = el("button", "chip" + (filter === option.code ? " active" : ""));
-      chip.type = "button";
-      chip.append(el("span", null, option.label), el("b", null, String(count)));
-      chip.addEventListener("click", () => {
-        state.betsFilter = option.code;
+    const tabs = el("div", "segments bets-main-tabs");
+    [
+      { code: "all", label: "Все", count: open.length + settled.length },
+      { code: "open", label: "В игре", count: open.length },
+      { code: "settled", label: "Рассчитанные", count: settled.length },
+    ].forEach((option) => {
+      const button = el("button", "seg" + (view === option.code ? " active" : ""));
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(view === option.code));
+      button.append(document.createTextNode(option.label), el("span", "bets-main-count", String(option.count)));
+      button.addEventListener("click", () => {
+        state.betsView = option.code;
         haptic("light");
         renderBets(data);
       });
-      chips.append(chip);
+      tabs.append(button);
     });
-    host.append(chips);
+    host.append(tabs);
 
-    const shownOpen = open.filter((item) => matchesFilter(item, filter));
-    const openTitle = el("div", "section-title");
-    openTitle.append(el("h2", null, "В игре"));
-    openTitle.append(el("span", "tag open", String(open.length)));
-    if (filter === "all" || shownOpen.length) host.append(openTitle);
-    if (!open.length) {
-      if (filter === "all") host.append(emptyWithMascot("Нет активных ставок."));
-    } else {
-      shownOpen.forEach((item) => host.append(renderBetCard(item)));
+    const appendSection = (title, items, emptyText) => {
+      if (!items.length) {
+        if (emptyText) host.append(emptyWithMascot(emptyText));
+        return;
+      }
+      const sectionTitle = el("div", "section-title");
+      sectionTitle.append(el("h2", null, title), el("span", "tag", String(items.length)));
+      host.append(sectionTitle);
+      items.forEach((item) => host.append(renderBetCard(item)));
+    };
+
+    if (view === "open") {
+      appendSection("В игре", open, "Ставок в игре пока нет.");
+      return;
+    }
+    if (view === "all") {
+      if (!open.length && !settled.length) {
+        host.append(emptyWithMascot("Ставок пока нет. Матчи → кэф → сумма."));
+        return;
+      }
+      appendSection("В игре", open);
+      appendSection("Рассчитанные", settled);
+      return;
     }
 
-    const shownSettled = settled.filter((item) => matchesFilter(item, filter));
-    const settledTitle = el("div", "section-title");
-    settledTitle.append(el("h2", null, "Рассчитанные"));
-    if (data && data.counts) {
-      settledTitle.append(el("span", "tag won", `зашло ${data.counts.won} · не зашло ${data.counts.lost}`));
-    }
-    if (filter === "all" || shownSettled.length) host.append(settledTitle);
-    if (!settled.length) {
-      if (filter === "all") host.append(el("div", "empty", "Пока ничего не рассчитано."));
-    } else {
-      shownSettled.forEach((item) => host.append(renderBetCard(item)));
-    }
-    if (filter !== "all" && !shownOpen.length && !shownSettled.length) {
-      host.append(emptyWithMascot("Под этот фильтр ничего не подходит."));
-    }
+    appendSection("Рассчитанные", settled, "Рассчитанных ставок пока нет.");
   }
 
   // Рассчитанные ставки, которые игрок ещё не видел: говорим тостом,
@@ -3722,6 +3703,7 @@
   function renderLadder(host) {
     if (!host) return;
     host.textContent = "";
+    host.append(gameBackButton());
     const game = state.ladder;
     const card = el("section", "ladder-card");
     card.append(el("div", "ladder-kicker", "РИСКНИ — ИЛИ ЗАБЕРИ СВОЁ"));
@@ -3987,8 +3969,8 @@
     const footer = el("div", "bj-footnote",
       "Обычная победа приносит чистую прибыль 1:1, ничья возвращает ставку; натуральный блэкджек — 3:2. " +
       "Дилер стоит на любой 17. Удвоение доступно на первых двух картах; сплит одинаковых рангов — до 4 рук. " +
-      "Тузы нельзя делить повторно, после сплита тузов выдаётся по одной карте. Страховка против туза стоит " +
-      "блэкджеке дилера возвращает 3× сумму страховки.");
+      "Тузы нельзя делить повторно, после сплита тузов выдаётся по одной карте. Используется одна колода из 52 карт: " +
+      "одинаковые карты не повторяются. Страховка против туза стоит половину ставки, при блэкджеке дилера возвращает 3× сумму страховки.");
     table.append(footer);
     host.append(table, summaryNode(), historyNode());
   }
@@ -4040,19 +4022,34 @@
     }
   }
 
+  function gameBackButton() {
+    const button = el("button", "btn ghost game-back", "‹ Все игры");
+    button.type = "button";
+    button.dataset.backToGames = "true";
+    return button;
+  }
+
   function renderGames() {
     const host = $("#games");
     if (!host) return;
+    const menu = $("#gameSwitch");
+    const screen = $("#screen-games");
+    if (screen) screen.classList.toggle("catalog-mode", !state.game);
 
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
-      const active = btn.dataset.game === state.game;
+      const active = Boolean(state.game) && btn.dataset.game === state.game;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", String(active));
     });
+    if (menu) menu.hidden = Boolean(state.game);
 
+    if (!state.game) {
+      host.textContent = "";
+      return;
+    }
     if (!state.user) {
       host.textContent = "";
-      host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
+      host.append(gameBackButton(), el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
       return;
     }
     if (state.game === "ladder") {
@@ -4061,17 +4058,17 @@
     }
     if (state.game === "blackjack") {
       renderBlackjack(host);
+      host.prepend(gameBackButton());
       return;
     }
     if (!state.casino) {
-      if (!host.querySelector(".skeleton")) {
-        host.textContent = "";
-        host.append(el("div", "skeleton"), el("div", "skeleton"));
-      }
+      host.textContent = "";
+      host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
       return;
     }
 
     host.textContent = "";
+    host.append(gameBackButton());
     const game = state.game;
     const pick = pickFor(game);
 
@@ -4344,6 +4341,17 @@
       const node = event.target.closest("button");
       if (!node || node.disabled) return;
       const game = state.game;
+
+      if (node.dataset.backToGames !== undefined) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy) {
+          toast("Дождись конца хода", "bad");
+          return;
+        }
+        state.game = null;
+        haptic("light");
+        renderGames();
+        return;
+      }
 
       if (node.dataset.ladderStake) {
         state.ladderStake = Number(node.dataset.ladderStake);

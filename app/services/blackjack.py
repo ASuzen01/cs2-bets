@@ -16,10 +16,9 @@ MAX_HANDS = 4
 
 
 def make_shoe() -> list[dict[str, str]]:
-    """Перемешивает шесть колод; колода не уходит клиенту и не переиспользуется."""
+    """Перемешивает одну стандартную колоду: каждая карта встречается один раз."""
     shoe = [
         {"rank": rank, "suit": suit}
-        for _ in range(6)
         for suit in SUITS
         for rank in RANKS
     ]
@@ -56,9 +55,21 @@ def is_natural(hand: dict[str, Any]) -> bool:
 
 
 def _draw(state: dict[str, Any]) -> dict[str, str]:
-    if not state["shoe"]:
-        state["shoe"] = make_shoe()
-    return state["shoe"].pop()
+    # Не переиспользуем ту же масть и достоинство в одной раздаче. Проверка нужна
+    # и для активных партий, сохранённых старой версией с шестью колодами.
+    dealt = {
+        (card.get("rank"), card.get("suit"))
+        for hand in state.get("hands", [])
+        for card in hand.get("cards", [])
+    }
+    dealt.update(
+        (card.get("rank"), card.get("suit")) for card in state.get("dealer", [])
+    )
+    while state["shoe"]:
+        card = state["shoe"].pop()
+        if (card.get("rank"), card.get("suit")) not in dealt:
+            return card
+    raise ValueError("В этой раздаче закончились уникальные карты")
 
 
 def _dealer_blackjack(state: dict[str, Any]) -> bool:

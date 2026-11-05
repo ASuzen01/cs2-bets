@@ -142,30 +142,95 @@
     <div id="matches"></div>
   </section>
 
-  <section class="screen" id="screen-games">
+  <section class="screen catalog-mode" id="screen-games">
+    <div class="game-catalog-head">
+      <div class="game-catalog-eyebrow">МИНИ-ИГРЫ</div>
+      <h1>Выбирай игру</h1>
+    </div>
     <div class="game-menu" id="gameSwitch" role="group" aria-label="Выбор игры">
-      <button class="game-tile active" type="button" data-game="roulette" aria-pressed="true">
-        <span class="game-tile-icon" aria-hidden="true">🎡</span>
+      <button class="game-tile" type="button" data-game="roulette" aria-pressed="false">
+        <span class="game-tile-art art-roulette" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <circle cx="110" cy="112" r="82" fill="#f4c64f"/>
+            <circle cx="110" cy="112" r="72" fill="#18202a" stroke="#f8df87" stroke-width="5"/>
+            <path d="M110 43a69 69 0 0 1 48 20l-48 49z" fill="#ec4774"/>
+            <path d="M158 63a69 69 0 0 1 20 49h-68z" fill="#20a884"/>
+            <path d="M178 112a69 69 0 0 1-20 49l-48-49z" fill="#ec4774"/>
+            <path d="M158 161a69 69 0 0 1-48 20v-69z" fill="#20a884"/>
+            <path d="M110 181a69 69 0 0 1-49-20l49-49z" fill="#ec4774"/>
+            <path d="M61 161a69 69 0 0 1-20-49h69z" fill="#20a884"/>
+            <path d="M41 112a69 69 0 0 1 20-49l49 49z" fill="#ec4774"/>
+            <path d="M61 63a69 69 0 0 1 49-20v69z" fill="#20a884"/>
+            <circle cx="110" cy="112" r="28" fill="#f8db78"/>
+            <circle cx="110" cy="112" r="17" fill="#273345"/>
+            <circle cx="61" cy="54" r="7" fill="#fff8df" stroke="#f4c64f" stroke-width="3"/>
+            <path d="m177 34 4 9 10 1-8 6 3 10-9-6-8 6 3-10-8-6 10-1z" fill="#ffdc4b"/>
+          </svg>
+        </span>
         <b class="game-tile-title">Рулетка</b>
         <small class="game-tile-description">Число, цвет или сектор</small>
       </button>
       <button class="game-tile" type="button" data-game="dice" aria-pressed="false">
-        <span class="game-tile-icon" aria-hidden="true">🎲</span>
+        <span class="game-tile-art art-dice" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <g transform="translate(26 48) rotate(-12 55 55)">
+              <path d="M18 28 66 7l47 24-48 23z" fill="#fff1be"/>
+              <path d="M18 28v58l47 28V54z" fill="#ffc44f"/>
+              <path d="M65 54v60l48-27V31z" fill="#ee8b49"/>
+              <circle cx="42" cy="44" r="6" fill="#56334d"/><circle cx="82" cy="36" r="6" fill="#56334d"/>
+              <circle cx="42" cy="73" r="6" fill="#56334d"/><circle cx="82" cy="78" r="6" fill="#56334d"/>
+            </g>
+            <g transform="translate(102 82) rotate(12 48 48)">
+              <path d="M15 22 57 4l44 22-44 22z" fill="#e3fff4"/>
+              <path d="M15 22v53l42 26V48z" fill="#3fc4a1"/>
+              <path d="M57 48v53l44-26V26z" fill="#198f7e"/>
+              <circle cx="37" cy="35" r="6" fill="#ffffff"/><circle cx="77" cy="31" r="6" fill="#ffffff"/>
+              <circle cx="37" cy="65" r="6" fill="#ffffff"/><circle cx="77" cy="73" r="6" fill="#ffffff"/>
+            </g>
+            <path d="m42 29 4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#ec4774"/>
+            <circle cx="184" cy="53" r="5" fill="#f25782"/><circle cx="34" cy="164" r="4" fill="#ffbf42"/>
+          </svg>
+        </span>
         <b class="game-tile-title">Кости</b>
         <small class="game-tile-description">Угадай сумму броска</small>
       </button>
       <button class="game-tile" type="button" data-game="ladder" aria-pressed="false">
-        <span class="game-tile-icon" aria-hidden="true">🚪</span>
+        <span class="game-tile-art art-ladder" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <path d="M25 171h170" stroke="#58618b" stroke-width="4" stroke-linecap="round"/>
+            <path d="M42 171V94q0-8 8-8h34q8 0 8 8v77" fill="#ec4774" stroke="#ff94aa" stroke-width="4"/>
+            <path d="M94 171V65q0-8 8-8h34q8 0 8 8v106" fill="#6379dc" stroke="#a4b6ff" stroke-width="4"/>
+            <path d="M146 171V39q0-8 8-8h25q8 0 8 8v132" fill="#24bfa2" stroke="#7ef2d4" stroke-width="4"/>
+            <circle cx="75" cy="132" r="4" fill="#ffe2a3"/><circle cx="127" cy="105" r="4" fill="#ffe2a3"/><circle cx="171" cy="82" r="4" fill="#ffe2a3"/>
+            <path d="M38 73h48M90 45h55M143 20h48" stroke="#242a44" stroke-width="5" stroke-linecap="round"/>
+            <path d="m39 43 4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#ffd646"/>
+            <path d="m178 110 3 6 7 1-5 5 1 7-6-4-6 4 2-7-6-5 7-1z" fill="#ff88b4"/>
+          </svg>
+        </span>
         <b class="game-tile-title">Лесенка</b>
         <small class="game-tile-description">Выбирай двери и забирай выплату</small>
       </button>
       <button class="game-tile" type="button" data-game="blackjack" aria-pressed="false">
-        <span class="game-tile-icon" aria-hidden="true">🃏</span>
+        <span class="game-tile-art art-blackjack" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <g transform="translate(42 36) rotate(-12 58 78)">
+              <rect x="5" y="6" width="104" height="150" rx="14" fill="#fffaf0" stroke="#d9d5eb" stroke-width="4"/>
+              <text x="20" y="48" fill="#e94873" font-size="29" font-weight="900" font-family="Arial">A</text>
+              <text x="18" y="82" fill="#e94873" font-size="30" font-family="Arial">♥</text>
+            </g>
+            <g transform="translate(92 40) rotate(11 58 78)">
+              <rect x="5" y="6" width="104" height="150" rx="14" fill="#fffaf0" stroke="#d9d5eb" stroke-width="4"/>
+              <text x="20" y="48" fill="#22293b" font-size="29" font-weight="900" font-family="Arial">K</text>
+              <text x="18" y="82" fill="#22293b" font-size="30" font-family="Arial">♠</text>
+            </g>
+            <path d="m187 38 4 9 10 1-8 6 3 10-9-6-8 6 3-10-8-6 10-1z" fill="#f5ba39"/>
+          </svg>
+        </span>
         <b class="game-tile-title">Блэкджек</b>
         <small class="game-tile-description">Классическая игра 21</small>
       </button>
     </div>
-    <div id="games"><div class="skeleton"></div><div class="skeleton"></div></div>
+    <div id="games"></div>
   </section>
 
   <section class="screen" id="screen-express">
@@ -174,7 +239,6 @@
   </section>
 
   <section class="screen" id="screen-bets">
-    <h2>История ставок</h2>
     <div id="bets"><div class="skeleton"></div><div class="skeleton"></div></div>
   </section>
 
