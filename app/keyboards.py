@@ -47,11 +47,11 @@ def app_kb(*, group: bool = False) -> InlineKeyboardMarkup | None:
         if not link:
             return None
         return InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="📱 Открыть приложение", url=link)]]
+            inline_keyboard=[[InlineKeyboardButton(text="💎 Открыть приложение", url=link)]]
         )
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="📱 Открыть приложение", web_app=WebAppInfo(url=url))
+    builder.button(text="💎 Открыть приложение", web_app=WebAppInfo(url=url))
     return builder.as_markup()
 
 

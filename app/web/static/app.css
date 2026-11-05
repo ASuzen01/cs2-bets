@@ -1,8 +1,8 @@
-:root{
-    --bg:#0f1720; --bg2:#151d26; --card:#1a2431; --card2:#202c3b;
-    --text:#eaf0f6; --muted:#8496a8; --accent:#4dabf7; --accent-soft:#1d3549;
-    --ok:#37b24d; --warn:#f5a623; --bad:#e03131; --line:#22303f;
-    --radius:16px; --tabbar:64px;
+  :root{
+    --bg:#090b0e; --bg2:#111419; --card:#15191e; --card2:#1d2228;
+    --text:#f2eee4; --muted:#99968d; --accent:#d6b66d; --accent-soft:#342d20;
+    --ok:#78c49a; --warn:#d9b75e; --bad:#d47b76; --line:#302a20;
+    --radius:18px; --tabbar:66px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
@@ -948,3 +948,144 @@
   .bj-card{flex-basis:40px;width:40px;height:58px}
   .bj-actions{gap:6px}
 }
+
+/* --------------------------------------------------------- LUXURY CASINO THEME */
+html,body{background-color:var(--bg);color:var(--text);color-scheme:dark}
+body{background-image:radial-gradient(ellipse 110% 52% at 50% -12%,rgba(177,139,65,.12),transparent 70%)}
+header{background:linear-gradient(180deg,rgba(17,18,17,.98),rgba(10,11,13,.96));
+  border-bottom:1px solid rgba(196,163,96,.24);box-shadow:0 8px 26px rgba(0,0,0,.18)}
+.mascot{filter:drop-shadow(0 2px 7px rgba(207,172,97,.22))}
+.who .brand{font-family:Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.035em;color:#f1e5c8}
+.balance{background:linear-gradient(145deg,#211d14,#14130f);border:1px solid #65532f;color:#e9d08d;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 3px 12px rgba(0,0,0,.18)}
+.balance.flash{animation:flash .6s ease}
+.bonusbell{background:linear-gradient(145deg,#211d15,#15130f);border-color:#64532f;color:#e7cb82}
+.bonusbell.active{background:#302716;border-color:#ad8c4a;color:#f4dfa3;box-shadow:0 0 0 2px rgba(214,182,109,.13)}
+main{max-width:620px}
+h1,h2,h3{color:var(--text)}
+h2{color:#c4ab70;letter-spacing:.12em}
+.game-catalog-eyebrow{color:#e0c67f}
+.game-catalog-head h1{font-family:Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.005em}
+.card,.betcard,.rowcard,.stat,.summary,.casino-summary>div,.casino-hist .row,.casino-outcome,
+.ach,.bonuscard,.refbox code{border-color:rgba(193,161,93,.2)}
+.card,.betcard,.rowcard,.stat{background:linear-gradient(145deg,rgba(24,25,25,.98),rgba(16,18,19,.98));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 7px 20px rgba(0,0,0,.12)}
+.card.live,.betcard.live{border-color:rgba(204,174,107,.35);background:linear-gradient(145deg,#1b1c1a,#131515)}
+.betcard.won{border-color:rgba(102,163,119,.42)}
+.betcard.lost{border-color:rgba(154,91,83,.35)}
+.card .top,.hint,.top-note{color:#a4a092}
+.teams .odd,.fb-odds .odd,.mkt-chip,.bet-chip,.stake-chip,.stake-step,.stake-input,
+.mkt-toggle,.filterrow .fchip,.chips .chip,.presets button,.rowcard,.scoreline,.casino-hist .row,
+.casino-summary>div,.refbox code{background:linear-gradient(145deg,#1c1e1c,#151718);border-color:#393225;color:#e8e1d1}
+.odd:active,.mkt-chip:active,.stake-step:active,.presets button:active{background:#28251d}
+.odd .val,.rowcard .val,.mkt-chip .val,.bet-chip .val,.summary .big,.casino-outcome .line1 .big{color:#e6c676}
+.bet-chip.active,.stake-chip.active,.presets button.chosen{background:linear-gradient(145deg,#4a3c22,#2d271a);border-color:#b08f4d;color:#f2dfa9;
+  box-shadow:inset 0 0 0 1px rgba(225,196,129,.1),0 4px 14px rgba(0,0,0,.16)}
+.bet-chip.active .val{color:#f5df9e}
+.bet-chip.active::after{background:linear-gradient(180deg,#f2dc9c,#ad8744)}
+.bet-chip.redded{background:#291e1d;border-color:#5c3830}
+.bet-chip.redded .lbl{color:#d69b88}
+.bet-chip.blackded{background:#1a1c1d;border-color:#343536}
+.numboard button.red{background:#472328;color:#e6b0a1;border-color:#74434a}
+.numboard button.black{background:#1c1e20;color:#e6e0d2;border-color:#42403a}
+.numboard button.green{background:#193b30;color:#a8d6b4;border-color:#38624f}
+.numboard button.active{box-shadow:0 0 0 2px #d6b66d;color:#fff7df}
+.stake-input,.custom input{background:#101211;border-color:#4a4030;color:#f0d78e}
+.stake-input:focus,.custom input:focus{border-color:#c4a25a;box-shadow:0 0 0 3px rgba(214,182,109,.13)}
+.stake-input::placeholder{color:#777364}
+.stake-step{color:#d4c08b}
+.bet-meta{color:#aaa596}
+.bet-meta b,.money{color:var(--text)}
+.bet-meta.warn{color:#d18b7d}
+.segments{background:#131516;border-color:#393225}
+.seg{color:#aaa496}
+.seg.active{background:linear-gradient(135deg,#e6cf91,#b38c49);color:#17140e;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 3px 10px rgba(0,0,0,.18)}
+.segments.sports .seg.active{background:linear-gradient(135deg,#e6cf91,#b38c49);color:#17140e;border-color:#d0b370}
+.bets-main-count,.bets-main-tabs .seg.active .bets-main-count{background:rgba(20,18,13,.16);color:inherit}
+.chip{background:#1a1b19;border-color:#403827;color:#dfc57e}
+.chip.active,.fchip.on{background:linear-gradient(135deg,#e4ce91,#b38c49)!important;border-color:#e4ce91!important;color:#17140e!important}
+.fchip{border-color:#403827;color:#c6b87f}
+.fchip.on{color:#17140e}
+.btn{background:linear-gradient(135deg,#ead699 0%,#d2b36d 45%,#a9823d 100%);border:1px solid #e5cd8e;
+  color:#17140e;font-weight:800;box-shadow:0 8px 20px rgba(153,119,53,.2),inset 0 1px 0 rgba(255,255,255,.4)}
+.btn.ghost{background:linear-gradient(145deg,#20211e,#171918);color:#e6ddc8;border:1px solid #463c2a;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.btn.ghost:active{background:#29271f}
+.btn.play,.btn.bonus{background:linear-gradient(135deg,#e8d193,#c9a65e 55%,#a17a39);color:#18150e;border-color:#e0c780;
+  box-shadow:0 8px 22px rgba(152,116,45,.24),inset 0 1px 0 rgba(255,255,255,.36)}
+.btn.play:disabled,.btn.bonus:disabled{background:#34332c;color:#898474;border-color:#494638;box-shadow:none}
+nav.tabs{background:rgba(11,13,14,.97);border-top:1px solid rgba(195,162,93,.23);box-shadow:0 -8px 24px rgba(0,0,0,.16)}
+nav.tabs button.active{color:#e0c273}
+nav.tabs button.active svg.ic{filter:drop-shadow(0 0 5px rgba(218,184,104,.22))}
+nav.tabs .dot{background:#b99755;color:#15130d}
+.section-title h2,.day{color:#c4ab70}
+.tag.open,.tag.live{background:#322a1a;color:#e7c779;border-color:#66532b}
+.tag.won{background:#18251d;color:#91c9a0;border-color:#38543c}
+.tag.lost{background:#291b1a;color:#d28c80;border-color:#5d3530}
+.tag.void{background:#20201d;color:#aaa698;border-color:#403d35}
+.money.plus,.stat .plus,.streak b{color:#9bcea5}
+.money.minus{color:#d18b80}
+.cartbar{background:rgba(16,17,16,.98);border-color:#55452a;box-shadow:0 8px 26px rgba(0,0,0,.3)}
+.cartbar .grow span{color:#dbc27d}
+.sheet-wrap{background:rgba(0,0,0,.72);backdrop-filter:blur(5px)}
+.sheet{background:linear-gradient(160deg,#181a19,#101211);border-top-color:#80673b;box-shadow:0 -14px 38px rgba(0,0,0,.4)}
+.presets button.chosen{background:#40351f;border-color:#b39150;color:#efdda6}
+.summary{background:#151716;border-color:#443a29;color:#d8d1c1}
+.summary b{color:#f5eddb}
+.toast{background:#1a1c1a;border-color:#51442c;color:#f1e8d3;box-shadow:0 8px 24px rgba(0,0,0,.32)}
+.toast.ok{border-color:#44674b;background:#17231a}
+.toast.bad{border-color:#75453d;background:#261918}
+.skeleton{background:linear-gradient(90deg,#171a1a,#26251f,#171a1a);background-size:200% 100%}
+.ach{background:linear-gradient(145deg,#1c1e1c,#141616);border-color:#393225}
+.ach.on{border-color:#6d5a32;background:linear-gradient(145deg,#2b261a,#181813)}
+.ach.on span{color:#e0cf9c}
+.streak-line,.tickets-row{color:#cfbf91}
+.tickets-row.freebet{color:#e6d18d;background:rgba(180,140,64,.08);border-color:#6b5834}
+.top-seg .seg.active{color:#17140e}
+.rowcard.me{background:linear-gradient(145deg,#272218,#181714);border-color:#75603a}
+.empty{color:#aaa596}
+.bet-legs{color:#a7a294}
+.bet-meta{border-top-color:rgba(191,164,101,.2)}
+input,select,textarea{color:var(--text);accent-color:#c6a45e}
+button:focus-visible{outline-color:#d6b66d}
+.blackjack-table{border-color:#806d43;background:radial-gradient(ellipse at 50% 0%,#214436 0,#14251e 45%,#101614 100%);
+  box-shadow:inset 0 0 45px rgba(0,0,0,.24),0 12px 30px rgba(0,0,0,.25)}
+.bj-heading{border-bottom-color:rgba(214,182,109,.24)}
+.bj-kicker,.bj-rules-line,.bj-seat-head span,.bj-total,.bj-insurance>span,.bj-insurance small,.bj-note,.bj-footnote{color:#c6b78d}
+.bj-heading h2,.bj-seat-head b,.bj-start-box p{color:#f2ead8}
+.bj-hand{border-color:rgba(214,182,109,.2);background:rgba(4,14,10,.28)}
+.bj-hand.active{border-color:#c4a763;background:rgba(112,84,34,.18);box-shadow:0 0 0 1px rgba(214,182,109,.12)}
+.bj-card.hidden{border-color:#b39355;background:repeating-linear-gradient(45deg,#20392f 0 5px,#294537 5px 8px);color:#e6d29b}
+.bj-result.positive{border-color:rgba(120,196,154,.45)}
+.bj-footnote{border-top-color:rgba(214,182,109,.2)}
+.ladder-card{border-color:#7a6338;background:radial-gradient(ellipse at 50% -20%,rgba(157,123,57,.16),transparent 62%),#111514}
+.ladder-kicker,.ladder-floorhead span{color:#ddc582}
+.ladder-progress span.done{color:#abd3b0;background:#1c3022}
+.ladder-progress span.current{color:#17140d;background:linear-gradient(135deg,#e8d394,#b28a45);box-shadow:0 0 14px rgba(214,182,109,.18)}
+.ladder-door{border-color:#51462e;color:#e1d7c1;background:linear-gradient(145deg,#25231d,#171918)}
+.ladder-door-icon{color:#d2b46f;border-color:#9a7d43;background:linear-gradient(90deg,rgba(201,169,96,.08),rgba(201,169,96,.2))}
+.ladder-door.prize{border-color:#8b7444;background:linear-gradient(145deg,#40361f,#211d14)}
+.ladder-door.prize small{color:#e7cd83}
+.ladder-stake{border-color:#49402d;color:#d2c39d;background:#1a1b18}
+.ladder-stake.active{border-color:#c4a55e;color:#f0db9f;background:rgba(177,139,65,.16)}
+.ladder-start,.ladder-next,.ladder-cash{border:1px solid #d5bb78;color:#17140d;background:linear-gradient(135deg,#e8d394,#b08a47)}
+.ladder-note,.ladder-foot{color:#aaa391}
+.ladder-success,.ladder-result{border-color:#665533;color:#e2d09c;background:rgba(164,130,60,.1)}
+.legadd{border-color:#5a4b30;background:rgba(175,139,68,.07);color:#d9c07d}
+.legadd:active{background:rgba(175,139,68,.17)}
+.legadd.added{border-color:#46664b;background:rgba(93,146,103,.12);color:#a6cda9}
+.mkt-toggle,.mkt-toggle.open{background:linear-gradient(145deg,#1d1e1b,#141615);border-color:#4d412b;color:#ddca95}
+.mkt-toggle .cnt{color:#aaa391}
+.tourlist button.active{background:#302819;border-color:#8c7040;color:#e5d29c}
+.fb-score{background:#191b19;border-color:#3d382b;color:#e7dfcf}
+.fb-score.live{background:#2b1d1a;border-color:#664038;color:#d9a18e}
+.qbar i{background:linear-gradient(90deg,#d4b363,#7faf82)}
+.quest.ready{background:rgba(159,129,62,.08)}
+.favstar.on{color:#e0c273}
+.fchip.on{background:rgba(177,139,65,.14);border-color:#725c33;color:#ead394}
+.ticketbtn{border-color:#756038!important;color:#e0ca8d!important;background:rgba(176,139,64,.1)!important}
+.ticketbtn.on{background:rgba(176,139,64,.22)!important;border-color:#b19250!important;color:#f0dda5!important}
+.tickets-row{color:#c9b477}
+.tickets-row.freebet{border-color:#756039;color:#e8d28d}
+.scoreline .big.win{color:#9bcea5}
+.ladder-result.lost{border-color:#65403a;color:#d9a49a;background:rgba(115,54,45,.13)}

@@ -19,6 +19,7 @@ def test_app_kb_single_button(miniapp_url: str) -> None:
     assert markup is not None
     buttons = [button for row in markup.inline_keyboard for button in row]
     assert len(buttons) == 1, "в боте должна остаться одна кнопка — открыть приложение"
+    assert buttons[0].text == "💎 Открыть приложение"
     assert buttons[0].web_app is not None
     assert buttons[0].web_app.url == miniapp_url
 

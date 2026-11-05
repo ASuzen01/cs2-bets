@@ -347,10 +347,10 @@
   }
 
   function emptyWithMascot(text) {
-    // пустые состояния показываем с маскотом — приложение не выглядит «сломанным»
+    // пустые состояния получаются с эмблемой клуба, а не выглядят как ошибка
     const box = el("div", "empty");
     const img = el("img", "mascot-empty");
-    img.src = "/static/mascot.png";
+    img.src = "/static/crest.svg";
     img.alt = "";
     box.append(img, document.createTextNode(text));
     return box;
