@@ -582,6 +582,22 @@ class Database:
             await self._bump_quest(conn, user_id, "bonus", now)
             return await self._credit(conn, user_id, prize, "колесо фортуны", now)
 
+    async def add_ticket(self, user_id: int, amount: int, source: str = "wheel") -> int:
+        """Кладёт в профиль билет в экспресс (приз колеса). Возвращает его id."""
+        created = await self._write(
+            "INSERT INTO tickets (user_id, amount, source, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, int(amount), source[:32], int(time.time())),
+        )
+        return int(getattr(created, "lastrowid", 0) or 0)
+
+    async def tickets(self, user_id: int, limit: int = 5) -> list[Any]:
+        """Неиспользованные билеты: их видно в купоне экспресса."""
+        return await self._fetchall(
+            "SELECT id, amount, source, created_at FROM tickets"
+            " WHERE user_id = ? AND used_at IS NULL ORDER BY id LIMIT ?",
+            (user_id, limit),
+        )
+
     async def claim_paid_wheel(self, user_id: int, cost: int, prize: int) -> tuple[bool, int, int]:
         """Платная крутка: списываем стоимость и сразу начисляем приз."""
         now = int(time.time())
@@ -2302,11 +2318,14 @@ class Database:
         *,
         max_odds: float | None = None,
         token: str | None = None,
+        ticket_id: int | None = None,
     ) -> tuple[int, float, int]:
         """Ставит экспресс. legs: [{'match_id': int, 'side': 'a'|'b'}].
 
         Возвращает (express_id, итоговый кэф, новый баланс).
         `token` защищает от двойного списания при повторном тапе.
+        `ticket_id` — оплата билетом с колеса: монеты со счёта не списываются,
+        но и сумма ставки должна совпадать с номиналом билета.
         """
         from app.services.legs import odds as leg_odds
 
@@ -2321,6 +2340,21 @@ class Database:
 
         tap = self._clean_token(token)
         now = int(time.time())
+        # билет проверяем до списания: он должен быть свой и неистраченный
+        ticket = None
+        if ticket_id:
+            async with self.transaction() as conn, conn.execute(
+                "SELECT * FROM tickets WHERE id = ?", (int(ticket_id),)
+            ) as cur:
+                ticket = await cur.fetchone()
+            if ticket is None or int(ticket["user_id"]) != user_id:
+                raise InvalidBet("Билет не найден")
+            if ticket["used_at"] is not None:
+                raise InvalidBet("Билет уже использован")
+            if int(ticket["amount"]) != stake:
+                raise InvalidBet(
+                    f"Билет на {int(ticket['amount'])} 🪙 — сумма ставки должна совпадать"
+                )
         async with self.transaction() as conn:
             if await self._claim_token(conn, user_id, "express", tap, now) is not None:
                 previous = await self._previous_id(conn, user_id, "express", tap)
@@ -2356,12 +2390,21 @@ class Database:
                     f"Итоговый кэф {total_odds:.2f} выше лимита {max_odds:.0f} — убери лишние исходы"
                 )
 
-            cur = await conn.execute(
-                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
-                (stake, user_id, stake),
-            )
-            if cur.rowcount == 0:
-                raise InsufficientFunds("Недостаточно монет на балансе")
+            if ticket is not None:
+                # билет гасим атомарно: два тапа не могут потратить его дважды
+                spent = await conn.execute(
+                    "UPDATE tickets SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                    (now, int(ticket["id"])),
+                )
+                if spent.rowcount == 0:
+                    raise InvalidBet("Билет уже использован")
+            else:
+                cur = await conn.execute(
+                    "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                    (stake, user_id, stake),
+                )
+                if cur.rowcount == 0:
+                    raise InsufficientFunds("Недостаточно монет на балансе")
 
             cur = await conn.execute(
                 "INSERT INTO expresses (user_id, chat_id, stake, odds, status, created_at) "
@@ -2378,7 +2421,15 @@ class Database:
                     (express_id, match_id, side, odds),
                 )
 
-            await self._ledger(conn, user_id, -stake, f"экспресс #{express_id}", now)
+            if ticket is not None:
+                await conn.execute(
+                    "UPDATE tickets SET express_id = ? WHERE id = ?",
+                    (express_id, int(ticket["id"])),
+                )
+                # движение нулевое, но в истории видно, что ставка оплачена билетом
+                await self._ledger(conn, user_id, 0, f"экспресс #{express_id} · билет", now)
+            else:
+                await self._ledger(conn, user_id, -stake, f"экспресс #{express_id}", now)
             await self._bump_quest(conn, user_id, "express", now)
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)

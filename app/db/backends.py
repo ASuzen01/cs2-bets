@@ -217,6 +217,18 @@ CREATE TABLE IF NOT EXISTS referrals (
 );
 CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id);
 
+-- билеты в экспресс: приз колеса, ставка за счёт заведения
+CREATE TABLE IF NOT EXISTS tickets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    amount     INTEGER NOT NULL,
+    source     TEXT    NOT NULL DEFAULT 'wheel',
+    created_at INTEGER NOT NULL,
+    used_at    INTEGER,
+    express_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
+
 -- идемпотентность действий игрока: один и тот же тап не должен списать дважды
 CREATE TABLE IF NOT EXISTS bet_requests (
     user_id    INTEGER NOT NULL,

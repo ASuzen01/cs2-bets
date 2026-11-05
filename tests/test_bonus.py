@@ -11,8 +11,13 @@ from app.db import Database
 from app.services.bonus import (
     TEASE_PRIZE,
     WHEEL_JACKPOT,
+    WHEEL_TICKET,
+    WHEEL_TICKET_VALUE,
     WHEEL_VALUES,
+    average_prize,
     daily_layout,
+    is_ticket,
+    prize_value,
     slots_payload,
     spin,
 )
@@ -29,8 +34,27 @@ async def db(tmp_path):
 
 # --------------------------------------------------------------- раскладка
 def test_prize_set() -> None:
+    """«Джекпот-шоу»: 24 сектора, два из них — билет в экспресс."""
     assert len(WHEEL_VALUES) == 24
-    assert Counter(WHEEL_VALUES) == {0: 8, 50: 8, 200: 7, WHEEL_JACKPOT: 1}
+    assert Counter(WHEEL_VALUES) == {
+        WHEEL_JACKPOT: 1,
+        500: 2,
+        100: 5,
+        WHEEL_TICKET: 2,
+        25: 10,
+        0: 4,
+    }
+
+
+def test_economy_pays_back_96_percent() -> None:
+    """Средний приз и возврат платной крутки — главная цифра честности колеса."""
+    expected = average_prize()
+    assert expected == pytest.approx(289.58, abs=0.01)
+    assert expected / 300 * 100 == pytest.approx(96.5, abs=0.1)
+
+    # билет считаем по номиналу, а не как пустой сектор
+    assert prize_value(WHEEL_TICKET) == WHEEL_TICKET_VALUE
+    assert is_ticket(WHEEL_TICKET) and not is_ticket(100)
 
 
 def test_layout_keeps_same_prizes_but_mixes_order() -> None:
@@ -64,9 +88,11 @@ def test_jackpot_chance_is_one_in_24() -> None:
     rng = random.Random(2026)
     winners = Counter(spin(layout, rng)[1] for _ in range(24_000))
     assert winners[WHEEL_JACKPOT] / 24_000 == pytest.approx(1 / 24, abs=0.004)
-    assert winners[200] / 24_000 == pytest.approx(7 / 24, abs=0.008)
-    assert winners[50] / 24_000 == pytest.approx(8 / 24, abs=0.008)
-    assert winners[0] / 24_000 == pytest.approx(8 / 24, abs=0.008)
+    assert winners[500] / 24_000 == pytest.approx(2 / 24, abs=0.006)
+    assert winners[100] / 24_000 == pytest.approx(5 / 24, abs=0.008)
+    assert winners[WHEEL_TICKET] / 24_000 == pytest.approx(2 / 24, abs=0.006)
+    assert winners[25] / 24_000 == pytest.approx(10 / 24, abs=0.01)
+    assert winners[0] / 24_000 == pytest.approx(4 / 24, abs=0.008)
 
 
 def test_slot_index_matches_payload() -> None:
@@ -79,21 +105,24 @@ def test_slots_payload_matches_layout() -> None:
     layout = daily_layout(day=5)
     payload = slots_payload(layout)
     assert len(payload) == 24
-    assert [slot["value"] for slot in payload] == list(layout)
+    # билет уходит на фронт своим номиналом и флагом, а не «−1»
+    assert [slot["value"] for slot in payload] == [prize_value(value) for value in layout]
+    assert [slot["ticket"] for slot in payload] == [is_ticket(value) for value in layout]
+    assert {slot["tier"] for slot in payload} == {"jack", "big", "mid", "ticket", "small", "empty"}
 
 
 # ------------------------------------------------------------------ выдачи
 async def test_free_wheel_once_per_cooldown(db: Database) -> None:
-    ok, _, balance = await db.claim_wheel(1, 200, 24 * 3600)
-    assert ok is True and balance == 1200
+    ok, _, balance = await db.claim_wheel(1, 500, 24 * 3600)
+    assert ok is True and balance == 1500
 
     again, wait, balance = await db.claim_wheel(1, WHEEL_JACKPOT, 24 * 3600)
     assert again is False
     assert 0 < wait <= 24 * 3600
-    assert balance == 1200                       # второй приз не начислился
+    assert balance == 1500                       # второй приз не начислился
 
     ok, _, balance = await db.claim_wheel(1, WHEEL_JACKPOT, 0)   # окно истекло
-    assert ok is True and balance == 2200
+    assert ok is True and balance == 6500
 
 
 async def test_paid_wheel_charges_and_pays(db: Database) -> None:

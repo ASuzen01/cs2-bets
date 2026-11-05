@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     daily_bonus: int = 250
     bonus_cooldown_hours: int = 24
     wheel_cooldown_hours: int = 24   # колесо: одна бесплатная крутка в сутки
-    wheel_cost: int = 150            # цена платной крутки сверх бесплатной
+    wheel_cost: int = 300            # цена платной крутки: 96.5 % возврата от среднего приза
+    wheel_ticket_value: int = 100    # номинал билета в экспресс — приз колеса
     tease_cooldown_hours: int = 24   # пасхалка за 10 нажатий — тоже раз в сутки
     backup_enabled: bool = True      # ежедневный дамп базы в личку админу
     backup_interval_hours: int = 1   # как часто снимать копию (1 = каждый час)

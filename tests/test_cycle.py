@@ -308,8 +308,10 @@ async def test_honesty_numbers(client: TestClient, db: Database) -> None:
     assert body["roulette"]["rtp"] == 97.3          # 18/37 × 2
     assert body["dice"]["rtp"] == 95.5              # DICE_EDGE
     assert body["wheel"]["slots"] == 24
-    assert body["wheel"]["empty"] == 8
-    assert body["wheel"]["expected"] > 0
+    assert body["wheel"]["empty"] == 4
+    assert body["wheel"]["tickets"] == 2
+    assert body["wheel"]["expected"] == 290          # средний приз с учётом билета
+    assert body["wheel"]["rtp"] == 96.5              # 289.6 / 300
     assert body["line"]["bets_staked"] == 100
     assert body["line_rtp"] > 0
 

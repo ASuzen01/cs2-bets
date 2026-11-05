@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Колесо фортуны — три варианта экономики</title>
+<style>
+  :root{--bg:#0C1219;--card:#141d27;--line:#233040;--text:#e8f1fa;--muted:#8a9db0;--gold:#FFD75E;--teal:#2BE3C6}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#16222f,#0C1219 60%);
+    color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:26px 16px 44px}
+  h1{font-size:21px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 20px;max-width:780px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(304px,1fr));gap:16px;margin-bottom:24px}
+  .card{background:linear-gradient(170deg,#182231,#121a24);border:1px solid var(--line);border-radius:18px;padding:16px}
+  .card header{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+  .card header b{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--gold)}
+  .card header span{font-size:15.5px;font-weight:700}
+  .wheelbox{position:relative;display:grid;place-items:center;margin:10px 0 12px}
+  .wheel{filter:drop-shadow(0 12px 26px rgba(0,0,0,.5));max-width:100%;height:auto}
+  .pointer{position:absolute;top:-4px;left:50%;transform:translateX(-50%);width:0;height:0;z-index:3;
+    border-left:10px solid transparent;border-right:10px solid transparent;border-top:19px solid #FFD75E;
+    filter:drop-shadow(0 2px 4px rgba(0,0,0,.65))}
+  .pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .pill{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid #2c3a4a;color:#c7d6e4;background:#101821}
+  .pill.gold{border-color:#5a4a1c;color:#FFD75E;background:#241d09}
+  .feel{margin:0 0 10px;font-size:13.5px;color:#c7d6e4}
+  .pros{list-style:none;margin:0 0 10px;padding:0;font-size:12.5px}
+  .pros li{margin-bottom:3px}
+  .pros .ok{color:#8fe3a5} .pros .bad{color:#ffb3ad}
+  .combo{font-size:11.5px;color:var(--muted);border-top:1px dashed #26313f;padding-top:8px}
+  h2{font-size:16px;margin:24px 0 10px}
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:620px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #1f2a37}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  td b{color:var(--gold)}
+  .now{color:#ffb3ad}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px}
+  .spec{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin-top:10px}
+  .spec h3{margin:0 0 8px;font-size:14px}
+  .spec ul{margin:0;padding-left:18px;font-size:13px;color:#c7d6e4}
+  .spec li{margin-bottom:5px}
+</style></head>
+<body>
+<h1>Колесо фортуны — новая экономика и новый вид</h1>
+<p class="sub">Три набора призов. Дизайн на всех трёх уже новый — такой и пойдёт в прод: тёмное неоновое колесо,
+лампочки по ободу, призы вдоль радиуса, джекпот с алмазом ◆. Цифры точные — из тех же формул, что в коде.</p>
+
+<div class="cards">
+  <article class="card">
+    <header><b>Вариант A</b><span>Ровный ручеёк</span></header>
+    <div class="wheelbox"><svg viewBox="0 0 292 292" width="292" height="292" class="wheel">
+<defs><radialGradient id="hub-A" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#33455c"/><stop offset="1" stop-color="#141d27"/></radialGradient><linearGradient id="rim-A" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fa6bd"/><stop offset=".45" stop-color="#2b3a4b"/><stop offset="1" stop-color="#7d93aa"/></linearGradient></defs>
+<defs><linearGradient id="g-A-0" gradientUnits="userSpaceOnUse" x1="146.00" y1="15.00" x2="179.91" y2="19.46"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 15.00 A 131.00 131.00 0 0 1 179.91 19.46 Z" fill="url(#g-A-0)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="42.10" transform="rotate(7.50 159.68 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-1" gradientUnits="userSpaceOnUse" x1="179.91" y1="19.46" x2="211.50" y2="32.55"><stop offset="0" stop-color="#FFD75E"/><stop offset="1" stop-color="#F0A200"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 19.46 A 131.00 131.00 0 0 1 211.50 32.55 Z" fill="url(#g-A-1)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="49.18" transform="rotate(22.50 186.11 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#2A1C00" font-family="system-ui,sans-serif">◆</text>
+<defs><linearGradient id="g-A-2" gradientUnits="userSpaceOnUse" x1="211.50" y1="32.55" x2="238.63" y2="53.37"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 32.55 A 131.00 131.00 0 0 1 238.63 53.37 Z" fill="url(#g-A-2)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="62.86" transform="rotate(37.50 209.80 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-3" gradientUnits="userSpaceOnUse" x1="238.63" y1="53.37" x2="259.45" y2="80.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 53.37 A 131.00 131.00 0 0 1 259.45 80.50 Z" fill="url(#g-A-3)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="82.20" transform="rotate(52.50 229.14 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">200</text>
+<defs><linearGradient id="g-A-4" gradientUnits="userSpaceOnUse" x1="259.45" y1="80.50" x2="272.54" y2="112.09"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 80.50 A 131.00 131.00 0 0 1 272.54 112.09 Z" fill="url(#g-A-4)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="105.89" transform="rotate(67.50 242.82 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-5" gradientUnits="userSpaceOnUse" x1="272.54" y1="112.09" x2="277.00" y2="146.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 112.09 A 131.00 131.00 0 0 1 277.00 146.00 Z" fill="url(#g-A-5)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="132.32" transform="rotate(82.50 249.90 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">200</text>
+<defs><linearGradient id="g-A-6" gradientUnits="userSpaceOnUse" x1="277.00" y1="146.00" x2="272.54" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 277.00 146.00 A 131.00 131.00 0 0 1 272.54 179.91 Z" fill="url(#g-A-6)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="159.68" transform="rotate(97.50 249.90 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-7" gradientUnits="userSpaceOnUse" x1="272.54" y1="179.91" x2="259.45" y2="211.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 179.91 A 131.00 131.00 0 0 1 259.45 211.50 Z" fill="url(#g-A-7)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="186.11" transform="rotate(112.50 242.82 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">200</text>
+<defs><linearGradient id="g-A-8" gradientUnits="userSpaceOnUse" x1="259.45" y1="211.50" x2="238.63" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 211.50 A 131.00 131.00 0 0 1 238.63 238.63 Z" fill="url(#g-A-8)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="209.80" transform="rotate(127.50 229.14 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-9" gradientUnits="userSpaceOnUse" x1="238.63" y1="238.63" x2="211.50" y2="259.45"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 238.63 A 131.00 131.00 0 0 1 211.50 259.45 Z" fill="url(#g-A-9)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="229.14" transform="rotate(142.50 209.80 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-10" gradientUnits="userSpaceOnUse" x1="211.50" y1="259.45" x2="179.91" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 259.45 A 131.00 131.00 0 0 1 179.91 272.54 Z" fill="url(#g-A-10)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="242.82" transform="rotate(157.50 186.11 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-11" gradientUnits="userSpaceOnUse" x1="179.91" y1="272.54" x2="146.00" y2="277.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 272.54 A 131.00 131.00 0 0 1 146.00 277.00 Z" fill="url(#g-A-11)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="249.90" transform="rotate(172.50 159.68 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-12" gradientUnits="userSpaceOnUse" x1="146.00" y1="277.00" x2="112.09" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 277.00 A 131.00 131.00 0 0 1 112.09 272.54 Z" fill="url(#g-A-12)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="249.90" transform="rotate(187.50 132.32 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-13" gradientUnits="userSpaceOnUse" x1="112.09" y1="272.54" x2="80.50" y2="259.45"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 272.54 A 131.00 131.00 0 0 1 80.50 259.45 Z" fill="url(#g-A-13)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="242.82" transform="rotate(202.50 105.89 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-14" gradientUnits="userSpaceOnUse" x1="80.50" y1="259.45" x2="53.37" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 259.45 A 131.00 131.00 0 0 1 53.37 238.63 Z" fill="url(#g-A-14)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="229.14" transform="rotate(217.50 82.20 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-15" gradientUnits="userSpaceOnUse" x1="53.37" y1="238.63" x2="32.55" y2="211.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 238.63 A 131.00 131.00 0 0 1 32.55 211.50 Z" fill="url(#g-A-15)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="209.80" transform="rotate(232.50 62.86 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-16" gradientUnits="userSpaceOnUse" x1="32.55" y1="211.50" x2="19.46" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 211.50 A 131.00 131.00 0 0 1 19.46 179.91 Z" fill="url(#g-A-16)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="186.11" transform="rotate(247.50 49.18 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-17" gradientUnits="userSpaceOnUse" x1="19.46" y1="179.91" x2="15.00" y2="146.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 179.91 A 131.00 131.00 0 0 1 15.00 146.00 Z" fill="url(#g-A-17)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="159.68" transform="rotate(262.50 42.10 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-18" gradientUnits="userSpaceOnUse" x1="15.00" y1="146.00" x2="19.46" y2="112.09"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 15.00 146.00 A 131.00 131.00 0 0 1 19.46 112.09 Z" fill="url(#g-A-18)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="132.32" transform="rotate(277.50 42.10 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-19" gradientUnits="userSpaceOnUse" x1="19.46" y1="112.09" x2="32.55" y2="80.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 112.09 A 131.00 131.00 0 0 1 32.55 80.50 Z" fill="url(#g-A-19)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="105.89" transform="rotate(292.50 49.18 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-20" gradientUnits="userSpaceOnUse" x1="32.55" y1="80.50" x2="53.37" y2="53.37"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 80.50 A 131.00 131.00 0 0 1 53.37 53.37 Z" fill="url(#g-A-20)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="82.20" transform="rotate(307.50 62.86 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-21" gradientUnits="userSpaceOnUse" x1="53.37" y1="53.37" x2="80.50" y2="32.55"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 53.37 A 131.00 131.00 0 0 1 80.50 32.55 Z" fill="url(#g-A-21)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="62.86" transform="rotate(322.50 82.20 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-A-22" gradientUnits="userSpaceOnUse" x1="80.50" y1="32.55" x2="112.09" y2="19.46"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 32.55 A 131.00 131.00 0 0 1 112.09 19.46 Z" fill="url(#g-A-22)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="49.18" transform="rotate(337.50 105.89 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-A-23" gradientUnits="userSpaceOnUse" x1="112.09" y1="19.46" x2="146.00" y2="15.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 19.46 A 131.00 131.00 0 0 1 146.00 15.00 Z" fill="url(#g-A-23)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="42.10" transform="rotate(352.50 132.32 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">100</text>
+<circle cx="163.88" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="198.43" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="229.40" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="254.69" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="272.57" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="281.83" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="281.83" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="272.57" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="254.69" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="229.40" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="198.43" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="163.88" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="128.12" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="93.57" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="62.60" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="37.31" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="19.43" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="10.17" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="10.17" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="19.43" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="37.31" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="62.60" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="93.57" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="128.12" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="146.0" cy="146.0" r="131.00" fill="none" stroke="url(#rim-A)" stroke-width="8"/>
+<circle cx="146.0" cy="146.0" r="57.64" fill="url(#hub-A)" stroke="#3b4d61" stroke-width="2"/>
+<text x="146.0" y="141.0" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dceaf7" font-family="system-ui,sans-serif">Крутить</text>
+<text x="146.0" y="157.0" text-anchor="middle" font-size="9" fill="#8fa6bd" font-family="system-ui,sans-serif">бесплатно</text>
+</svg><i class="pointer"></i></div>
+    <div class="pills">
+      <span class="pill gold">средний приз 125 🪙</span>
+      <span class="pill">RTP 96.2 %</span>
+      <span class="pill">платная 130 🪙</span>
+      <span class="pill">пусто 0 %</span>
+    </div>
+    <p class="feel">Пустых секторов нет: колесо всегда отдаёт хотя бы 50. Джекпот 1000 — самый частый «вау» (1 к 24). Платная крутка дешёвая, поэтому крутить хочется часто.</p>
+    <ul class="pros"><li class="ok">+ Никогда не обидно: пусто не выпадает, бесплатная крутка всегда «с плюсом».</li><li class="bad">− Нет больших заносов — потолок всего 1000.</li></ul>
+    <div class="combo">1 000 🪙 ×1, 200 🪙 ×3, 100 🪙 ×8, 50 🪙 ×12</div>
+  </article>
+  <article class="card">
+    <header><b>Вариант B</b><span>Джекпот-шоу</span></header>
+    <div class="wheelbox"><svg viewBox="0 0 292 292" width="292" height="292" class="wheel">
+<defs><radialGradient id="hub-B" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#33455c"/><stop offset="1" stop-color="#141d27"/></radialGradient><linearGradient id="rim-B" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fa6bd"/><stop offset=".45" stop-color="#2b3a4b"/><stop offset="1" stop-color="#7d93aa"/></linearGradient></defs>
+<defs><linearGradient id="g-B-0" gradientUnits="userSpaceOnUse" x1="146.00" y1="15.00" x2="179.91" y2="19.46"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 15.00 A 131.00 131.00 0 0 1 179.91 19.46 Z" fill="url(#g-B-0)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="42.10" transform="rotate(7.50 159.68 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-1" gradientUnits="userSpaceOnUse" x1="179.91" y1="19.46" x2="211.50" y2="32.55"><stop offset="0" stop-color="#FFD75E"/><stop offset="1" stop-color="#F0A200"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 19.46 A 131.00 131.00 0 0 1 211.50 32.55 Z" fill="url(#g-B-1)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="49.18" transform="rotate(22.50 186.11 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#2A1C00" font-family="system-ui,sans-serif">◆</text>
+<defs><linearGradient id="g-B-2" gradientUnits="userSpaceOnUse" x1="211.50" y1="32.55" x2="238.63" y2="53.37"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 32.55 A 131.00 131.00 0 0 1 238.63 53.37 Z" fill="url(#g-B-2)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="62.86" transform="rotate(37.50 209.80 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-3" gradientUnits="userSpaceOnUse" x1="238.63" y1="53.37" x2="259.45" y2="80.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 53.37 A 131.00 131.00 0 0 1 259.45 80.50 Z" fill="url(#g-B-3)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="82.20" transform="rotate(52.50 229.14 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">500</text>
+<defs><linearGradient id="g-B-4" gradientUnits="userSpaceOnUse" x1="259.45" y1="80.50" x2="272.54" y2="112.09"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 80.50 A 131.00 131.00 0 0 1 272.54 112.09 Z" fill="url(#g-B-4)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="105.89" transform="rotate(67.50 242.82 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-5" gradientUnits="userSpaceOnUse" x1="272.54" y1="112.09" x2="277.00" y2="146.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 112.09 A 131.00 131.00 0 0 1 277.00 146.00 Z" fill="url(#g-B-5)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="132.32" transform="rotate(82.50 249.90 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">500</text>
+<defs><linearGradient id="g-B-6" gradientUnits="userSpaceOnUse" x1="277.00" y1="146.00" x2="272.54" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 277.00 146.00 A 131.00 131.00 0 0 1 272.54 179.91 Z" fill="url(#g-B-6)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="159.68" transform="rotate(97.50 249.90 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-7" gradientUnits="userSpaceOnUse" x1="272.54" y1="179.91" x2="259.45" y2="211.50"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 179.91 A 131.00 131.00 0 0 1 259.45 211.50 Z" fill="url(#g-B-7)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="186.11" transform="rotate(112.50 242.82 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-8" gradientUnits="userSpaceOnUse" x1="259.45" y1="211.50" x2="238.63" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 211.50 A 131.00 131.00 0 0 1 238.63 238.63 Z" fill="url(#g-B-8)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="209.80" transform="rotate(127.50 229.14 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-9" gradientUnits="userSpaceOnUse" x1="238.63" y1="238.63" x2="211.50" y2="259.45"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 238.63 A 131.00 131.00 0 0 1 211.50 259.45 Z" fill="url(#g-B-9)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="229.14" transform="rotate(142.50 209.80 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-10" gradientUnits="userSpaceOnUse" x1="211.50" y1="259.45" x2="179.91" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 259.45 A 131.00 131.00 0 0 1 179.91 272.54 Z" fill="url(#g-B-10)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="242.82" transform="rotate(157.50 186.11 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-11" gradientUnits="userSpaceOnUse" x1="179.91" y1="272.54" x2="146.00" y2="277.00"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 272.54 A 131.00 131.00 0 0 1 146.00 277.00 Z" fill="url(#g-B-11)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="249.90" transform="rotate(172.50 159.68 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-12" gradientUnits="userSpaceOnUse" x1="146.00" y1="277.00" x2="112.09" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 277.00 A 131.00 131.00 0 0 1 112.09 272.54 Z" fill="url(#g-B-12)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="249.90" transform="rotate(187.50 132.32 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-13" gradientUnits="userSpaceOnUse" x1="112.09" y1="272.54" x2="80.50" y2="259.45"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 272.54 A 131.00 131.00 0 0 1 80.50 259.45 Z" fill="url(#g-B-13)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="242.82" transform="rotate(202.50 105.89 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-14" gradientUnits="userSpaceOnUse" x1="80.50" y1="259.45" x2="53.37" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 259.45 A 131.00 131.00 0 0 1 53.37 238.63 Z" fill="url(#g-B-14)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="229.14" transform="rotate(217.50 82.20 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-15" gradientUnits="userSpaceOnUse" x1="53.37" y1="238.63" x2="32.55" y2="211.50"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 238.63 A 131.00 131.00 0 0 1 32.55 211.50 Z" fill="url(#g-B-15)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="209.80" transform="rotate(232.50 62.86 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-16" gradientUnits="userSpaceOnUse" x1="32.55" y1="211.50" x2="19.46" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 211.50 A 131.00 131.00 0 0 1 19.46 179.91 Z" fill="url(#g-B-16)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="186.11" transform="rotate(247.50 49.18 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">25</text>
+<defs><linearGradient id="g-B-17" gradientUnits="userSpaceOnUse" x1="19.46" y1="179.91" x2="15.00" y2="146.00"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 179.91 A 131.00 131.00 0 0 1 15.00 146.00 Z" fill="url(#g-B-17)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="159.68" transform="rotate(262.50 42.10 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">100</text>
+<defs><linearGradient id="g-B-18" gradientUnits="userSpaceOnUse" x1="15.00" y1="146.00" x2="19.46" y2="112.09"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 15.00 146.00 A 131.00 131.00 0 0 1 19.46 112.09 Z" fill="url(#g-B-18)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="132.32" transform="rotate(277.50 42.10 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-B-19" gradientUnits="userSpaceOnUse" x1="19.46" y1="112.09" x2="32.55" y2="80.50"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 112.09 A 131.00 131.00 0 0 1 32.55 80.50 Z" fill="url(#g-B-19)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="105.89" transform="rotate(292.50 49.18 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-B-20" gradientUnits="userSpaceOnUse" x1="32.55" y1="80.50" x2="53.37" y2="53.37"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 80.50 A 131.00 131.00 0 0 1 53.37 53.37 Z" fill="url(#g-B-20)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="82.20" transform="rotate(307.50 62.86 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-B-21" gradientUnits="userSpaceOnUse" x1="53.37" y1="53.37" x2="80.50" y2="32.55"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 53.37 A 131.00 131.00 0 0 1 80.50 32.55 Z" fill="url(#g-B-21)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="62.86" transform="rotate(322.50 82.20 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-B-22" gradientUnits="userSpaceOnUse" x1="80.50" y1="32.55" x2="112.09" y2="19.46"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 32.55 A 131.00 131.00 0 0 1 112.09 19.46 Z" fill="url(#g-B-22)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="49.18" transform="rotate(337.50 105.89 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-B-23" gradientUnits="userSpaceOnUse" x1="112.09" y1="19.46" x2="146.00" y2="15.00"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 19.46 A 131.00 131.00 0 0 1 146.00 15.00 Z" fill="url(#g-B-23)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="42.10" transform="rotate(352.50 132.32 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<circle cx="163.88" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="198.43" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="229.40" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="254.69" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="272.57" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="281.83" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="281.83" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="272.57" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="254.69" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="229.40" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="198.43" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="163.88" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="128.12" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="93.57" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="62.60" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="37.31" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="19.43" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="10.17" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="10.17" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="19.43" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="37.31" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="62.60" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="93.57" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="128.12" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="146.0" cy="146.0" r="131.00" fill="none" stroke="url(#rim-B)" stroke-width="8"/>
+<circle cx="146.0" cy="146.0" r="57.64" fill="url(#hub-B)" stroke="#3b4d61" stroke-width="2"/>
+<text x="146.0" y="141.0" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dceaf7" font-family="system-ui,sans-serif">Крутить</text>
+<text x="146.0" y="157.0" text-anchor="middle" font-size="9" fill="#8fa6bd" font-family="system-ui,sans-serif">бесплатно</text>
+</svg><i class="pointer"></i></div>
+    <div class="pills">
+      <span class="pill gold">средний приз 284 🪙</span>
+      <span class="pill">RTP 94.8 %</span>
+      <span class="pill">платная 300 🪙</span>
+      <span class="pill">пусто 25 %</span>
+    </div>
+    <p class="feel">Высокая дисперсия: четверть секторов пустая, чаще всего падает мелочь. Зато джекпот 5000 — в пять раз больше любого другого приза, ради него и крутят.</p>
+    <ul class="pros"><li class="ok">+ Есть настоящий «занос», о котором рассказывают друзьям.</li><li class="bad">− Каждая четвёртая крутка в пустоту; самая дорогая платная крутка.</li></ul>
+    <div class="combo">5 000 🪙 ×1, 500 🪙 ×2, 100 🪙 ×6, 25 🪙 ×9</div>
+  </article>
+  <article class="card">
+    <header><b>Вариант C</b><span>Баланс</span></header>
+    <div class="wheelbox"><svg viewBox="0 0 292 292" width="292" height="292" class="wheel">
+<defs><radialGradient id="hub-C" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#33455c"/><stop offset="1" stop-color="#141d27"/></radialGradient><linearGradient id="rim-C" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fa6bd"/><stop offset=".45" stop-color="#2b3a4b"/><stop offset="1" stop-color="#7d93aa"/></linearGradient></defs>
+<defs><linearGradient id="g-C-0" gradientUnits="userSpaceOnUse" x1="146.00" y1="15.00" x2="179.91" y2="19.46"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 15.00 A 131.00 131.00 0 0 1 179.91 19.46 Z" fill="url(#g-C-0)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="42.10" transform="rotate(7.50 159.68 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-1" gradientUnits="userSpaceOnUse" x1="179.91" y1="19.46" x2="211.50" y2="32.55"><stop offset="0" stop-color="#FFD75E"/><stop offset="1" stop-color="#F0A200"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 19.46 A 131.00 131.00 0 0 1 211.50 32.55 Z" fill="url(#g-C-1)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="49.18" transform="rotate(22.50 186.11 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#2A1C00" font-family="system-ui,sans-serif">◆</text>
+<defs><linearGradient id="g-C-2" gradientUnits="userSpaceOnUse" x1="211.50" y1="32.55" x2="238.63" y2="53.37"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 32.55 A 131.00 131.00 0 0 1 238.63 53.37 Z" fill="url(#g-C-2)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="62.86" transform="rotate(37.50 209.80 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-3" gradientUnits="userSpaceOnUse" x1="238.63" y1="53.37" x2="259.45" y2="80.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 53.37 A 131.00 131.00 0 0 1 259.45 80.50 Z" fill="url(#g-C-3)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="82.20" transform="rotate(52.50 229.14 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">400</text>
+<defs><linearGradient id="g-C-4" gradientUnits="userSpaceOnUse" x1="259.45" y1="80.50" x2="272.54" y2="112.09"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 80.50 A 131.00 131.00 0 0 1 272.54 112.09 Z" fill="url(#g-C-4)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="105.89" transform="rotate(67.50 242.82 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-5" gradientUnits="userSpaceOnUse" x1="272.54" y1="112.09" x2="277.00" y2="146.00"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 112.09 A 131.00 131.00 0 0 1 277.00 146.00 Z" fill="url(#g-C-5)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="132.32" transform="rotate(82.50 249.90 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">400</text>
+<defs><linearGradient id="g-C-6" gradientUnits="userSpaceOnUse" x1="277.00" y1="146.00" x2="272.54" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 277.00 146.00 A 131.00 131.00 0 0 1 272.54 179.91 Z" fill="url(#g-C-6)" stroke="#0C1219" stroke-width="1"/>
+<text x="249.90" y="159.68" transform="rotate(97.50 249.90 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-7" gradientUnits="userSpaceOnUse" x1="272.54" y1="179.91" x2="259.45" y2="211.50"><stop offset="0" stop-color="#2BE3C6"/><stop offset="1" stop-color="#0FB6A0"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 272.54 179.91 A 131.00 131.00 0 0 1 259.45 211.50 Z" fill="url(#g-C-7)" stroke="#0C1219" stroke-width="1"/>
+<text x="242.82" y="186.11" transform="rotate(112.50 242.82 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#04231F" font-family="system-ui,sans-serif">400</text>
+<defs><linearGradient id="g-C-8" gradientUnits="userSpaceOnUse" x1="259.45" y1="211.50" x2="238.63" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 259.45 211.50 A 131.00 131.00 0 0 1 238.63 238.63 Z" fill="url(#g-C-8)" stroke="#0C1219" stroke-width="1"/>
+<text x="229.14" y="209.80" transform="rotate(127.50 229.14 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-9" gradientUnits="userSpaceOnUse" x1="238.63" y1="238.63" x2="211.50" y2="259.45"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 238.63 238.63 A 131.00 131.00 0 0 1 211.50 259.45 Z" fill="url(#g-C-9)" stroke="#0C1219" stroke-width="1"/>
+<text x="209.80" y="229.14" transform="rotate(142.50 209.80 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-10" gradientUnits="userSpaceOnUse" x1="211.50" y1="259.45" x2="179.91" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 211.50 259.45 A 131.00 131.00 0 0 1 179.91 272.54 Z" fill="url(#g-C-10)" stroke="#0C1219" stroke-width="1"/>
+<text x="186.11" y="242.82" transform="rotate(157.50 186.11 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-11" gradientUnits="userSpaceOnUse" x1="179.91" y1="272.54" x2="146.00" y2="277.00"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 179.91 272.54 A 131.00 131.00 0 0 1 146.00 277.00 Z" fill="url(#g-C-11)" stroke="#0C1219" stroke-width="1"/>
+<text x="159.68" y="249.90" transform="rotate(172.50 159.68 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-12" gradientUnits="userSpaceOnUse" x1="146.00" y1="277.00" x2="112.09" y2="272.54"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 146.00 277.00 A 131.00 131.00 0 0 1 112.09 272.54 Z" fill="url(#g-C-12)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="249.90" transform="rotate(187.50 132.32 249.90)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-13" gradientUnits="userSpaceOnUse" x1="112.09" y1="272.54" x2="80.50" y2="259.45"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 272.54 A 131.00 131.00 0 0 1 80.50 259.45 Z" fill="url(#g-C-13)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="242.82" transform="rotate(202.50 105.89 242.82)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-14" gradientUnits="userSpaceOnUse" x1="80.50" y1="259.45" x2="53.37" y2="238.63"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 259.45 A 131.00 131.00 0 0 1 53.37 238.63 Z" fill="url(#g-C-14)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="229.14" transform="rotate(217.50 82.20 229.14)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-15" gradientUnits="userSpaceOnUse" x1="53.37" y1="238.63" x2="32.55" y2="211.50"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 238.63 A 131.00 131.00 0 0 1 32.55 211.50 Z" fill="url(#g-C-15)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="209.80" transform="rotate(232.50 62.86 209.80)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-16" gradientUnits="userSpaceOnUse" x1="32.55" y1="211.50" x2="19.46" y2="179.91"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 211.50 A 131.00 131.00 0 0 1 19.46 179.91 Z" fill="url(#g-C-16)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="186.11" transform="rotate(247.50 49.18 186.11)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">50</text>
+<defs><linearGradient id="g-C-17" gradientUnits="userSpaceOnUse" x1="19.46" y1="179.91" x2="15.00" y2="146.00"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 179.91 A 131.00 131.00 0 0 1 15.00 146.00 Z" fill="url(#g-C-17)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="159.68" transform="rotate(262.50 42.10 159.68)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-18" gradientUnits="userSpaceOnUse" x1="15.00" y1="146.00" x2="19.46" y2="112.09"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 15.00 146.00 A 131.00 131.00 0 0 1 19.46 112.09 Z" fill="url(#g-C-18)" stroke="#0C1219" stroke-width="1"/>
+<text x="42.10" y="132.32" transform="rotate(277.50 42.10 132.32)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-19" gradientUnits="userSpaceOnUse" x1="19.46" y1="112.09" x2="32.55" y2="80.50"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 19.46 112.09 A 131.00 131.00 0 0 1 32.55 80.50 Z" fill="url(#g-C-19)" stroke="#0C1219" stroke-width="1"/>
+<text x="49.18" y="105.89" transform="rotate(292.50 49.18 105.89)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-20" gradientUnits="userSpaceOnUse" x1="32.55" y1="80.50" x2="53.37" y2="53.37"><stop offset="0" stop-color="#3C5068"/><stop offset="1" stop-color="#2A3A4E"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 32.55 80.50 A 131.00 131.00 0 0 1 53.37 53.37 Z" fill="url(#g-C-20)" stroke="#0C1219" stroke-width="1"/>
+<text x="62.86" y="82.20" transform="rotate(307.50 62.86 82.20)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#DCE8F4" font-family="system-ui,sans-serif">150</text>
+<defs><linearGradient id="g-C-21" gradientUnits="userSpaceOnUse" x1="53.37" y1="53.37" x2="80.50" y2="32.55"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 53.37 53.37 A 131.00 131.00 0 0 1 80.50 32.55 Z" fill="url(#g-C-21)" stroke="#0C1219" stroke-width="1"/>
+<text x="82.20" y="62.86" transform="rotate(322.50 82.20 62.86)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-C-22" gradientUnits="userSpaceOnUse" x1="80.50" y1="32.55" x2="112.09" y2="19.46"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 80.50 32.55 A 131.00 131.00 0 0 1 112.09 19.46 Z" fill="url(#g-C-22)" stroke="#0C1219" stroke-width="1"/>
+<text x="105.89" y="49.18" transform="rotate(337.50 105.89 49.18)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<defs><linearGradient id="g-C-23" gradientUnits="userSpaceOnUse" x1="112.09" y1="19.46" x2="146.00" y2="15.00"><stop offset="0" stop-color="#1F2A37"/><stop offset="1" stop-color="#161E28"/></linearGradient></defs>
+<path d="M 146.00 146.00 L 112.09 19.46 A 131.00 131.00 0 0 1 146.00 15.00 Z" fill="url(#g-C-23)" stroke="#0C1219" stroke-width="1"/>
+<text x="132.32" y="42.10" transform="rotate(352.50 132.32 42.10)" text-anchor="middle" dominant-baseline="middle" font-size="12.5" font-weight="800" fill="#5F7387" font-family="system-ui,sans-serif">—</text>
+<circle cx="163.88" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="198.43" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="229.40" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="254.69" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="272.57" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="281.83" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="281.83" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="272.57" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="254.69" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="229.40" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="198.43" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="163.88" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="128.12" cy="281.83" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="93.57" cy="272.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="62.60" cy="254.69" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="37.31" cy="229.40" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="19.43" cy="198.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="10.17" cy="163.88" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="10.17" cy="128.12" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="19.43" cy="93.57" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="37.31" cy="62.60" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="62.60" cy="37.31" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="93.57" cy="19.43" r="2.1" fill="#F6D68A" opacity="0.95"/>
+<circle cx="128.12" cy="10.17" r="2.1" fill="#F6D68A" opacity="0.4"/>
+<circle cx="146.0" cy="146.0" r="131.00" fill="none" stroke="url(#rim-C)" stroke-width="8"/>
+<circle cx="146.0" cy="146.0" r="57.64" fill="url(#hub-C)" stroke="#3b4d61" stroke-width="2"/>
+<text x="146.0" y="141.0" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dceaf7" font-family="system-ui,sans-serif">Крутить</text>
+<text x="146.0" y="157.0" text-anchor="middle" font-size="9" fill="#8fa6bd" font-family="system-ui,sans-serif">бесплатно</text>
+</svg><i class="pointer"></i></div>
+    <div class="pills">
+      <span class="pill gold">средний приз 202 🪙</span>
+      <span class="pill">RTP 96.2 %</span>
+      <span class="pill">платная 210 🪙</span>
+      <span class="pill">пусто 12 %</span>
+    </div>
+    <p class="feel">Середина между A и B: пустых всего 3 из 24, джекпот 2000, типичный приз 150. Возврат стабильный, но азарт остаётся.</p>
+    <ul class="pros"><li class="ok">+ Стабильно, без «пустых полос».</li><li class="bad">− Не такой азартный, как B, и потолок ниже.</li></ul>
+    <div class="combo">2 000 🪙 ×1, 400 🪙 ×3, 150 🪙 ×8, 50 🪙 ×9</div>
+  </article></div>
+
+<h2>Экономика в цифрах</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Вариант</th><th>Сектора</th><th>Платная крутка</th><th>Средний приз</th><th>Возврат платной</th><th>8 платных круток</th><th>Месяц игрока*</th></tr></thead>
+  <tbody><tr>
+      <td><b>A</b> · Ровный ручеёк</td>
+      <td>1 000×1, 200×3, 100×8, 50×12</td>
+      <td>130 🪙</td>
+      <td>125 🪙</td>
+      <td>96.2 %</td>
+      <td>-40 🪙</td>
+      <td>3 710 🪙</td>
+    </tr><tr>
+      <td><b>B</b> · Джекпот-шоу</td>
+      <td>5 000×1, 500×2, 100×6, 25×9</td>
+      <td>300 🪙</td>
+      <td>284 🪙</td>
+      <td>94.8 %</td>
+      <td>-125 🪙</td>
+      <td>8 406 🪙</td>
+    </tr><tr>
+      <td><b>C</b> · Баланс</td>
+      <td>2 000×1, 400×3, 150×8, 50×9</td>
+      <td>210 🪙</td>
+      <td>202 🪙</td>
+      <td>96.2 %</td>
+      <td>-63 🪙</td>
+      <td>5 999 🪙</td>
+    </tr></tbody>
+</table>
+</div>
+<p class="note">
+  <span class="now">Сейчас: 1000×1, 200×7, 50×8, пусто×8 · платная 150 🪙 · средний приз 117 🪙 ·
+  возврат платной 77.8 % — за 8 платных круток игрок теряет ≈267 🪙. Такое колесо
+  ощущается как «отдай 150, получи 50».</span><br>
+  * «Месяц игрока» = 30 бесплатных круток + 8 платных; показывает, сколько колесо приносит игроку.
+  Для сравнения: дневной бонус 250 🪙 (с серией — до 375), сундук серии 300/700.
+</p>
+
+<div class="spec">
+  <h3>Что меняется в дизайне и анимации (на любом варианте)</h3>
+  <ul>
+    <li><b>Колесо.</b> 24 сектора с градиентом и тонкой обводкой, призы подписаны вдоль радиуса — читаются на ходу; джекпот золотой с ◆ и мягким свечением.</li>
+    <li><b>Обод.</b> Металлический рант с 24 лампочками: при вращении бегут огни, на остановке мигают трижды.</li>
+    <li><b>Хаб.</b> Круглая кнопка с градиентом, пульсирует когда крутка доступна; на паузе показывает таймер до следующей.</li>
+    <li><b>Вращение.</b> 5–6 оборотов, 4.6 с, плавное затухание; указатель подрагивает «на тиках» и качается, когда колесо встаёт.</li>
+    <li><b>Победа.</b> Сектор вспыхивает, из него летят искры, сумма поднимается карточкой «+200 🪙» и уходит в баланс.</li>
+    <li><b>Пусто.</b> Сектор гаснет, колесо делает короткий «выдох» — без красных экранов и злых звуков.</li>
+    <li><b>Карточка правил</b> переписывается под выбранный вариант: сектора, пустые, средний приз и честный RTP.</li>
+  </ul>
+</div>
+</body></html>

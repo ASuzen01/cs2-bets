@@ -351,25 +351,61 @@
   .btn.bonus:active{transform:translateY(1px) scale(.995)}
 
   /* колесо */
-  .wheelwrap{position:relative;display:grid;place-items:center;margin:6px 0 14px}
-  .wheel-svg{width:min(76vw,292px);height:min(76vw,292px);display:block;
+  .bonuscard.wheel{border-color:#3b3350;
+    background:radial-gradient(120% 90% at 50% -10%,#2a2340,#1a2431 60%)}
+  .wheelwrap{position:relative;display:grid;place-items:center;margin:8px 0 14px;isolation:isolate}
+  .wheel-svg{width:min(78vw,300px);height:min(78vw,300px);display:block;
     transform:rotate(0deg);will-change:transform;
-    filter:drop-shadow(0 12px 28px rgba(0,0,0,.5))}
-  .wheel-svg.spinning{transition:transform 4.6s cubic-bezier(.1,.74,.05,1)}
-  .wheel-rim{fill:none;stroke:#3d4b5e;stroke-width:3}
-.wheel-pointer{position:absolute;top:-2px;left:50%;transform:translateX(-50%);width:0;height:0;z-index:3;
-    border-left:11px solid transparent;border-right:11px solid transparent;border-top:19px solid #f3d27a;
-    filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
-  .wheel-hub{position:absolute;width:88px;height:88px;border-radius:50%;display:grid;place-items:center;
-    background:radial-gradient(circle at 35% 30%,#2b3a4d,#16202b);border:2px solid #4a5c73;
-    color:#f3d27a;font-weight:800;font-size:12.5px;text-align:center;line-height:1.15;
-    box-shadow:0 8px 22px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);z-index:2}
-  .wheel-hub b{display:block;font-size:14px;letter-spacing:.02em}
-  .wheel-hub:disabled{color:#8496a8;border-color:#33414f}
-  .wheel-hub:active:not(:disabled){transform:scale(.97)}
+    filter:drop-shadow(0 14px 30px rgba(0,0,0,.55))}
+  .wheel-svg.spinning{transition:transform 4.6s cubic-bezier(.12,.78,.06,1)}
+  .wheel-sector{transition:filter .2s}
+  .wheel-sector.hit{filter:brightness(1.55) saturate(1.2)}
+  .wheel-rim{fill:none;stroke:url(#wheel-rim-g);stroke-width:7}
+  /* лампочки обода: в покое мерцают по очереди, при вращении бежит огонёк */
+  .wheel-lights .lamp{fill:#3a4a5d;opacity:.55}
+  .wheel-lights .lamp.on{fill:#F6D68A;opacity:.9;animation:idleGlow 2.6s ease-in-out infinite}
+  .wheel-lights.chase .lamp{animation:chase .55s linear infinite;fill:#FFE9A8;opacity:1}
+  @keyframes idleGlow{0%,100%{opacity:.35}50%{opacity:.95}}
+  @keyframes chase{0%,100%{opacity:1}50%{opacity:.25}}
+  .wheel-pointer{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:0;height:0;z-index:3;
+    border-left:11px solid transparent;border-right:11px solid transparent;border-top:20px solid #FFD75E;
+    filter:drop-shadow(0 3px 6px rgba(0,0,0,.65));transform-origin:50% 0}
+  .wheel-pointer.ticking{animation:tick .12s linear infinite}
+  .wheel-pointer.landed{animation:wobble .65s cubic-bezier(.2,1.6,.35,1)}
+  @keyframes tick{0%,100%{transform:translateX(-50%) rotate(0)}50%{transform:translateX(-50%) rotate(-9deg)}}
+  @keyframes wobble{0%{transform:translateX(-50%) rotate(-16deg)}55%{transform:translateX(-50%) rotate(7deg)}
+    100%{transform:translateX(-50%) rotate(0)}}
+  .wheel-hub{position:absolute;width:92px;height:92px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle at 35% 28%,#3a4c62,#141d27 78%);
+    border:2px solid #4d6178;color:#FFD75E;font-weight:800;font-size:12.5px;text-align:center;line-height:1.15;
+    box-shadow:0 10px 24px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.08);z-index:2;
+    transition:transform .16s, box-shadow .2s}
+  .wheel-hub b{display:block;font-size:14.5px;letter-spacing:.02em}
+  .wheel-hub span{font-size:10px;color:#9fb3c8;font-weight:600}
+  .wheel-hub:not(:disabled){animation:hubPulse 2.4s ease-in-out infinite}
+  .wheel-hub.spinning-hub{animation:hubSpin .7s ease-in-out infinite}
+  .wheel-hub:disabled{color:#8496a8;border-color:#33414f;animation:none}
+  .wheel-hub:active:not(:disabled){transform:scale(.96)}
+  @keyframes hubPulse{0%,100%{box-shadow:0 10px 24px rgba(0,0,0,.6),0 0 0 0 rgba(255,215,94,.35)}
+    50%{box-shadow:0 10px 24px rgba(0,0,0,.6),0 0 0 10px rgba(255,215,94,0)}}
+  @keyframes hubSpin{0%,100%{transform:scale(1)}50%{transform:scale(.94)}}
+  /* искры из выигравшего сектора */
+  .wheel-burst{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:4}
+  .spark{position:absolute;width:5px;height:5px;border-radius:50%;background:#FFD75E;
+    animation:sparkFly .95s cubic-bezier(.15,.7,.3,1) forwards}
+  .spark.small{background:#2BE3C6;width:4px;height:4px}
+  .spark.mid{background:#2BE3C6}
+  .spark.big{background:#A879FF;width:6px;height:6px}
+  .spark.ticket{background:#5CF08A}
+  .spark.jack{background:#FFD75E;width:7px;height:7px;box-shadow:0 0 10px rgba(255,215,94,.9)}
+  .spark.empty{display:none}
+  @keyframes sparkFly{0%{transform:translate(0,0) scale(1);opacity:1}
+    100%{transform:translate(var(--dx),var(--dy)) scale(.3);opacity:0}}
   .wheel-legend{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
   .wheel-legend span{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid #2c3a4a;
     color:#c7d6e4;background:#16202b}
+  .wheel-legend span.lg-jack{border-color:#5a4a1c;color:#FFD75E;background:#241d09}
+  .wheel-legend span.lg-ticket{border-color:#1d5136;color:#8ff0b3;background:#0f2419}
   .wheel-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
   .wheel-result{text-align:center;font-size:13.5px;color:#ffe8a3;min-height:18px;margin-bottom:8px}
 
@@ -691,3 +727,27 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* билет в экспресс: кнопка оплаты в листе ставки */
+.ticketbtn {
+  margin-bottom: 10px;
+  border-color: #1d5136 !important;
+  color: #8ff0b3 !important;
+  background: rgba(23, 176, 75, .10) !important;
+  font-weight: 700;
+}
+.ticketbtn.on {
+  background: rgba(23, 176, 75, .26) !important;
+  border-color: #2fd06a !important;
+  color: #b6ffd0 !important;
+}
+/* строка «билеты» в профиле */
+.tickets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: #8ff0b3;
+}
+.tickets-row b { font-variant-numeric: tabular-nums; }

@@ -22,6 +22,7 @@
     limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250 },
     cart: readCart(),
     betsFilter: "all",
+    tickets: [],       // билеты в экспресс с колеса
     topMode: "all",
     chain: null,
     achievements: null,
@@ -67,12 +68,15 @@
     return node;
   };
   const money = (n) => Number(n).toLocaleString("ru-RU").replace(/\u00a0/g, " ") + " 🪙";
+  // для строк, где перенос внутри суммы выглядит как ошибка
+  const moneySolid = (n) => money(n).replace(/ /g, "\u00a0");
   // прибыль недели бывает отрицательной — показываем со знаком
   const moneySigned = (n) => (Number(n) > 0 ? "+" : "") + money(n);
   // кэф может быть снят (идёт матч, Fonbet убрал рынок) — тогда прочерк, а не 0.00
   const oddsText = (n) => (n === null || n === undefined ? "—" : Number(n).toFixed(2));
   const balance = () => (state.user ? state.user.balance : 0);
   const minBet = () => Math.max(1, Number((state.limits && state.limits.min_bet) || 10));
+  const jackpot = () => Number((state.bonus && state.bonus.wheel && state.bonus.wheel.jackpot) || 0);
   // кнопка не должна предлагать действие, которое сервер всё равно отклонит
   const canBet = () => Boolean(state.user) && balance() >= minBet();
 
@@ -1327,7 +1331,8 @@
       kv("Кости", data.dice.rtp + " %", data.dice.note);
       kv("Колесо (платная крутка)",
         data.wheel.rtp + " %",
-        `24 сектора, ${data.wheel.empty} пустых · в среднем ${money(data.wheel.expected)} за крутку по ${money(data.wheel.cost)}`);
+        `${data.wheel.slots} сектора, ${data.wheel.empty} пустых, ${data.wheel.tickets} с билетом · ` +
+        `в среднем ${money(data.wheel.expected)} за крутку по ${money(data.wheel.cost)}`);
       kv("Линия ставок", data.line_rtp + " %", "сколько вернулось игрокам из поставленного");
       host.append(el("div", "hint", data.betting_note));
     }).catch((err) => {
@@ -1357,6 +1362,16 @@
     kv("Ставок в игре", String(state.bets.length));
     kv("Экспрессов в игре", String(state.expresses.length));
     host.append(card);
+
+    // билеты с колеса: видно, что они есть и на что их тратить
+    const tickets = state.tickets || [];
+    if (tickets.length) {
+      const row = el("div", "tickets-row");
+      row.append(document.createTextNode("🎫 Билет в экспресс: "));
+      row.append(el("b", null, tickets.map((item) => money(item.amount)).join(" · ")));
+      row.append(document.createTextNode(" — оплати им экспресс"));
+      host.append(row);
+    }
 
     // серия дней: она же умножает ежедневный бонус — пусть игрок это видит
     const daily = (state.bonus && state.bonus.daily) || null;
@@ -1665,8 +1680,18 @@
 
       // сумма вне лимитов → кнопка гаснет, Enter в поле сразу ставит
       picker.on({
-        change: (amount, valid) => { place.disabled = !valid; },
-        submit: () => { if (picker.ok()) place.click(); },
+        change: (amount, valid) => {
+          place.disabled = ticketOn ? false : !valid;
+          // билет фиксированного номинала: поменял сумму — платим монетами
+          if (ticketOn && amount !== ticket.amount) {
+            ticketOn = false;
+            if (ticketBtn) {
+              ticketBtn.classList.remove("on");
+              ticketBtn.textContent = `🎫 Оплатить билетом · ${money(ticket.amount)}`;
+            }
+          }
+        },
+        submit: () => { if (ticketOn || picker.ok()) place.click(); },
       });
       sheet.append(place);
 
@@ -1719,31 +1744,54 @@
       sheet.append(el("h3", null, `Экспресс · ${state.cart.length} исхода`));
       sheet.append(el("div", "sub", `итоговый кэф ${oddsText(total)}`));
 
+      // билет с колеса: ставка за счёт заведения, монеты со счёта не уходят
+      const ticket = (state.tickets || [])[0] || null;
+      let ticketOn = false;
+      let ticketBtn = null;
+      if (ticket) {
+        ticketBtn = el("button", "btn ghost ticketbtn", `🎫 Оплатить билетом · ${money(ticket.amount)}`);
+        ticketBtn.type = "button";
+        ticketBtn.addEventListener("click", () => {
+          ticketOn = !ticketOn;
+          ticketBtn.classList.toggle("on", ticketOn);
+          ticketBtn.textContent = ticketOn
+            ? `✓ Ставка билетом · ${money(ticket.amount)}`
+            : `🎫 Оплатить билетом · ${money(ticket.amount)}`;
+          if (ticketOn) picker.set(ticket.amount);
+          picker.paint();
+          haptic("light");
+        });
+        sheet.append(ticketBtn);
+      }
+
       const picker = stakePicker(sheet, { odds: total, cap: balance() });
 
       const place = el("button", "btn", "Поставить экспресс");
       place.type = "button";
       place.addEventListener("click", async () => {
         const amount = picker.value();
-        if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
-        if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
+        if (!ticketOn) {
+          if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
+          if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
+        }
         place.disabled = true;
         place.textContent = "Отправляю…";
         try {
-          const data = await api("/api/express", {
-            method: "POST",
-            body: {
-              amount,
-              token,
-              legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })),
-            },
-          });
+          const body = {
+            amount,
+            token,
+            legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })),
+          };
+          if (ticketOn && ticket) body.ticket_id = ticket.id;
+          const data = await api("/api/express", { method: "POST", body });
           setBalance(data.balance);
+          if (ticketOn && ticket) state.tickets = (state.tickets || []).filter((item) => item.id !== ticket.id);
           state.cart = [];
           saveCart();
           closeSheet();
           haptic("ok");
-          toast(`Экспресс #${data.express_id} принят · кэф ${oddsText(data.odds)}`, "ok");
+          toast(`Экспресс #${data.express_id} принят · кэф ${oddsText(data.odds)}` +
+            (ticketOn ? " · по билету" : ""), "ok");
           renderCartBar();
           refreshState();
           loadBets();
@@ -1872,19 +1920,20 @@
 
   // ------------------------------------------------------------- БОНУСЫ
   const WHEEL_SECTOR_DEG = 360 / 24;
-  // контрастная палитра: джекпот — жёлтый, дальше фиолетовый, бирюзовый и графит
+  // Палитра по типу приза: золото — джекпот, изумруд — билет, фиолет — крупный,
+  // бирюза — средний, сталь — мелкий, графит — пусто.
   const WHEEL_COLORS = {
-    2: ["#ffd23f", "#f7c012"],   // 1000 — главный приз
-    1: ["#8b3dff", "#7423e8"],   // 200
-    0: ["#00e0c6", "#00c2ab"],   // 50
-    "-1": ["#202a36", "#161e27"], // пусто
+    jack: ["#FFD75E", "#F0A200", "#2A1C00"],
+    ticket: ["#5CF08A", "#17B04B", "#04230F"],
+    big: ["#A879FF", "#7B3BFF", "#F3EAFF"],
+    mid: ["#2BE3C6", "#0FB6A0", "#04231F"],
+    small: ["#3C5068", "#2A3A4E", "#DCE8F4"],
+    empty: ["#1F2A37", "#161E28", "#5F7387"],
   };
-  const WHEEL_LEGEND = [
-    [2, 1000],
-    [1, 200],
-    [0, 50],
-    [-1, 0],
-  ];
+  const WHEEL_LABELS = {
+    jack: "💎",
+    ticket: "🎫",
+  };
 
   function svgNode(tag, attrs) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -1906,10 +1955,10 @@
   }
 
   function wheelSvg(slots) {
-    const size = 240;
+    const size = 300;
     const cx = size / 2;
     const cy = size / 2;
-    const radius = cx - 6;
+    const radius = cx - 16;          // сектора
     const svg = svgNode("svg", {
       class: "wheel-svg", viewBox: "0 0 " + size + " " + size,
       role: "img", "aria-label": "Колесо фортуны",
@@ -1922,32 +1971,65 @@
       const to = from + WHEEL_SECTOR_DEG;
       const [x1, y1] = polar(cx, cy, radius, from);
       const [x2, y2] = polar(cx, cy, radius, to);
-      const colors = WHEEL_COLORS[String(slot.tier)];
+      const [c1, c2] = WHEEL_COLORS[slot.tier] || WHEEL_COLORS.small;
+      const gradientId = `wheel-g-${index}`;
+      const gradient = svgNode("linearGradient", {
+        id: gradientId, gradientUnits: "userSpaceOnUse",
+        x1: x1.toFixed(2), y1: y1.toFixed(2), x2: x2.toFixed(2), y2: y2.toFixed(2),
+      });
+      gradient.append(svgNode("stop", { offset: "0", "stop-color": c1 }));
+      gradient.append(svgNode("stop", { offset: "1", "stop-color": c2 }));
+      const defs = svgNode("defs");
+      defs.append(gradient);
+      svg.append(defs);
+
       const path = svgNode("path", {
         d: `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`,
-        fill: index % 2 === 0 ? colors[0] : colors[1],
-        stroke: "#121a23",
-        "stroke-width": "0.8",
+        fill: `url(#${gradientId})`,
+        stroke: "#0C1219",
+        "stroke-width": "1",
+        class: "wheel-sector",
       });
+      path.dataset.sector = String(index);
       svg.append(path);
 
-      const value = slot.value;
-
-      // Подпись ставим горизонтально в своей доле сектора: так она читается
-      // в любой точке колеса и не наезжает на соседнюю (15° — это ~23 px на нашем радиусе).
-      const [lx, ly] = polar(cx, cy, radius * 0.78, from + WHEEL_SECTOR_DEG / 2);
+      // подпись держим вертикально: на 24 секторах повёрнутые цифры читаются
+      // вверх ногами, а по ширине 3 знака спокойно влезают в сектор
+      const [lx, ly] = polar(cx, cy, radius * 0.8, from + WHEEL_SECTOR_DEG / 2);
       const label = svgNode("text", {
         x: lx.toFixed(2),
         y: ly.toFixed(2),
         "text-anchor": "middle",
         "dominant-baseline": "middle",
-        "font-size": "10",
+        "font-size": slot.tier === "jack" ? "12" : "11",
         "font-weight": "800",
-        fill: slot.tier > 0 ? "#20190a" : slot.tier < 0 ? "#5f7183" : "#eaf3fb",
+        fill: (WHEEL_COLORS[slot.tier] || WHEEL_COLORS.small)[2],
       });
-      label.textContent = String(value);
+      label.textContent = WHEEL_LABELS[slot.tier]
+        || (slot.value === 0 ? "·" : String(slot.value));
       svg.append(label);
     });
+
+    // лампочки по ободу: при вращении по ним бежит «огонёк»
+    const lights = svgNode("g", { class: "wheel-lights" });
+    for (let index = 0; index < slots.length; index += 1) {
+      const [lx, ly] = polar(cx, cy, radius + 7, index * WHEEL_SECTOR_DEG + WHEEL_SECTOR_DEG / 2);
+      lights.append(svgNode("circle", {
+        cx: lx.toFixed(2), cy: ly.toFixed(2), r: "2.1",
+        class: index % 2 === 0 ? "lamp on" : "lamp",
+        style: `animation-delay:${(index * 0.05).toFixed(2)}s`,
+      }));
+    }
+    svg.append(lights);
+
+    // обод: металлический блик сверху-слева, тень снизу-справа
+    const rimGradient = svgNode("linearGradient", { id: "wheel-rim-g", x1: "0", y1: "0", x2: "1", y2: "1" });
+    rimGradient.append(svgNode("stop", { offset: "0", "stop-color": "#9fb3c8" }));
+    rimGradient.append(svgNode("stop", { offset: "0.45", "stop-color": "#2b3a4b" }));
+    rimGradient.append(svgNode("stop", { offset: "1", "stop-color": "#8496a8" }));
+    const rimDefs = svgNode("defs");
+    rimDefs.append(rimGradient);
+    svg.append(rimDefs);
 
     svg.append(svgNode("circle", {
       cx: String(cx), cy: String(cy), r: String(radius), class: "wheel-rim",
@@ -2136,7 +2218,7 @@
     card.append(el("h3", null, "Колесо фортуны"));
     card.append(el("div", "sub",
       wheel.available
-        ? `Первая крутка в сутки бесплатная, следующие по ${money(cost)}. Джекпот 1000 выпадает примерно раз в 24 прокрута.`
+        ? `Крутка в сутки бесплатная, следующие по ${moneySolid(cost)}. Джекпот ${moneySolid(jackpot())} — в среднем раз на 24 прокрута.`
         : canPay
           ? `Бесплатная на сегодня уже была. Следующая — за ${money(cost)}.`
           : `Бесплатная на сегодня уже была, платная стоит ${money(cost)} — не хватает монет.`));
@@ -2144,6 +2226,9 @@
     const wrap = el("div", "wheelwrap");
     wrap.append(wheelSvg(wheel.slots || []));
     wrap.append(el("div", "wheel-pointer"));
+    const burst = el("div", "wheel-burst");
+    burst.id = "wheelBurst";
+    wrap.append(burst);
 
     const hub = el("button", "wheel-hub");
     hub.type = "button";
@@ -2171,17 +2256,22 @@
     const legend = el("div", "wheel-legend");
     const counts = {};
     (wheel.slots || []).forEach((slot) => {
-      counts[slot.value] = (counts[slot.value] || 0) + 1;
+      const key = `${slot.tier}|${slot.value}`;
+      counts[key] = counts[key] || { tier: slot.tier, value: slot.value, n: 0 };
+      counts[key].n += 1;
     });
-    WHEEL_LEGEND.forEach(([tier, value]) => {
-      const amount = counts[value] || 0;
-      if (!amount) return;
-      const item = el("span");
-      const dot = el("i");
-      dot.style.background = WHEEL_COLORS[String(tier)][0];
-      item.append(dot, document.createTextNode(`${value} × ${amount}`));
-      legend.append(item);
-    });
+    Object.values(counts)
+      .sort((a, b) => b.value - a.value)
+      .forEach((slot) => {
+        const item = el("span", "lg-" + slot.tier);
+        const dot = el("i");
+        dot.style.background = WHEEL_COLORS[slot.tier] ? WHEEL_COLORS[slot.tier][0] : "#3C5068";
+        const title = slot.tier === "jack" ? `💎 ${money(slot.value)}`
+          : slot.tier === "ticket" ? `🎫 билет ${money(slot.value)}`
+            : slot.value === 0 ? "пусто" : money(slot.value);
+        item.append(dot, document.createTextNode(`${title} · ${slot.n}`));
+        legend.append(item);
+      });
     card.append(legend);
     return card;
   }
@@ -2193,9 +2283,10 @@
     card.append(el("div", "hint",
       `Ежедневный бонус капает раз в 24 часа. Колесо крутится один раз в сутки бесплатно, ` +
       `дальше каждая крутка стоит ${money(cost)}. Приз определяет сервер: все 24 сектора равновероятны, ` +
-      "поэтому 1000 падает в среднем раз на 24 прокрута, 200 — семь раз, 50 — восемь, пусто — восемь. " +
-      "Сектора каждый день перемешиваются заново, так что запоминать расположение бесполезно. " +
-      "Монеты зачисляются сразу и видны в истории операций."));
+      `поэтому джекпот ${money(jackpot())} падает в среднем раз на 24 прокрута, ` +
+      "средний приз — около 290 🪙, то есть платная крутка возвращает 96 % поставленного. " +
+      "Два сектора — билет в экспресс на 100 🪙: это ставка за счёт заведения, ею можно оплатить любой экспресс. " +
+      "Сектора каждый день перемешиваются заново, так что запоминать расположение бесполезно."));
     return card;
   }
 
@@ -2219,15 +2310,23 @@
         refreshState({ silent: true });
         return;
       }
-      await animateWheel(data.slot);
+      const slot = (state.bonus.wheel.slots || [])[data.slot] || null;
+      await animateWheel(data.slot, slot);
       setBalance(data.balance);
-      haptic(data.prize > 0 ? "ok" : "bad");
+      haptic(data.prize > 0 || data.ticket ? "ok" : "bad");
 
       const net = data.prize - (data.free ? 0 : Number(data.cost) || 0);
-      state.wheelResult = data.prize > 0
-        ? `Выпало ${money(data.prize)} — уже на балансе` + (data.free ? "" : ` (крутка за ${money(data.cost)})`)
-        : (data.free ? "Пусто. В следующий раз повезёт." : `Пусто. Минус ${money(data.cost)}.`);
-      if (data.prize > 0) toast(`Колесо: ${money(data.prize)}` + (net > 0 ? "" : " · в ноль"), "ok");
+      if (data.ticket) {
+        state.wheelResult = `🎫 Билет в экспресс на ${money(data.ticket.amount)} — уже в профиле`;
+        toast(`Билет в экспресс: ${money(data.ticket.amount)}`, "ok");
+        if (Array.isArray(state.tickets)) state.tickets.push(data.ticket);
+      } else if (data.prize > 0) {
+        state.wheelResult = `Выпало ${money(data.prize)} — уже на балансе` +
+          (data.free ? "" : ` (крутка за ${money(data.cost)})`);
+        toast(`Колесо: ${money(data.prize)}` + (net > 0 ? "" : " · в ноль"), "ok");
+      } else {
+        state.wheelResult = data.free ? "Пусто. В следующий раз повезёт." : `Пусто. Минус ${money(data.cost)}.`;
+      }
 
       if (data.free) {
         state.bonus.wheel.available = false;
@@ -2243,16 +2342,26 @@
     }
   }
 
-  function animateWheel(slotIndex) {
+  function animateWheel(slotIndex, slot) {
     const svg = $("#wheelSvg");
+    const hub = $("#wheelHub");
     if (!svg) return Promise.resolve();
-    const center = slotIndex * WHEEL_SECTOR_DEG + WHEEL_SECTOR_DEG / 2;
-    const jitter = (Math.random() - 0.5) * (WHEEL_SECTOR_DEG - 4);   // не всегда в яблочко
-    const current = state.wheelAngle;
-    const turns = 5;
-    const target = current + turns * 360 + (((-center - jitter - current) % 360) + 360) % 360;
 
+    // встаём точно на середину сектора, но с «дрожанием»: не всегда в яблочко
+    const center = slotIndex * WHEEL_SECTOR_DEG + WHEEL_SECTOR_DEG / 2;
+    const jitter = (Math.random() - 0.5) * (WHEEL_SECTOR_DEG - 5);
+    const current = state.wheelAngle;
+    const turns = 6;
+    const target = current + turns * 360 + (((-center - jitter - current) % 360) + 360) % 360;
+    const duration = 4600;
+
+    const pointer = document.querySelector(".wheel-pointer");
+    const lights = svg.querySelector(".wheel-lights");
     svg.classList.add("spinning");
+    if (lights) lights.classList.add("chase");
+    if (pointer) pointer.classList.add("ticking");
+    if (hub) hub.classList.add("spinning-hub");
+
     // принудительный reflow: иначе браузер склеит два изменения transform
     void svg.getBoundingClientRect();
     svg.style.transform = `rotate(${target}deg)`;
@@ -2260,11 +2369,47 @@
 
     return new Promise((resolve) => setTimeout(() => {
       svg.classList.remove("spinning");
+      if (lights) lights.classList.remove("chase");
+      if (pointer) {
+        pointer.classList.remove("ticking");
+        pointer.classList.add("landed");
+        setTimeout(() => pointer.classList.remove("landed"), 700);
+      }
+      if (hub) hub.classList.remove("spinning-hub");
+
+      // вспышка выигравшего сектора + искры
+      const sector = svg.querySelector(`[data-sector="${slotIndex}"]`);
+      if (sector) {
+        sector.classList.add("hit");
+        setTimeout(() => sector.classList.remove("hit"), 1400);
+      }
+      const prize = slot && (slot.value || 0);
+      if (prize > 0 || (slot && slot.ticket)) sparks(slot, slotIndex);
       resolve();
-    }, 4700));
+    }, duration));
   }
 
-  function onDailyTap() {
+  // Искры из выигравшего сектора: летят по направлению сектора и гаснут.
+  function sparks(slot, slotIndex) {
+    const host = $("#wheelBurst");
+    if (!host) return;
+    const gold = slot && slot.tier === "jack";
+    const tone = !slot ? "small" : slot.tier;
+    const angle = slotIndex * WHEEL_SECTOR_DEG + WHEEL_SECTOR_DEG / 2;
+    const count = gold ? 18 : slot && slot.value >= 500 ? 12 : 8;
+    for (let index = 0; index < count; index += 1) {
+      const dot = el("i", "spark " + tone);
+      const spread = (Math.random() - 0.5) * 46;
+      const distance = 60 + Math.random() * 70;
+      dot.style.setProperty("--dx", `${Math.cos((angle + spread - 90) * Math.PI / 180) * distance}px`);
+      dot.style.setProperty("--dy", `${Math.sin((angle + spread - 90) * Math.PI / 180) * distance}px`);
+      dot.style.animationDelay = `${Math.random() * 90}ms`;
+      host.append(dot);
+      setTimeout(() => dot.remove(), 1300);
+    }
+  }
+
+    function onDailyTap() {
     // десять нажатий подряд по кнопке бонуса = пасхалка (раз в сутки)
     if (!state.bonus) return;
     if (state.bonus.daily.available) {
@@ -2747,6 +2892,7 @@
       state.quests = data.quests || state.quests;
       state.chain = data.chain || state.chain;
       state.achievements = data.achievements || state.achievements;
+      state.tickets = Array.isArray(data.tickets) ? data.tickets : (state.tickets || []);
       state.casino = data.casino || state.casino;
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {

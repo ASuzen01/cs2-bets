@@ -26,7 +26,9 @@ from app.services.bonus import (
     TEASE_PRIZE,
     TEASE_TAPS,
     WHEEL_JACKPOT,
+    average_prize,
     daily_layout,
+    is_ticket,
     slots_payload,
     spin,
 )
@@ -262,6 +264,11 @@ async def api_state(request: web.Request) -> web.Response:
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "bonus": await _bonus_payload(db, user_id),
+            # билеты с колеса: ими можно оплатить экспресс
+            "tickets": [
+                {"id": int(row["id"]), "amount": int(row["amount"])}
+                for row in await db.tickets(user_id)
+            ],
             "casino": await _casino_payload(db, user_id),
             "limits": {
                 "min_bet": settings.min_bet,
@@ -299,6 +306,9 @@ async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
             "wait_seconds": state["wheel"]["wait_seconds"],
             "slots": slots_payload(daily_layout()),
             "cost": settings.wheel_cost,
+            "ticket": settings.wheel_ticket_value,
+            "jackpot": WHEEL_JACKPOT,
+            "average": round(average_prize()),
             "tease_taps": TEASE_TAPS,
         },
         "tease": {
@@ -317,7 +327,7 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
     """
     roulette_rtp = round(18 / games.ROULETTE_SLOTS * 2 * 100, 1)      # внешние ставки
     wheels = daily_layout()
-    expected = sum(wheels) / len(wheels)
+    expected = average_prize()
     cost = max(1, int(settings.wheel_cost))
     totals = await db.line_totals()
     return {
@@ -337,6 +347,8 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
             "cost": cost,
             "rtp": round(expected / cost * 100, 1),
             "jackpot": int(WHEEL_JACKPOT),
+            "ticket": settings.wheel_ticket_value,
+            "tickets": sum(1 for value in wheels if is_ticket(value)),
             "note": "бесплатная крутка раз в сутки; платная — по цене ниже",
         },
         "line": totals,
@@ -499,10 +511,12 @@ async def api_express(request: web.Request) -> web.Response:
     # проверит база: у неё есть линия и кэфы
     if len(legs) < 2 or any(not leg["side"] for leg in legs):
         return _bad("Нужно минимум 2 исхода")
-    if amount < settings.min_bet:
-        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
-    if amount > settings.max_bet:
-        return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
+    ticket_id = _as_int(body.get("ticket_id")) or None
+    if ticket_id is None:
+        if amount < settings.min_bet:
+            return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
+        if amount > settings.max_bet:
+            return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
 
     metrics.count_express()
     express_id, odds, balance = await db.place_express(
@@ -512,6 +526,7 @@ async def api_express(request: web.Request) -> web.Response:
         legs,
         max_odds=settings.max_express_odds,
         token=body.get("token"),
+        ticket_id=ticket_id,
     )
 
     # кэфы ног берём из того, что реально записалось в базу: клиентские цифры
@@ -574,17 +589,21 @@ async def api_wheel(request: web.Request) -> web.Response:
         settings.tease_cooldown_hours * 3600,
     )
     free_left = state["wheel"]["wait_seconds"] == 0
-    slot, prize = spin(layout)
+    slot, value = spin(layout)
+    # билет — не монеты: на баланс не идёт, кладём его в профиль отдельно
+    ticket = is_ticket(value)
+    prize = 0 if ticket else int(value)
 
     if free_left:
         spun, _, balance = await db.claim_wheel(user_id, prize, cooldown)
         if spun:
-            return web.json_response(
-                {
-                    "ok": True, "spun": True, "free": True, "slot": slot, "prize": prize,
-                    "wait_seconds": 0, "balance": balance, "cost": settings.wheel_cost,
-                }
-            )
+            payload = {
+                "ok": True, "spun": True, "free": True, "slot": slot, "prize": prize,
+                "wait_seconds": 0, "balance": balance, "cost": settings.wheel_cost,
+            }
+            if ticket:
+                payload["ticket"] = await _give_ticket(db, user_id)
+            return web.json_response(payload)
         # кто-то успел крутнуть параллельно — считаем как платную, если хватает монет
         free_left = False
 
@@ -598,13 +617,20 @@ async def api_wheel(request: web.Request) -> web.Response:
             }
         )
 
-    return web.json_response(
-        {
-            "ok": True, "spun": True, "free": False, "paid": True,
-            "slot": slot, "prize": prize, "cost": settings.wheel_cost,
-            "wait_seconds": 0, "balance": balance,
-        }
-    )
+    payload = {
+        "ok": True, "spun": True, "free": False, "paid": True,
+        "slot": slot, "prize": prize, "cost": settings.wheel_cost,
+        "wait_seconds": 0, "balance": balance,
+    }
+    if ticket:
+        payload["ticket"] = await _give_ticket(db, user_id)
+    return web.json_response(payload)
+
+
+async def _give_ticket(db: Database, user_id: int) -> dict[str, Any]:
+    """Выдаёт билет в экспресс: приз колеса, который нельзя «не заметить»."""
+    ticket_id = await db.add_ticket(user_id, settings.wheel_ticket_value, "колесо")
+    return {"id": ticket_id, "amount": settings.wheel_ticket_value}
 
 
 async def api_coupon(request: web.Request) -> web.Response:
