@@ -54,6 +54,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "ledger",
     "wheel_spins",
     "tease_claims",
+    "casino_bets",
     "backup_log",
 )
 """Порядок важен: сначала родители, потом зависимые строки."""
@@ -440,6 +441,90 @@ class Database:
                     "INSERT INTO tease_claims (user_id, claimed_at) VALUES (?, ?)", (user_id, now)
                 )
             return await self._credit(conn, user_id, amount, "за настойчивость", now)
+
+    # ---------------------------------------------------------------- казино
+    async def play_casino(
+        self,
+        user_id: int,
+        *,
+        game: str,
+        selection: str,
+        label: str,
+        amount: int,
+        odds: float,
+        outcome: str,
+        won: bool,
+        payout: int,
+    ) -> tuple[int, int]:
+        """Проводит раунд рулетки/костей: списывает ставку, пишет историю, платит выигрыш.
+
+        Исход и выплата считаются в `app.services.games`; здесь только деньги,
+        одной транзакцией — либо списание и выплата проходят вместе, либо ничего.
+        Возвращает (новый баланс, id раунда).
+        """
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+        if payout < 0:
+            raise InvalidBet("Выплата не может быть отрицательной")
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            cur = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (amount, user_id, amount),
+            )
+            if cur.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+
+            reason = f"{game} · {label}"
+            await self._ledger(conn, user_id, -amount, f"ставка · {reason}", now)
+            if payout:
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
+                )
+                await self._ledger(conn, user_id, payout, f"выигрыш · {reason}", now)
+
+            inserted = await conn.execute(
+                """
+                INSERT INTO casino_bets
+                    (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    game,
+                    selection,
+                    label,
+                    amount,
+                    float(odds),
+                    outcome,
+                    1 if won else 0,
+                    payout,
+                    now,
+                ),
+            )
+            return await self._balance_in(conn, user_id), int(inserted.lastrowid or 0)
+
+    async def casino_history(self, user_id: int, limit: int = 20) -> list[Any]:
+        """Последние раунды игрока — для ленты «недавние ставки»."""
+        return await self._fetchall(
+            "SELECT * FROM casino_bets WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        )
+
+    async def casino_summary(self, user_id: int) -> Any:
+        """Сводка по играм: раундов, поставлено, выиграно, чистый результат."""
+        return await self._fetchone(
+            """
+            SELECT COUNT(*)                        AS rounds,
+                   COALESCE(SUM(amount), 0)        AS staked,
+                   COALESCE(SUM(payout), 0)        AS paid,
+                   COALESCE(SUM(win), 0)           AS wins,
+                   COALESCE(SUM(payout - amount), 0) AS net
+            FROM casino_bets WHERE user_id = ?
+            """,
+            (user_id,),
+        )
 
     @staticmethod
     async def _balance_in(conn: Any, user_id: int) -> int:

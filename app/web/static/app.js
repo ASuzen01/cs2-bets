@@ -31,6 +31,18 @@
     teaseTaps: 0,      // сколько раз подряд жали на бонус
     oddsPrev: {},      // кэфы, которые уже показали: нужно, чтобы заметить сдвиг линии
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
+    // ---------------------------------------------------------------- игры
+    casino: null,             // роспись игр, сводка и история (из /api/state)
+    game: "roulette",         // какая игра открыта
+    casinoPick: { roulette: "red", dice: "over" },
+    casinoStake: { roulette: 50, dice: 50 },
+    casinoBusy: false,
+    casinoResult: null,       // последний раунд: переживает перерисовку
+    recentNumbers: [],        // дорожка выпавших чисел
+    rouletteAngle: 0,
+    ballAngle: 0,
+    diceAngles: [{ x: -18, y: 22 }, { x: -14, y: -26 }],
+    diceShown: null,
   };
 
   const POLL_MS = 40000;  // как часто подтягиваем свежие кэфы, пока приложение открыто
@@ -1647,6 +1659,7 @@
     if (tab === "me") renderMe();
     if (tab === "express") renderExpress();
     if (tab === "bonus") renderBonus();
+    if (tab === "games") { renderGames(); refreshState({ silent: true }); }
     renderBonusDots();   // подсветить конверт, если открыт экран бонусов
     state.teaseTaps = 0;   // «подряд» считается в пределах одного экрана
     haptic("light");
@@ -1819,6 +1832,8 @@
       state.expresses = data.expresses;
       state.limits = data.limits;
       state.bonus = data.bonus || null;
+      state.casino = data.casino || state.casino;
+      if (state.casino && !(state.casinoStake.roulette > 0)) state.casinoStake.roulette = 50;
       state.live = true;
 
       renderHeader();
@@ -1831,6 +1846,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
+      if (state.tab === "games" && !state.casinoBusy) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.user = boot.user || null;
@@ -1846,6 +1862,706 @@
       }
       renderFatal(err.message || "Сервер недоступен");
     }
+  }
+
+  // =============================================================== игры
+  // Рулетка и кости. Исход бросает сервер (/api/casino/play), клиент получает
+  // готовое число и «догоняет» его анимацией: колесо доворачивается до нужной
+  // лунки, кубики падают нужной гранью. Подкрутить результат из браузера нельзя.
+
+  const ROULETTE_ORDER = [
+    0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
+    24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26,
+  ];
+  const ROULETTE_RED = new Set([
+    1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36,
+  ]);
+  const ROULETTE_STEP = 360 / 37;
+  const STAKE_PRESETS = [10, 50, 100, 500];
+
+  // поворот куба, при котором нужная грань смотрит на игрока (в лицо, не вверх):
+  // камера смотрит почти прямо, поэтому читается именно лицевая грань.
+  // 1 — передняя, 6 — задняя, 3 — правая, 4 — левая, 2 — верхняя, 5 — нижняя.
+  const DIE_ORIENT = {
+    1: { x: 0, y: 0 },
+    2: { x: -90, y: 0 },
+    3: { x: 0, y: -90 },
+    4: { x: 0, y: 90 },
+    5: { x: 90, y: 0 },
+    6: { x: 0, y: 180 },
+  };
+  // точки на гранях: номера клеток сетки 3×3
+  const DIE_PIPS = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9] };
+
+  function rouletteColour(number) {
+    if (Number(number) === 0) return "green";
+    return ROULETTE_RED.has(Number(number)) ? "red" : "black";
+  }
+
+  function casinoLimits() {
+    const limits = state.limits || {};
+    const max = Number((state.casino && state.casino.max_bet) || 5000);
+    return { min: Math.max(1, Number(limits.min_bet) || 10), max };
+  }
+
+  function stakeFor(game) {
+    const { min, max } = casinoLimits();
+    const value = Number(state.casinoStake[game]) || min;
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }
+
+  function pickFor(game) {
+    if (state.casinoPick[game]) return state.casinoPick[game];
+    return game === "roulette" ? "red" : "over";
+  }
+
+  // ------------------------------------------------------------------ колесо
+  function rouletteSvgNode() {
+    const size = 300;
+    const cx = size / 2;
+    const cy = size / 2;
+    const radius = 136;
+    const svg = svgNode("svg", {
+      class: "roulette-svg",
+      viewBox: `0 0 ${size} ${size}`,
+      role: "img",
+      "aria-label": "Колесо рулетки",
+    });
+    svg.id = "rouletteSvg";
+    if (state.rouletteAngle) svg.style.transform = `rotate(${state.rouletteAngle}deg)`;
+
+    svg.append(svgNode("circle", { cx, cy, r: radius + 10, fill: "#0d141c" }));
+
+    ROULETTE_ORDER.forEach((number, index) => {
+      const from = index * ROULETTE_STEP;
+      const to = from + ROULETTE_STEP;
+      const [x1, y1] = polar(cx, cy, radius, from);
+      const [x2, y2] = polar(cx, cy, radius, to);
+      const colour = rouletteColour(number);
+      const fill = colour === "green" ? "#2f8a4c" : colour === "red" ? "#bf3b3b" : "#1d2733";
+      svg.append(svgNode("path", {
+        d: `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`,
+        fill,
+        stroke: "#0c1219",
+        "stroke-width": "1",
+      }));
+      const [lx, ly] = polar(cx, cy, radius * 0.83, from + ROULETTE_STEP / 2);
+      const label = svgNode("text", {
+        x: lx.toFixed(2),
+        y: ly.toFixed(2),
+        "text-anchor": "middle",
+        "dominant-baseline": "middle",
+        "font-size": "11.5",
+        "font-weight": "800",
+        fill: "#f6fafd",
+        transform: `rotate(${(from + ROULETTE_STEP / 2).toFixed(2)} ${lx.toFixed(2)} ${ly.toFixed(2)})`,
+      });
+      label.textContent = String(number);
+      svg.append(label);
+    });
+
+    svg.append(svgNode("circle", {
+      cx, cy, r: radius + 1.5, fill: "none", stroke: "#c9a54c", "stroke-width": "2.6", opacity: ".92",
+    }));
+    svg.append(svgNode("circle", {
+      cx, cy, r: radius + 6.5, fill: "none", stroke: "#28394a", "stroke-width": "5",
+    }));
+    svg.append(svgNode("circle", {
+      cx, cy, r: radius * 0.52, fill: "none", stroke: "rgba(255,255,255,.06)", "stroke-width": "9",
+    }));
+    return svg;
+  }
+
+  function rouletteHubNode(number) {
+    const hub = el("div", "roulette-hub");
+    hub.id = "rouletteHub";
+    if (number === null || number === undefined) {
+      hub.append(el("b", null, "—"), el("small", null, "ставь"));
+    } else {
+      const colour = rouletteColour(number);
+      hub.classList.add(colour);
+      hub.append(
+        el("b", null, String(number)),
+        el("small", null, colour === "green" ? "зеро" : colour === "red" ? "красное" : "чёрное"),
+      );
+    }
+    return hub;
+  }
+
+  function numberStrip() {
+    const strip = el("div", "numstrip");
+    strip.id = "numStrip";
+    const recent = state.recentNumbers || [];
+    if (!recent.length) {
+      const hint = el("span", "nb ghost", "здесь будут выпавшие числа");
+      hint.style.opacity = ".45";
+      hint.style.fontWeight = "600";
+      hint.style.fontSize = "11px";
+      strip.append(hint);
+      return strip;
+    }
+    recent.slice(0, 10).forEach((number) => {
+      const pill = el("span", "nb " + rouletteColour(number), String(number));
+      strip.append(pill);
+    });
+    return strip;
+  }
+
+  function pushNumber(number) {
+    state.recentNumbers = [number].concat(state.recentNumbers || []).slice(0, 10);
+    const strip = $("#numStrip");
+    if (!strip) return;
+    const ghost = strip.querySelector(".nb.ghost");
+    if (ghost) ghost.remove();
+    const pill = el("span", "nb fresh " + rouletteColour(number), String(number));
+    while (strip.children.length >= 10) strip.lastChild.remove();
+    strip.insertBefore(pill, strip.firstChild);
+  }
+
+  // ------------------------------------------------------------------- кости
+  function dieNode(id, dice) {
+    const die = el("div", "die");
+    die.id = id;
+    const cube = el("div", "die-cube");
+    const angles = state.diceAngles[dice] || { x: -18, y: 22 };
+    cube.style.transform = `rotateX(${angles.x}deg) rotateY(${angles.y}deg)`;
+    [1, 2, 3, 4, 5, 6].forEach((value) => {
+      const face = el("div", "face s" + value);
+      const pips = DIE_PIPS[value];
+      if (pips.length <= 2) face.classList.add("edge");
+      pips.forEach((cell) => {
+        const pip = el("span", "pip");
+        pip.style.gridRow = String(Math.floor((cell - 1) / 3) + 1);
+        pip.style.gridColumn = String(((cell - 1) % 3) + 1);
+        face.append(pip);
+      });
+      cube.append(face);
+    });
+    die.append(cube);
+    return die;
+  }
+
+  function diceStageNode() {
+    const stage = el("div", "dice-stage");
+    // камера чуть сверху: игрок должен видеть именно ту грань, которая легла вверх
+    const cam = el("div", "dice-cam");
+    cam.append(dieNode("dieA", 0), dieNode("dieB", 1));
+    stage.append(cam);
+    return stage;
+  }
+
+  // ---------------------------------------------------------------- поле
+  function optionGroups(game) {
+    const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
+    const groups = [];
+    options.forEach((option) => {
+      if (String(option.code).indexOf("straight:") === 0) return;   // числа живут в отдельной сетке
+      const name = option.group || "Ставки";
+      let bucket = groups.find((item) => item.name === name);
+      if (!bucket) { bucket = { name, items: [] }; groups.push(bucket); }
+      bucket.items.push(option);
+    });
+    return groups;
+  }
+
+  function betChip(option, active) {
+    const chip = el("button", "bet-chip" + (active ? " active" : ""));
+    chip.type = "button";
+    chip.dataset.code = option.code;
+    if (option.code === "red") chip.classList.add("redded");
+    if (option.code === "black") chip.classList.add("blackded");
+    chip.append(el("span", "lbl", option.label), el("span", "val", "×" + Number(option.odds).toFixed(2)));
+    return chip;
+  }
+
+  function numberBoard(pick) {
+    const board = el("div", "numboard");
+    const zero = el("button", "zero green" + (pick === "straight:0" ? " active" : ""), "0");
+    zero.type = "button";
+    zero.dataset.code = "straight:0";
+    board.append(zero);
+    for (let number = 1; number <= 36; number += 1) {
+      const cell = el("button", rouletteColour(number) + (pick === "straight:" + number ? " active" : ""), String(number));
+      cell.type = "button";
+      cell.dataset.code = "straight:" + number;
+      board.append(cell);
+    }
+    return board;
+  }
+
+  function stakeRow(game) {
+    const { min, max } = casinoLimits();
+    const stake = stakeFor(game);
+    const block = el("div", "stake-block");
+
+    const presets = el("div", "stake-presets");
+    const values = STAKE_PRESETS.filter((value) => value >= min && value <= max);
+    if (!values.length) values.push(min);
+    values.forEach((value) => {
+      const chip = el("button", "stake-chip" + (value === stake ? " active" : ""), money(value));
+      chip.type = "button";
+      chip.dataset.stake = String(value);
+      presets.append(chip);
+    });
+    presets.style.gridTemplateColumns = "repeat(" + values.length + ",1fr)";
+
+    const row = el("div", "stake-row");
+    const minus = el("button", "stake-step", "−");
+    minus.type = "button";
+    minus.dataset.step = "-1";
+    minus.disabled = stake <= min;
+    const plus = el("button", "stake-step", "+");
+    plus.type = "button";
+    plus.dataset.step = "1";
+    plus.disabled = stake >= max;
+    const sum = el("div", "stake-sum", money(stake));
+    sum.id = "stakeSum";
+    row.append(minus, sum, plus);
+
+    block.append(presets, row);
+    return block;
+  }
+
+  function potential(game) {
+    const pick = pickFor(game);
+    const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
+    const option = options.find((item) => item.code === pick);
+    const odds = option ? Number(option.odds) : 0;
+    const stake = stakeFor(game);
+    return {
+      label: option ? option.label : "—",
+      odds,
+      stake,
+      win: odds ? Math.round(stake * odds) : 0,
+    };
+  }
+
+  function tableHead(game) {
+    const panel = el("div", "casino-panel");
+    panel.append(el("div", "felt-glow"));
+
+    if (game === "roulette") {
+      const wrap = el("div", "roulette-wrap");
+      wrap.append(rouletteSvgNode());
+      const ball = el("div", "roulette-ball");
+      ball.id = "rouletteBall";
+      if (state.ballAngle) ball.style.transform = `rotate(${state.ballAngle}deg)`;
+      const dot = el("i");
+      ball.append(dot);
+      wrap.append(ball);
+      wrap.append(el("div", "roulette-pointer"));
+      const last = state.casinoResult && state.casinoResult.game === "roulette"
+        ? state.casinoResult.number
+        : (state.recentNumbers || [])[0];
+      wrap.append(rouletteHubNode(last === undefined ? null : last));
+      panel.append(wrap);
+      panel.append(numberStrip());
+      return panel;
+    }
+
+    const wrap = el("div", "dice-wrap");
+    wrap.append(diceStageNode());
+    const sum = el("div", "dice-sum");
+    sum.id = "diceSum";
+    const shown = state.diceShown;
+    sum.textContent = shown ? `сумма ${shown[0] + shown[1]}` : "бросай";
+    wrap.append(sum);
+    panel.append(wrap);
+    return panel;
+  }
+
+  function outcomeNode() {
+    const box = el("div", "casino-outcome");
+    box.id = "casinoOutcome";
+    return box;
+  }
+
+  function paintOutcome(result, options) {
+    const box = $("#casinoOutcome");
+    if (!box) return;
+    if (!result) {
+      box.className = "casino-outcome";
+      box.textContent = "";
+      return;
+    }
+    const pop = options && options.pop;
+    box.className = "casino-outcome show " + (result.win ? "win" : "lose") + (pop ? " pop" : "");
+    box.textContent = "";
+
+    let what;
+    if (result.game === "roulette") {
+      const colour = rouletteColour(result.number);
+      what = `${result.number}` + (colour === "green" ? " — зеро" : colour === "red" ? " — красное" : " — чёрное");
+    } else {
+      what = `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
+    }
+
+    const line1 = el("div", "line1");
+    line1.append(el("span", null, "Выпало"));
+    line1.append(el("span", "big", what));
+    const line2 = el("div", "line2", result.win
+      ? `«${result.label}» зашла: +${money(result.payout)} (кэф ${Number(result.odds).toFixed(2)})`
+      : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
+    box.append(line1, line2);
+  }
+
+  function summaryNode() {
+    const summary = (state.casino && state.casino.summary) || { rounds: 0, staked: 0, paid: 0, net: 0, wins: 0 };
+    const wrap = el("div", "casino-summary");
+    wrap.id = "casinoSummary";
+    const cells = [
+      ["Раундов", String(summary.rounds)],
+      ["Поставлено", money(summary.staked)],
+      ["Итог", (summary.net > 0 ? "+" : summary.net < 0 ? "−" : "") + money(Math.abs(summary.net) || 0)],
+    ];
+    cells.forEach((cell, index) => {
+      const box = el("div");
+      box.append(el("span", null, cell[0]));
+      const value = el("b", index === 2 ? (summary.net > 0 ? "up" : summary.net < 0 ? "down" : "") : "", cell[1]);
+      box.append(value);
+      wrap.append(box);
+    });
+    return wrap;
+  }
+
+  function historyNode() {
+    const host = el("div", "casino-hist");
+    host.id = "casinoHist";
+    const rows = (state.casino && state.casino.history) || [];
+    if (!rows.length) {
+      host.append(el("div", "empty", "Пока пусто — первый раунд впереди."));
+      return host;
+    }
+    rows.slice(0, 8).forEach((row) => {
+      const line = el("div", "row " + (row.win ? "win" : "lose"));
+      const who = el("div", "who");
+      who.append(document.createTextNode(row.label));
+      who.append(el("i", null, row.game === "roulette" ? "рулетка" : "кости"));
+      const tag = el("span", "tag", row.game === "roulette" ? "№ " + row.outcome : "сумма " + row.outcome);
+      const res = el("div", "res", row.win ? "+" + money(row.payout - row.amount) : "−" + money(row.amount));
+      line.append(who, tag, res);
+      host.append(line);
+    });
+    return host;
+  }
+
+  function rulesNode(game) {
+    const box = el("div", "casino-rules");
+    if (game === "roulette") {
+      box.innerHTML = "";
+      box.append(el("b", null, "Рулетка · европейская, 37 лунок. "));
+      box.append(document.createTextNode(
+        "Красное/чёрное, чёт/нечет, 1–18/19–36 платят ×2, дюжины и колонки — ×3, точное число — ×36. " +
+        "Зеро забирает равные ставки."
+      ));
+      box.append(el("span", "edge", "преимущество банка 2.7 %"));
+    } else {
+      box.append(el("b", null, "Кости · два кубика. "));
+      box.append(document.createTextNode(
+        "«Меньше 6» — сумма 2–6, «больше 8» — сумма 8–12 (по ×2.29), точная сумма — от ×5.73 за семёрку до ×34.38 за дубль."
+      ));
+      box.append(el("span", "edge", "преимущество банка 4.5 %"));
+    }
+    return box;
+  }
+
+  function renderGames() {
+    const host = $("#games");
+    if (!host) return;
+
+    document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.game === state.game);
+    });
+
+    if (!state.user) {
+      host.textContent = "";
+      host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
+      return;
+    }
+    if (!state.casino) {
+      if (!host.querySelector(".skeleton")) {
+        host.textContent = "";
+        host.append(el("div", "skeleton"), el("div", "skeleton"));
+      }
+      return;
+    }
+
+    host.textContent = "";
+    const game = state.game;
+    const pick = pickFor(game);
+
+    host.append(tableHead(game));
+    host.append(outcomeNode());
+
+    const field = el("div", "casino-field");
+    if (game === "roulette") {
+      const numbers = el("div", "bet-group");
+      numbers.append(el("h4", null, "Точное число"));
+      numbers.append(numberBoard(pick));
+      field.append(numbers);
+    }
+    optionGroups(game).forEach((group) => {
+      const block = el("div", "bet-group");
+      block.append(el("h4", null, group.name));
+      const grid = el("div", "bet-grid");
+      // длинные подписи («Меньше 7 (2–6)», «Ровно 12») не влезают в строку с кэфом
+      if (group.items.some((option) => String(option.label).length > 7)) grid.classList.add("stack");
+      group.items.forEach((option) => grid.append(betChip(option, option.code === pick)));
+      block.append(grid);
+      field.append(block);
+    });
+    host.append(field);
+
+    host.append(stakeRow(game));
+
+    const info = potential(game);
+    const meta = el("div", "bet-meta");
+    meta.id = "betMeta";
+    meta.append(el("span", null, "Ставка: " + money(info.stake)));
+    meta.append(el("span", null, "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выигрыш " + money(info.win)));
+    host.append(meta);
+
+    const play = el("button", "btn play");
+    play.id = "playBtn";
+    play.type = "button";
+    play.textContent = (game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(info.stake);
+    host.append(play);
+
+    host.append(summaryNode());
+    host.append(historyNode());
+    host.append(rulesNode(game));
+
+    paintOutcome(state.casinoResult);
+  }
+
+  // ------------------------------------------------------- анимация рулетки
+  function spinRouletteTo(number) {
+    const svg = $("#rouletteSvg");
+    const ball = $("#rouletteBall");
+    const hub = $("#rouletteHub");
+    const index = ROULETTE_ORDER.indexOf(Number(number));
+    const step = ROULETTE_STEP;
+
+    return new Promise((resolve) => {
+      if (!svg) { setTimeout(resolve, 500); return; }
+
+      // доворачиваем так, чтобы нужная лунка встала под указатель (12 часов);
+      // jitter — колесо почти никогда не останавливается ровно по центру лунки
+      const centre = index * step + step / 2;
+      const jitter = (Math.random() - 0.5) * step * 0.5;
+      const current = state.rouletteAngle || 0;
+      const target = current + 6 * 360 + (((-centre - jitter - current) % 360) + 360) % 360;
+
+      svg.classList.add("spinning");
+      void svg.getBoundingClientRect();     // иначе браузер склеит два transform
+      svg.style.transform = `rotate(${target}deg)`;
+      state.rouletteAngle = target;
+
+      if (hub) {
+        hub.className = "roulette-hub";
+        hub.textContent = "";
+        hub.append(el("b", null, "…"), el("small", null, "крутим"));
+      }
+
+      if (ball) {
+        // шарик идёт против колеса и замирает ровно наверху — в выигрышной лунке
+        const start = state.ballAngle || 0;
+        const laps = Math.ceil((5 * 360 + start) / 360);
+        const ballTarget = -360 * laps + (Math.random() - 0.5) * 3;
+        ball.classList.add("spinning");
+        void ball.getBoundingClientRect();
+        ball.style.transform = `rotate(${ballTarget}deg)`;
+        state.ballAngle = ballTarget;
+      }
+
+      setTimeout(() => {
+        svg.classList.remove("spinning");
+        if (ball) ball.classList.remove("spinning");
+        if (hub) {
+          const colour = rouletteColour(number);
+          hub.className = "roulette-hub settled " + colour;
+          hub.textContent = "";
+          hub.append(
+            el("b", null, String(number)),
+            el("small", null, colour === "green" ? "зеро" : colour === "red" ? "красное" : "чёрное"),
+          );
+        }
+        resolve();
+      }, 4980);
+    });
+  }
+
+  // --------------------------------------------------------- анимация костей
+  function rollDiceTo(values) {
+    const dice = [$("#dieA"), $("#dieB")];
+    if (!dice[0] || !dice[1]) return new Promise((resolve) => setTimeout(resolve, 700));
+
+    dice.forEach((die, index) => {
+      const cube = die.querySelector(".die-cube");
+      const base = DIE_ORIENT[values[index]] || { x: 0, y: 0 };
+      const was = state.diceAngles[index] || { x: -18, y: 22 };
+      // всегда вперёд: минимум три оборота по каждой оси, потом нужная грань вверх
+      const xTurns = Math.ceil((was.x + 1080 - base.x) / 360);
+      const yTurns = Math.ceil((was.y + 1080 + index * 180 - base.y) / 360);
+      const angles = { x: base.x + 360 * xTurns, y: base.y + 360 * yTurns };
+      state.diceAngles[index] = angles;
+      cube.style.transform = `rotateX(${angles.x}deg) rotateY(${angles.y}deg)`;
+      die.classList.remove("lifted");
+      void die.getBoundingClientRect();
+      die.classList.add("lifted");
+    });
+
+    state.diceShown = values.slice();
+    const total = $("#diceSum");
+    if (total) total.textContent = "бросаем…";
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        dice.forEach((die) => die.classList.remove("lifted"));
+        if (total) total.textContent = `сумма ${values[0] + values[1]}`;
+        resolve();
+      }, 1320);
+    });
+  }
+
+  // ------------------------------------------------------------- сам раунд
+  function lockTable(busy) {
+    const play = $("#playBtn");
+    if (play) {
+      play.disabled = busy;
+      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : "Бросаем…";
+    }
+    document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .stake-chip, #games .stake-step")
+      .forEach((node) => { node.disabled = busy; });
+  }
+
+  function refreshSide() {
+    const summary = $("#casinoSummary");
+    if (summary) summary.replaceWith(summaryNode());
+    const hist = $("#casinoHist");
+    if (hist) hist.replaceWith(historyNode());
+    const meta = $("#betMeta");
+    if (meta) {
+      const info = potential(state.game);
+      meta.textContent = "";
+      meta.append(el("span", null, "Ставка: " + money(info.stake)));
+      meta.append(el("span", null, "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выигрыш " + money(info.win)));
+    }
+    const play = $("#playBtn");
+    if (play) {
+      play.disabled = false;
+      play.textContent = (state.game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(stakeFor(state.game));
+    }
+  }
+
+  async function playCasinoRound() {
+    if (state.casinoBusy || !state.casino || !state.user) return;
+    const game = state.game;
+    const selection = pickFor(game);
+    const amount = stakeFor(game);
+    if (amount > balance()) {
+      toast("Монет не хватает — загляни в бонусы", "bad");
+      haptic("bad");
+      return;
+    }
+
+    state.casinoBusy = true;
+    state.casinoResult = null;
+    paintOutcome(null);
+    lockTable(true);
+
+    try {
+      const data = await api("/api/casino/play", {
+        method: "POST",
+        body: { game, selection, amount },
+      });
+
+      if (game === "roulette") await spinRouletteTo(data.number);
+      else await rollDiceTo(data.dice);
+
+      setBalance(data.balance);
+      state.casinoResult = data;
+      paintOutcome(data, { pop: true });
+      haptic(data.win ? "ok" : "bad");
+
+      if (game === "roulette") {
+        pushNumber(data.number);
+        const strip = $("#numStrip");
+        if (strip && strip.children.length) strip.children[0].classList.remove("fresh");
+      }
+
+      // сводку и историю ведём локально, чтобы не перерисовывать колесо
+      const summary = state.casino.summary;
+      summary.rounds += 1;
+      summary.staked += amount;
+      summary.paid += data.payout;
+      summary.net += data.payout - amount;
+      if (data.win) summary.wins += 1;
+      state.casino.history = [{
+        id: data.round,
+        game,
+        label: data.label,
+        amount,
+        odds: data.odds,
+        outcome: String(data.outcome),
+        win: Boolean(data.win),
+        payout: data.payout,
+        at: Math.floor(Date.now() / 1000),
+      }].concat(state.casino.history || []).slice(0, 12);
+
+      if (data.win) toast(`Зашло: ${money(data.payout)}`, "ok");
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      state.casinoBusy = false;
+      lockTable(false);
+      refreshSide();
+    }
+  }
+
+  function bindGames() {
+    document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (state.game === btn.dataset.game) return;
+        state.game = btn.dataset.game;
+        state.casinoResult = null;
+        haptic("light");
+        renderGames();
+      });
+    });
+
+    const host = $("#games");
+    if (!host) return;
+
+    host.addEventListener("click", (event) => {
+      const node = event.target.closest("button");
+      if (!node || node.disabled) return;
+      const game = state.game;
+
+      if (node.id === "playBtn") { playCasinoRound(); return; }
+
+      if (node.dataset.code) {
+        state.casinoPick[game] = node.dataset.code;
+        haptic("light");
+        renderGames();
+        return;
+      }
+      if (node.dataset.stake) {
+        state.casinoStake[game] = Number(node.dataset.stake);
+        haptic("light");
+        renderGames();
+        return;
+      }
+      if (node.dataset.step) {
+        const { min, max } = casinoLimits();
+        const step = node.dataset.step === "1" ? 1 : -1;
+        const base = stakeFor(game);
+        const next = Math.min(max, Math.max(min, Math.round(base * (step > 0 ? 1.5 : 1 / 1.5))));
+        state.casinoStake[game] = next === base ? base + step * min : next;
+        haptic("light");
+        renderGames();
+      }
+    });
   }
 
   // ------------------------------------------------------------------- init
@@ -1893,6 +2609,7 @@
         if (state.segment === "live") refreshState({ silent: true });  // свежий счёт сразу
       });
     });
+    bindGames();
     $("#cartOpen").addEventListener("click", () => switchTab("express"));
     const bell = $("#bonusBell");
     if (bell) bell.addEventListener("click", () => { haptic(); switchTab("bonus"); });

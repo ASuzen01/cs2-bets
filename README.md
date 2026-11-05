@@ -33,6 +33,7 @@ Fonbet listBase (gzip JSON)
 | `/start` | приветствие, баланс, кнопка «Открыть приложение» | — |
 | Матчи | — | линия тир-1, тап по кэфу → сумма → ставка |
 | Экспресс | — | корзина от 2 исходов без верхнего лимита, кэф пересчитывается на лету |
+| Игры | — | рулетка (европейская, 37 лунок) и кости (два кубика): ставка → анимация → выплата. Преимущество банка 2.7 % и 4.5 %, исход бросает сервер |
 | Бонусы | — | кнопка-подарок в шапке рядом с балансом: ежедневный бонус 250 и колесо фортуны (24 сектора: 1000×1, 200×7, 50×8, пусто×8; 1 крутка/сутки бесплатно, дальше по 150) |
 | Я | — | баланс, ставки в игре, история операций, правила |
 | История / Топ | — | операции, таблица игроков |
@@ -68,7 +69,7 @@ Fonbet listBase (gzip JSON)
 |---|---|
 | Одна база | бот и приложение читают/пишут один и тот же Postgres (или SQLite локально) |
 | Авторизация | `initData` от Telegram, HMAC-SHA256 (`app/services/miniapp.py`), просрочка > 24 ч отсекается |
-| API | `GET /health`, `GET /ping`, `GET /`, `GET /api/state`, `POST /api/bet`, `POST /api/express`, `POST /api/bonus`, `GET /api/top`, `GET /api/history` |
+| API | `GET /health`, `GET /ping`, `GET /`, `GET /api/state`, `POST /api/bet`, `POST /api/express`, `POST /api/bonus`, `GET /api/top`, `GET /api/history`, `GET /api/casino`, `POST /api/casino/play` |
 | Защита | без валидной подписи любой `/api/*` отдаёт `401` |
 | Локальная отладка | `MINIAPP_DEV_USER=<telegram_id> python miniapp.py` → `http://localhost:8081` в браузере |
 
@@ -120,6 +121,7 @@ telegram-bot/
 │   │   └── backends.py       # SQLite и Postgres за одним интерфейсом
 │   ├── services/
 │   │   ├── fonbet.py         # клиент линии Fonbet + тир-1 фильтр
+│   │   ├── games.py          # рулетка и кости: правила, кэфы, исход раунда
 │   │   ├── miniapp.py        # проверка initData (HMAC-SHA256)
 │   │   └── sync.py           # фон: обновление линии, закрытие, расчёт, постинг
 │   └── handlers/
@@ -134,6 +136,7 @@ telegram-bot/
 │   ├── integration_check.py  # сквозной прогон: бот-лаунчер + HTTP API
 │   └── migrate_to_postgres.py
 ├── docs/deploy-render-neon.md · docs/github-setup.md · docs/upload-via-browser.md
+├── docs/games-2026-11-05.md  # рулетка и кости: правила, экономика, анимация
 ├── Dockerfile · render.yaml · deploy/cs2-bets.service
 └── .env.example
 ```

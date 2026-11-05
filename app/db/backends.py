@@ -152,6 +152,21 @@ CREATE TABLE IF NOT EXISTS ledger (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id);
+
+CREATE TABLE IF NOT EXISTS casino_bets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    game       TEXT    NOT NULL,
+    selection  TEXT    NOT NULL,
+    label      TEXT    NOT NULL,
+    amount     INTEGER NOT NULL,
+    odds       REAL    NOT NULL,
+    outcome    TEXT    NOT NULL,
+    win        INTEGER NOT NULL,
+    payout     INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
 """
 
 SCHEMA_POSTGRES = (

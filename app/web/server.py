@@ -20,6 +20,8 @@ from aiohttp import web
 
 from app.config import settings
 from app.db import Database
+from app.db.database import InsufficientFunds, InvalidBet
+from app.services import games
 from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
 from app.services.football import market_label, parse_side
 from app.services.hockey import market_label as hockey_label
@@ -69,6 +71,8 @@ def register_routes(
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
+    app.router.add_get("/api/casino", api_casino_state)
+    app.router.add_post("/api/casino/play", api_casino_play)
     return app
 
 
@@ -198,6 +202,7 @@ async def api_state(request: web.Request) -> web.Response:
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "bonus": await _bonus_payload(db, user_id),
+            "casino": await _casino_payload(db, user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -515,6 +520,103 @@ async def api_bets(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     payload = await bets_history(db, int(request[USER_KEY]["user_id"]))
     return web.json_response({"ok": True, **payload})
+
+
+# -------------------------------------------------------------------- казино
+CASINO_MAX_BET = 5000
+
+
+async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
+    """Роспись игр, сводка и последние раунды — одним куском для экранов."""
+    summary = await db.casino_summary(user_id)
+    rows = await db.casino_history(user_id, 12)
+    return {
+        "options": {
+            "roulette": games.game_options("roulette"),
+            "dice": games.game_options("dice"),
+        },
+        "numbers": sorted(games.ROULETTE_RED),
+        "red": sorted(games.ROULETTE_RED),
+        "max_bet": CASINO_MAX_BET,
+        "summary": {
+            "rounds": int(summary["rounds"] or 0) if summary else 0,
+            "staked": int(summary["staked"] or 0) if summary else 0,
+            "paid": int(summary["paid"] or 0) if summary else 0,
+            "wins": int(summary["wins"] or 0) if summary else 0,
+            "net": int(summary["net"] or 0) if summary else 0,
+        },
+        "history": [
+            {
+                "id": int(row["id"]),
+                "game": str(row["game"]),
+                "label": str(row["label"]),
+                "amount": int(row["amount"]),
+                "odds": float(row["odds"]),
+                "outcome": str(row["outcome"]),
+                "win": bool(row["win"]),
+                "payout": int(row["payout"]),
+                "at": int(row["created_at"]),
+            }
+            for row in rows
+        ],
+    }
+
+
+async def api_casino_state(request: web.Request) -> web.Response:
+    """Экран игр: что можно поставить, как игралось раньше."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    return web.json_response(
+        {"ok": True, "balance": await db.get_balance(user_id), **await _casino_payload(db, user_id)}
+    )
+
+
+async def api_casino_play(request: web.Request) -> web.Response:
+    """Раунд рулетки или костей.
+
+    Клиент присылает игру, выбор и сумму. Исход бросает сервер (`services.games`),
+    клиент получает его уже готовым и только доигрывает анимацию до нужного числа.
+    """
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+
+    game = str(body.get("game") or "").strip().lower()
+    selection = str(body.get("selection") or "").strip().lower()
+    amount = _as_int(body.get("amount"))
+
+    if game not in ("roulette", "dice"):
+        return _bad("Такой игры нет")
+    if amount < settings.min_bet:
+        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
+    if amount > CASINO_MAX_BET:
+        return _bad(f"Максимальная ставка — {CASINO_MAX_BET} 🪙")
+    if not selection:
+        return _bad("Выбери, на что ставишь")
+
+    try:
+        result = games.play(game, selection, amount)
+    except ValueError as exc:
+        return _bad(str(exc))
+
+    try:
+        balance, round_id = await db.play_casino(
+            user_id,
+            game=game,
+            selection=selection,
+            label=result["label"],
+            amount=amount,
+            odds=result["odds"],
+            outcome=result["outcome"],
+            won=result["win"],
+            payout=result["payout"],
+        )
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+
+    return web.json_response({"ok": True, "round": round_id, "balance": balance, **result})
 
 
 __all__ = ["DB_KEY", "STATIC_DIR", "USER_KEY", "build_app", "register_routes", "render_index"]
