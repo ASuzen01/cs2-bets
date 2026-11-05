@@ -247,14 +247,7 @@ def run_webhook(
                 "stats": syncer.last_stats if syncer else None,
             },
             # как прошла перепроверка расчётов при старте
-            "recheck": {
-                "hours": LAST_REPORT.get("hours"),
-                "checked": LAST_REPORT.get("checked"),
-                "football": LAST_REPORT.get("football"),
-                "cs2": LAST_REPORT.get("cs2"),
-                "maps_settled": LAST_REPORT.get("maps_settled"),
-                "maps_repaired": LAST_REPORT.get("maps_repaired"),
-            } if LAST_REPORT else None,
+            "recheck": dict(LAST_REPORT) if LAST_REPORT else None,
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:
