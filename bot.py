@@ -38,7 +38,12 @@ from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
 from app.services.manual_result import apply_manual_results
 from app.services.maps import repair_refunded_maps
-from app.services.recheck import notify_admins, recheck_recent, report_text
+from app.services.recheck import (
+    LAST_REPORT,
+    notify_admins,
+    recheck_recent,
+    report_text,
+)
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -137,8 +142,7 @@ async def on_startup(
     # перепроверка расчётов за последние двое суток: футбол — по фиду, CS2 — по картам
     try:
         report = await recheck_recent(db, bot, hours=48)
-        if report["football"] or report["cs2"] or report["maps_settled"]:
-            await notify_admins(bot, db, report_text(report))
+        await notify_admins(bot, db, report_text(report))
     except Exception:
         log.exception("Перепроверка расчётов не удалась")
 
@@ -242,6 +246,15 @@ def run_webhook(
                 "last_error": syncer.last_error if syncer else None,
                 "stats": syncer.last_stats if syncer else None,
             },
+            # как прошла перепроверка расчётов при старте
+            "recheck": {
+                "hours": LAST_REPORT.get("hours"),
+                "checked": LAST_REPORT.get("checked"),
+                "football": LAST_REPORT.get("football"),
+                "cs2": LAST_REPORT.get("cs2"),
+                "maps_settled": LAST_REPORT.get("maps_settled"),
+                "maps_repaired": LAST_REPORT.get("maps_repaired"),
+            } if LAST_REPORT else None,
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:

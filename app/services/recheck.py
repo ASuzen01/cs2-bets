@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 # Какие статусы матча имеет смысл перепроверять.
 CHECK_STATUSES = ("open", "live", "awaiting", "finished", "cancelled")
 
+# Последний отчёт: его же показывает /health, чтобы результат перепроверки был виден
+# без захода в бота.
+LAST_REPORT: dict[str, Any] = {}
+
 
 async def recheck_recent(
     db: Database,
@@ -79,6 +83,8 @@ async def recheck_recent(
 
     if results is None:
         await client.close()
+    LAST_REPORT.clear()
+    LAST_REPORT.update(report)
     log.info(
         "Перепроверка за %s ч: матчей %s, футбол исправлен %s, CS2 исправлен %s, карт %s",
         hours, report["checked"], len(report["football"]), len(report["cs2"]),
@@ -219,4 +225,4 @@ async def notify_admins(bot: Bot, db: Database, text: str) -> None:
         await send_user(bot, db, int(admin_id), text)
 
 
-__all__ = ["notify_admins", "recheck_recent", "report_text"]
+__all__ = ["LAST_REPORT", "notify_admins", "recheck_recent", "report_text"]
