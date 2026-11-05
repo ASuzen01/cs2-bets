@@ -35,6 +35,7 @@ from app.handlers import setup_handlers
 from app.handlers.errors import last_errors
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
+from app.services import matchnotify, reminders
 from app.services.backup import BackupService
 from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.manual_result import apply_manual_results
@@ -51,11 +52,13 @@ USER_COMMANDS: list[tuple[str, str]] = [
     ("start", "Открыть приложение"),
     ("help", "Правила и выплаты"),
     ("app", "Ссылка на приложение"),
+    ("coupon", "Картинка ставки в чат"),
 ]
 ADMIN_COMMANDS: list[tuple[str, str]] = [
     ("results", "Подтвердить исходы"),
     ("stats", "Статистика"),
     ("grant", "Начислить монеты игроку"),
+    ("best", "Купон дня в канал"),
 ]
 
 
@@ -156,6 +159,10 @@ async def on_startup(
     syncer.start()
     # сервис на бесплатном Render засыпает после 15 минут тишины — пингуем себя
     KEEPALIVE.start()
+    # напоминание о серии дней: одно сообщение в сутки, вечером
+    reminders.attach(bot, db).start()
+    # «твой матч начинается» — по открытым ставкам, один раз на матч
+    matchnotify.attach(bot, db).start()
     if backup is not None:
         backup.start()
 
@@ -185,6 +192,10 @@ async def on_shutdown(
     if recheck is not None:
         await recheck.stop()
     await KEEPALIVE.stop()
+    if reminders.REMINDER is not None:
+        await reminders.REMINDER.stop()
+    if matchnotify.NOTIFIER is not None:
+        await matchnotify.NOTIFIER.stop()
     if backup is not None:
         await backup.stop()
     await syncer.stop()
@@ -279,6 +290,8 @@ def build_web_app(
             "recheck_loop": recheck.stats if recheck is not None else None,
             # держим сервис проснувшимся: когда был последний успешный пинг
             "keepalive": KEEPALIVE.stats,
+            "reminders": reminders.stats(),
+            "match_notify": matchnotify.stats(),
             # встал ли вебхук: видно, если Telegram не принял адрес
             "webhook": dict(WEBHOOK_STATE),
         }

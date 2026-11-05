@@ -20,16 +20,24 @@ from aiohttp import web
 
 from app.config import settings
 from app.db import Database
-from app.db.database import InsufficientFunds, InvalidBet, bonus_amount
-from app.services import games
-from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
+from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
+from app.services import achievements, games
+from app.services.bonus import (
+    TEASE_PRIZE,
+    TEASE_TAPS,
+    WHEEL_JACKPOT,
+    daily_layout,
+    slots_payload,
+    spin,
+)
+from app.services.coupon import item_of as coupon_item
 from app.services.coupon import render_coupon
 from app.services.football import market_label, parse_side
 from app.services.hockey import market_label as hockey_label
 from app.services.hockey import parse_side as hockey_side
 from app.services.legs import label as leg_label
 from app.services.miniapp import AuthError
-from app.services.quests import day_number
+from app.services.quests import chain_chest, day_number, next_chest
 from app.services.quests import payload as quests_payload
 from app.web.auth import BOT_KEY, DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.limits import metrics
@@ -77,6 +85,12 @@ def register_routes(
     app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/coupon/{kind}/{bet_id}.png", api_coupon)
     app.router.add_post("/api/share", api_share)
+    app.router.add_get("/api/achievements", api_achievements)
+    app.router.add_get("/api/referral", api_referral)
+    app.router.add_post("/api/referral", api_referral_attach)
+    app.router.add_post("/api/quest/chest", api_quest_chest)
+    app.router.add_post("/api/cashout", api_cashout)
+    app.router.add_get("/api/honesty", api_honesty)
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
@@ -218,10 +232,19 @@ async def api_state(request: web.Request) -> web.Response:
         await db.upsert_user(user_id, user["username"], user["full_name"])
 
     quests = quests_payload(await db.quests_state(user_id), day_number())
+    fresh = await achievements.sync(db, user_id)
+    chain = await db.quest_chain(user_id)
     return web.json_response(
         {
             "ok": True,
             "quests": quests,
+            "chain": {
+                **chain,
+                "chest": chain_chest(chain["days"]),
+                "next": next_chest(chain["days"]),
+            },
+            "achievements": await achievements.payload(db, user_id),
+            "new_achievements": [achievements.public(item) for item in fresh],
             "user": {
                 "id": user_id,
                 "name": display_name(user, await db.get_user(user_id)),
@@ -283,6 +306,50 @@ async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
             "available": state["tease"]["wait_seconds"] == 0,
             "wait_seconds": state["tease"]["wait_seconds"],
         },
+    }
+
+
+async def honesty_payload(db: Database) -> dict[str, Any]:
+    """Что отдаёт каждая игра: считаем по правилам, а не «на слово».
+
+    Рулетка — европейское колесо на 37 лунок, кости — два кубика, колесо — 24
+    сектора из `WHEEL_VALUES`. Для ставок показываем реальные суммы по линии.
+    """
+    roulette_rtp = round(18 / games.ROULETTE_SLOTS * 2 * 100, 1)      # внешние ставки
+    wheels = daily_layout()
+    expected = sum(wheels) / len(wheels)
+    cost = max(1, int(settings.wheel_cost))
+    totals = await db.line_totals()
+    return {
+        "roulette": {
+            "rtp": roulette_rtp,
+            "slots": games.ROULETTE_SLOTS,
+            "note": "европейское колесо: 37 лунок, один ноль",
+        },
+        "dice": {
+            "rtp": round(games.DICE_EDGE * 100, 1),
+            "note": "два кубика, 36 равновероятных исходов",
+        },
+        "wheel": {
+            "slots": len(wheels),
+            "empty": sum(1 for value in wheels if value == 0),
+            "expected": round(expected),
+            "cost": cost,
+            "rtp": round(expected / cost * 100, 1),
+            "jackpot": int(WHEEL_JACKPOT),
+            "note": "бесплатная крутка раз в сутки; платная — по цене ниже",
+        },
+        "line": totals,
+        "line_rtp": round(
+            (totals["bets_paid"] + totals["express_paid"])
+            * 100
+            / max(1, totals["bets_staked"] + totals["express_staked"]),
+            1,
+        ),
+        "betting_note": (
+            "Кэфы ставок — из линии, маржа остаётся у букмекера; "
+            "монеты виртуальные, вывести их нельзя"
+        ),
     }
 
 
@@ -387,9 +454,11 @@ async def api_bet(request: web.Request) -> web.Response:
             match_id, int(user["user_id"]), None, side, amount, token=body.get("token")
         )
         match = await db.get_match(match_id)
+    fresh = await _after_action(db, int(user["user_id"]))
     return web.json_response(
         {
             "ok": True,
+            "new_achievements": fresh,
             "balance": balance,
             "odds": odds,
             "match": match_payload(match) if match is not None else None,
@@ -399,6 +468,19 @@ async def api_bet(request: web.Request) -> web.Response:
             "potential": round(amount * odds),
         }
     )
+
+
+async def _after_action(db: Database, user_id: int) -> list[dict[str, Any]]:
+    """Что делаем после любой ставки: реферальный бонус другу и достижения.
+
+    Ошибки здесь не должны ломать саму ставку — она уже прошла.
+    """
+    try:
+        await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
+        return [achievements.public(item) for item in await achievements.sync(db, user_id)]
+    except Exception:
+        log.debug("Постобработка ставки не удалась", exc_info=True)
+        return []
 
 
 async def api_express(request: web.Request) -> web.Response:
@@ -444,9 +526,11 @@ async def api_express(request: web.Request) -> web.Response:
         for item in await db.express_items(express_id)
     ]
 
+    fresh = await _after_action(db, int(user["user_id"]))
     return web.json_response(
         {
             "ok": True,
+            "new_achievements": fresh,
             "express_id": express_id,
             "odds": odds,
             "balance": balance,
@@ -523,21 +607,6 @@ async def api_wheel(request: web.Request) -> web.Response:
     )
 
 
-COUPON_KINDS = {"bet": "single", "express": "express"}
-
-
-async def _coupon_item(db: Database, user_id: int, kind: str, bet_id: int) -> dict[str, Any] | None:
-    """Купон только для своей ставки: чужие id не отдаём даже картинкой."""
-    wanted = COUPON_KINDS.get(kind)
-    if wanted is None:
-        return None
-    payload = await bets_history(db, user_id)
-    for item in list(payload.get("open") or []) + list(payload.get("settled") or []):
-        if int(item.get("id") or 0) == int(bet_id) and str(item.get("kind") or "single") == wanted:
-            return item
-    return None
-
-
 async def api_coupon(request: web.Request) -> web.Response:
     """Картинка купона: PNG 1080×1350, годится и для чата, и для сторис."""
     db: Database = request.app[DB_KEY]
@@ -548,7 +617,7 @@ async def api_coupon(request: web.Request) -> web.Response:
     except ValueError:
         return _bad("Неверный номер ставки")
 
-    item = await _coupon_item(db, user_id, kind, bet_id)
+    item = await coupon_item(db, user_id, kind, bet_id)
     if item is None:
         return _bad("Ставка не найдена", 404)
 
@@ -571,7 +640,7 @@ async def api_share(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return _bad("Неверный номер ставки")
 
-    item = await _coupon_item(db, user_id, kind, bet_id)
+    item = await coupon_item(db, user_id, kind, bet_id)
     if item is None:
         return _bad("Ставка не найдена", 404)
 
@@ -595,6 +664,83 @@ async def api_share(request: web.Request) -> web.Response:
 
     await db.log_event(user_id, "coupon_shared", kind)
     return web.json_response({"ok": True, "sent": True})
+
+
+async def api_achievements(request: web.Request) -> web.Response:
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    await achievements.sync(db, user_id)
+    return web.json_response({"ok": True, **await achievements.payload(db, user_id)})
+
+
+def _referral_link(user_id: int) -> str:
+    """Ссылка-приглашение: открывает мини-апп с параметром ref_<id>."""
+    base = settings.bot_username.strip().lstrip("@")
+    if not base:
+        return ""
+    return f"https://t.me/{base}?startapp=ref_{user_id}"
+
+
+async def api_referral(request: web.Request) -> web.Response:
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    state = await db.referral_state(user_id, settings.referral_bonus)
+    return web.json_response(
+        {
+            "ok": True,
+            **state,
+            "welcome": settings.referral_welcome,
+            "link": _referral_link(user_id),
+            "code": f"ref_{user_id}",
+        }
+    )
+
+
+async def api_referral_attach(request: web.Request) -> web.Response:
+    """Привязка приглашения: мини-апп пришёл с параметром ref_<id>."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    code = str(body.get("code") or "").strip()
+    if not code.startswith("ref_") or not code[4:].isdigit():
+        return _bad("Некорректная ссылка-приглашение")
+    ok, error = await db.attach_referral(user_id, int(code[4:]))
+    if not ok and error:
+        return _bad(error)
+    await db.log_event(user_id, "referral_attach", code[:32])
+    return web.json_response({"ok": True, "attached": ok})
+
+
+async def api_quest_chest(request: web.Request) -> web.Response:
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    received, amount, balance, error = await db.claim_chain_chest(user_id)
+    if not received:
+        return _bad(error)
+    await achievements.sync(db, user_id)
+    return web.json_response({"ok": True, "amount": amount, "balance": balance})
+
+
+async def api_cashout(request: web.Request) -> web.Response:
+    """Продажа ставки до старта: возвращаем 95 % ставки, ставка выходит из игры."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    bet_id = _as_int(body.get("bet_id"))
+    if not bet_id:
+        return _bad("Не выбрана ставка")
+    try:
+        refund, balance = await db.cashout_bet(bet_id, user_id, settings.cashout_rate)
+    except MatchNotFound:
+        return _bad("Ставка не найдена", 404)
+    await db.log_event(user_id, "cashout", str(bet_id))
+    return web.json_response({"ok": True, "refund": refund, "balance": balance})
+
+
+async def api_honesty(request: web.Request) -> web.Response:
+    """Открытые цифры: сколько отдаёт каждая игра и вся линия целиком."""
+    db: Database = request.app[DB_KEY]
+    return web.json_response({"ok": True, **await honesty_payload(db)})
 
 
 async def api_quest(request: web.Request) -> web.Response:
@@ -645,10 +791,15 @@ async def api_tease(request: web.Request) -> web.Response:
 
 
 async def api_top(request: web.Request) -> web.Response:
+    """Топ: общий зачёт по балансу и недельный сезон по прибыли со ставок."""
     db: Database = request.app[DB_KEY]
     me = int(request[USER_KEY]["user_id"])
     rows = await db.top_users(10)
     mine = await db.rank_of_user(me)
+    season_start = db.week_start()
+    season_rows = await db.season_top(10, season_start)
+    season_mine = await db.season_rank(me, season_start)
+    face = {"user_id": me, "username": None, "full_name": None}
     return web.json_response(
         {
             "ok": True,
@@ -656,12 +807,26 @@ async def api_top(request: web.Request) -> web.Response:
             "top": [
                 {
                     "rank": index + 1,
-                    "name": display_name({"user_id": me, "username": None, "full_name": None}, row),
+                    "name": display_name(face, row),
                     "balance": int(row["balance"]),
                     "me": int(row["user_id"]) == me,
                 }
                 for index, row in enumerate(rows)
             ],
+            # сезон недели: счёт — чистая прибыль, а не баланс
+            "season": {
+                "starts_at": season_start,
+                "top": [
+                    {
+                        "rank": index + 1,
+                        "name": display_name(face, row),
+                        "balance": int(row["score"]),
+                        "me": int(row["user_id"]) == me,
+                    }
+                    for index, row in enumerate(season_rows)
+                ],
+                "me": season_mine,
+            },
         }
     )
 
@@ -784,6 +949,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     except InvalidBet as exc:
         return _bad(str(exc))
 
+    await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
     return web.json_response({"ok": True, "round": round_id, "balance": balance, **result})
 
 

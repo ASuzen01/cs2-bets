@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS bets (
     payout     INTEGER,
     market     TEXT    NOT NULL DEFAULT 'match',
     map_id     INTEGER,
+    cashed_out INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bets_match ON bets(match_id);
@@ -189,6 +190,32 @@ CREATE TABLE IF NOT EXISTS events (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+
+-- достижения: открываются один раз и остаются в профиле
+CREATE TABLE IF NOT EXISTS achievements (
+    user_id     INTEGER NOT NULL,
+    code        TEXT    NOT NULL,
+    unlocked_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, code)
+);
+
+-- цепочка дней с выполненными заданиями: сундук за 3 и 7 дней
+CREATE TABLE IF NOT EXISTS quest_chain (
+    user_id   INTEGER PRIMARY KEY,
+    days      INTEGER NOT NULL DEFAULT 0,
+    last_day  INTEGER NOT NULL DEFAULT 0,
+    best_days INTEGER NOT NULL DEFAULT 0,
+    chest_day INTEGER NOT NULL DEFAULT 0
+);
+
+-- приглашённые друзья: платим, когда друг делает первую ставку
+CREATE TABLE IF NOT EXISTS referrals (
+    invited_id INTEGER PRIMARY KEY,
+    inviter_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    paid_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id);
 
 -- идемпотентность действий игрока: один и тот же тап не должен списать дважды
 CREATE TABLE IF NOT EXISTS bet_requests (

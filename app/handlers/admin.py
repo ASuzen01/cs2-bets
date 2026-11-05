@@ -28,7 +28,7 @@ from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from app import keyboards, texts
 from app.config import settings
@@ -65,6 +65,43 @@ class IsAdmin(BaseFilter):
 
 
 router.message.filter(IsAdmin())
+
+
+@router.message(Command("best"))
+async def cmd_best(message: Message, command: CommandObject, db: Database) -> None:
+    """Купон дня: лучший выигрыш за сутки — в канал (или ответом админу).
+
+    Параметр — сколько часов назад смотреть: /best 48.
+    """
+    from app.services.coupon import item_of, render_coupon
+
+    hours = 24
+    args = (command.args or "").strip()
+    if args.isdigit():
+        hours = max(1, min(24 * 14, int(args)))
+
+    best = await db.best_win_since(int(time.time()) - hours * 3600)
+    if best is None:
+        await message.answer(f"За последние {hours} ч выигрышей не было — постить нечего.")
+        return
+
+    item = await item_of(db, int(best["user_id"]), str(best["kind"]), int(best["id"]))
+    if item is None:
+        await message.answer("Ставка нашлась, но купон по ней собрать не удалось.")
+        return
+
+    png = render_coupon(item)
+    caption = f"🔥 Купон дня: +{int(best['payout']) - int(item.get('stake') or 0)} чистыми"
+    photo = BufferedInputFile(png, filename="best.png")
+    target = settings.channel_id
+    if target:
+        try:
+            sent = await callback_bot(message).send_photo(target, photo, caption=caption)
+            await message.answer(f"Опубликовал в канал: message #{sent.message_id}")
+            return
+        except Exception as exc:
+            await message.answer(f"В канал не ушло ({exc}) — вот купон, отправь руками.")
+    await message.answer_photo(photo, caption=caption)
 
 
 @router.message(Command("grant"))

@@ -97,7 +97,7 @@ def test_routers_have_no_button_ui() -> None:
     dp = Dispatcher()
     setup_handlers(dp)
     names = {router.name for router in dp.sub_routers}
-    assert names == {"admin", "common", "misc"}
+    assert names == {"admin", "common", "coupon", "misc"}
     assert "ui" not in names
 
 

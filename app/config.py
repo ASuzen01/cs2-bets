@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     backup_max_mb: int = 25          # предел размера файла, который примем на восстановление
     min_bet: int = 10
     max_bet: int = 5000           # потолок одной ставки/экспресса (казино ограничено отдельно)
+    channel_id: int = 0               # 0 — посты «купон дня» остаются в личке админа
+    reminders_enabled: bool = True
+    match_notify_enabled: bool = True     # «через 20 минут твой матч» по открытым ставкам   # напоминание о серии дней, если бонус не забран
+    reminders_interval_minutes: int = 30
+    cashout_rate: float = 0.95     # продажа ставки до старта: сколько отдаём обратно
+    referral_bonus: int = 300      # пригласившему — когда друг сделал первый шаг
+    referral_welcome: int = 150    # приглашённому — сразу вместе с первым бонусом
+    bot_username: str = ""         # @username бота: из него собирается ссылка-приглашение
     max_express_legs: int = 0      # 0 — без лимита: сколько исходов, столько и бери
     max_express_odds: float = 0.0   # 0 — без потолка: итоговый кэф экспресса не ограничен
 

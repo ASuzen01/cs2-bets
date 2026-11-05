@@ -267,4 +267,22 @@ def render_coupon(item: dict[str, Any]) -> bytes:
     return buffer.getvalue()
 
 
-__all__ = ["render_coupon"]
+# «bet» — одиночная ставка, «express» — экспресс: так купон называется в ссылке
+COUPON_KINDS = {"bet": "single", "express": "express"}
+
+
+async def item_of(db: Any, user_id: int, kind: str, bet_id: int) -> dict[str, Any] | None:
+    """Купон только для своей ставки: чужие id не отдаём ни картинкой, ни в чат."""
+    from app.web.payloads import bets_history
+
+    wanted = COUPON_KINDS.get(kind)
+    if wanted is None:
+        return None
+    payload = await bets_history(db, user_id)
+    for item in list(payload.get("open") or []) + list(payload.get("settled") or []):
+        if int(item.get("id") or 0) == int(bet_id) and str(item.get("kind") or "single") == wanted:
+            return item
+    return None
+
+
+__all__ = ["COUPON_KINDS", "item_of", "render_coupon"]

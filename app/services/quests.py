@@ -18,6 +18,12 @@ QUESTS: Final[tuple[dict[str, Any], ...]] = (
 
 DAILY_COUNT: Final = 3
 
+# сундуки за серию закрытых дней: рубеж → награда
+CHAIN_CHESTS: Final[tuple[dict[str, int], ...]] = (
+    {"days": 3, "reward": 300},
+    {"days": 7, "reward": 700},
+)
+
 
 def day_number(now: float | None = None) -> int:
     """Номер суток — общий для заданий, колеса и серии дней."""
@@ -32,6 +38,23 @@ def quests_of_day(day: int) -> list[dict[str, Any]]:
 
 def by_code(day: int, code: str) -> dict[str, Any] | None:
     return next((quest for quest in quests_of_day(day) if quest["code"] == code), None)
+
+
+def chain_chest(days: int) -> dict[str, int] | None:
+    """Какой сундук положен за серию. None — пока нечего забирать."""
+    best: dict[str, int] | None = None
+    for chest in CHAIN_CHESTS:
+        if days >= chest["days"]:
+            best = dict(chest)
+    return best
+
+
+def next_chest(days: int) -> dict[str, int] | None:
+    """Следующий рубеж — чтобы показать «ещё 2 дня до сундука»."""
+    for chest in CHAIN_CHESTS:
+        if days < chest["days"]:
+            return dict(chest)
+    return None
 
 
 def payload(rows: list[Any], day: int) -> list[dict[str, Any]]:

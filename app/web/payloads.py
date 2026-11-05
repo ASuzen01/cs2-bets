@@ -10,6 +10,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.config import settings
 from app.db import Database
 from app.services import football as football_service
 from app.services import hockey as hockey_service
@@ -227,6 +228,7 @@ def _single_item(row: Any) -> dict[str, Any]:
         "potential": round(amount * odds),
         "team": team,
         "side": side,
+        "cashed_out": bool(cells.get("cashed_out")),
         "at": int(row["created_at"]),
         "start_time": int(row["start_time"]),
         "legs": [],
@@ -272,10 +274,21 @@ async def bets_history(db: Database, user_id: int, *, singles_limit: int = 50, e
         match_status = str(cells.get("map_status") if is_map else row["match_status"])
         item["match_status"] = match_status
 
+        if item.get("cashed_out"):
+            # ставку продали до старта: она уже рассчитана, деньги вернулись
+            item["status"] = "settled"
+            item["result"] = "void"
+            item["payout"] = int(row["payout"] or 0)
+            settled_items.append(item)
+            continue
+
         if match_status in ("open", "live", "awaiting"):
             # «ждём результата» — матч сыгран, но исход ещё не подтверждён: нельзя
             # показывать это как «ждёт старта», иначе выглядит, будто ставка зависла
             item["status"] = {"live": "live", "awaiting": "awaiting"}.get(match_status, "open")
+            # цена продажи считается только для ставки на исход, пока матч не начался
+            if item.get("market", "match") == "match" and match_status == "open":
+                item["cashout"] = round(int(item["stake"]) * settings.cashout_rate)
             open_items.append(item)
             continue
 

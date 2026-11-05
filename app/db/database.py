@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,8 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "bonus_day", "ALTER TABLE users ADD COLUMN bonus_day INTEGER NOT NULL DEFAULT 0"),
     ("matches", "reg_a", "ALTER TABLE matches ADD COLUMN reg_a INTEGER"),
     ("matches", "reg_b", "ALTER TABLE matches ADD COLUMN reg_b INTEGER"),
+    # продажа ставки до старта: признак, что деньги уже вернулись
+    ("bets", "cashed_out", "ALTER TABLE bets ADD COLUMN cashed_out INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -70,6 +73,10 @@ BACKUP_TABLES: tuple[str, ...] = (
     "tease_claims",
     "casino_bets",
     "quests",
+    "quest_chain",
+    "achievements",
+    "referrals",
+    "events",
     "backup_log",
 )
 """Порядок важен: сначала родители, потом зависимые строки."""
@@ -92,6 +99,12 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("ledger", "user_id"),
     ("wheel_spins", "user_id"),
     ("tease_claims", "user_id"),
+    ("casino_bets", "user_id"),
+    ("achievements", "user_id"),
+    ("quest_chain", "user_id"),
+    ("referrals", "invited_id"),
+    ("referrals", "inviter_id"),
+    ("events", "user_id"),
 )
 
 
@@ -655,6 +668,16 @@ class Database:
                 (now, user_id, day, code),
             )
             await self._credit(conn, user_id, reward, f"задание · {quest['title']}", now)
+
+            # все задания дня закрыты — двигаем серию дней под сундук
+            async with conn.execute(
+                "SELECT COUNT(*) AS left FROM quests"
+                " WHERE user_id = ? AND day = ? AND claimed_at IS NULL",
+                (user_id, day),
+            ) as cur:
+                left = await cur.fetchone()
+            if not int(left["left"] or 0):
+                await self._bump_quest_chain(conn, user_id, day)
             return True, reward, await self._balance_in(conn, user_id), ""
 
     async def _bump_quest(self, conn: Any, user_id: int, code: str, now: int) -> None:
@@ -684,7 +707,331 @@ class Database:
             (user_id, day, code),
         )
 
+    async def users_to_remind(self, day: int, event: str, days: int = 30) -> list[Any]:
+        """Кому стоит напомнить про бонус: серия есть, бонус не взят, сегодня не писали."""
+        since = int(time.time()) - days * 86400
+        return await self._fetchall(
+            """
+            SELECT u.user_id, u.streak_days FROM users u
+            WHERE u.streak_days >= 1
+              AND u.bonus_day < ?
+              AND u.last_seen_at >= ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM events e
+                  WHERE e.user_id = u.user_id AND e.name = ? AND e.created_at >= ?
+              )
+            ORDER BY u.streak_days DESC
+            LIMIT 500
+            """,
+            (day, since, event, day * 86400),
+        )
+
+    async def best_win_since(self, since: int) -> Any | None:
+        """Самый крупный выигрыш за окно: для поста «купон дня»."""
+        return await self._fetchone(
+            """
+            SELECT * FROM (
+                SELECT 'bet' AS kind, b.id AS id, b.user_id AS user_id,
+                       b.payout AS payout FROM bets b
+                JOIN matches m ON m.id = b.match_id
+                WHERE b.cashed_out = 0 AND b.payout > b.amount AND m.finished_at >= ?
+                UNION ALL
+                SELECT 'express' AS kind, e.id AS id, e.user_id AS user_id, e.payout AS payout
+                FROM expresses e
+                WHERE e.status = 'won' AND e.settled_at >= ?
+            ) AS wins
+            ORDER BY payout DESC
+            LIMIT 1
+            """,
+            (since, since),
+        )
+
+    async def line_totals(self) -> dict[str, int]:
+        """Итоги по всей линии: сколько поставлено и сколько выплачено.
+
+        Нужно для открытого отчёта о честности: игрок видит реальные суммы,
+        а не только обещания в правилах.
+        """
+        bets = await self._fetchone(
+            "SELECT COALESCE(SUM(amount), 0) AS staked,"
+            " COALESCE(SUM(CASE WHEN payout > amount THEN payout ELSE 0 END), 0) AS paid"
+            " FROM bets WHERE cashed_out = 0"
+        )
+        expresses = await self._fetchone(
+            "SELECT COALESCE(SUM(stake), 0) AS staked,"
+            " COALESCE(SUM(CASE WHEN status = 'won' THEN payout ELSE 0 END), 0) AS paid"
+            " FROM expresses"
+        )
+        casino = await self._fetchone(
+            "SELECT COALESCE(SUM(amount), 0) AS staked, COALESCE(SUM(payout), 0) AS paid"
+            " FROM casino_bets"
+        )
+        wheel = await self._fetchone(
+            "SELECT COALESCE(SUM(prize), 0) AS paid, COUNT(*) AS spins FROM wheel_spins"
+        )
+        return {
+            "bets_staked": int(bets["staked"] or 0),
+            "bets_paid": int(bets["paid"] or 0),
+            "express_staked": int(expresses["staked"] or 0),
+            "express_paid": int(expresses["paid"] or 0),
+            "casino_staked": int(casino["staked"] or 0),
+            "casino_paid": int(casino["paid"] or 0),
+            "wheel_paid": int(wheel["paid"] or 0),
+            "wheel_spins": int(wheel["spins"] or 0),
+        }
+
+    # ------------------------------------------------------------ достижения
+    async def achievement_stats(self, user_id: int) -> dict[str, Any]:
+        """Сухие цифры под достижения: считаем их по базе, а не по событиям.
+
+        Так достижение нельзя «потерять»: даже если игрок заработал его месяц
+        назад, при следующем заходе оно откроется.
+        """
+        bets = await self._fetchone(
+            """
+            SELECT COUNT(*) AS placed,
+                   COALESCE(SUM(CASE WHEN payout IS NOT NULL AND payout > amount THEN 1 ELSE 0 END), 0) AS won,
+                   COALESCE(MAX(odds), 0) AS max_odds
+            FROM bets WHERE user_id = ? AND cashed_out = 0
+            """,
+            (user_id,),
+        )
+        expresses = await self._fetchone(
+            """
+            SELECT COUNT(*) AS placed,
+                   COALESCE(SUM(CASE WHEN status = 'won' THEN 1 ELSE 0 END), 0) AS won,
+                   COALESCE(MAX(odds), 0) AS max_odds
+            FROM expresses WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        casino = await self._fetchone(
+            "SELECT COUNT(*) AS rounds, COALESCE(SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END), 0) AS won"
+            " FROM casino_bets WHERE user_id = ?",
+            (user_id,),
+        )
+        sports = await self._fetchone(
+            """
+            SELECT COALESCE(MAX(covered), 0) AS covered FROM (
+                SELECT COUNT(DISTINCT m.sport) AS covered
+                FROM express_items i
+                JOIN expresses e ON e.id = i.express_id
+                JOIN matches m ON m.id = i.match_id
+                WHERE e.user_id = ?
+                GROUP BY e.id
+            ) AS by_express
+            """,
+            (user_id,),
+        )
+        user = await self._fetchone(
+            "SELECT streak_days, balance FROM users WHERE user_id = ?", (user_id,)
+        )
+        placed = int(bets["placed"] or 0) + int(expresses["placed"] or 0)
+        return {
+            "bets_placed": int(bets["placed"] or 0),
+            "bets_won": int(bets["won"] or 0),
+            "express_placed": int(expresses["placed"] or 0),
+            "express_won": int(expresses["won"] or 0),
+            "casino_rounds": int(casino["rounds"] or 0),
+            "casino_won": int(casino["won"] or 0),
+            "max_odds": max(float(bets["max_odds"] or 0), float(expresses["max_odds"] or 0)),
+            "sports_in_express": int(sports["covered"] or 0),
+            "streak_days": int(user["streak_days"] or 0) if user else 0,
+            "balance": int(user["balance"] or 0) if user else 0,
+            "placed": placed,
+            "won": int(bets["won"] or 0) + int(expresses["won"] or 0),
+        }
+
+    async def unlocked_achievements(self, user_id: int) -> list[Any]:
+        return await self._fetchall(
+            "SELECT code, unlocked_at FROM achievements WHERE user_id = ?", (user_id,)
+        )
+
+    async def unlock_achievements(self, user_id: int, codes: list[str]) -> list[str]:
+        """Открывает достижения, которых ещё нет. Возвращает только новые коды."""
+        if not codes:
+            return []
+        now = int(time.time())
+        fresh: list[str] = []
+        async with self.transaction() as conn:
+            for code in codes:
+                cur = await conn.execute(
+                    "INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)"
+                    " ON CONFLICT DO NOTHING",
+                    (user_id, code, now),
+                )
+                if cur.rowcount:
+                    fresh.append(code)
+        return fresh
+
+    # --------------------------------------------------------- цепочка заданий
+    async def quest_chain(self, user_id: int) -> dict[str, int]:
+        """Сколько дней подряд игрок закрывает все задания дня."""
+        row = await self._fetchone(
+            "SELECT days, last_day, best_days, chest_day FROM quest_chain WHERE user_id = ?",
+            (user_id,),
+        )
+        if row is None:
+            return {"days": 0, "best_days": 0, "chest_day": 0, "last_day": 0}
+        return {key: int(row[key] or 0) for key in ("days", "last_day", "best_days", "chest_day")}
+
+    async def _bump_quest_chain(self, conn: Any, user_id: int, day: int) -> None:
+        """День закрыт полностью — двигаем цепочку (внутри открытой транзакции)."""
+        async with conn.execute(
+            "SELECT days, last_day, best_days FROM quest_chain WHERE user_id = ?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            await conn.execute(
+                "INSERT INTO quest_chain (user_id, days, last_day, best_days, chest_day)"
+                " VALUES (?, 1, ?, 1, 0)",
+                (user_id, day),
+            )
+            return
+        last_day = int(row["last_day"] or 0)
+        days = int(row["days"] or 0) + 1 if last_day == day - 1 else 1
+        best = max(int(row["best_days"] or 0), days)
+        await conn.execute(
+            "UPDATE quest_chain SET days = ?, last_day = ?, best_days = ? WHERE user_id = ?",
+            (days, day, best, user_id),
+        )
+
+    async def claim_chain_chest(self, user_id: int) -> tuple[bool, int, int, str]:
+        """Сундук за 3 или 7 закрытых дней подряд. Возвращает (получено, монеты, баланс, ошибка)."""
+        from app.services.quests import chain_chest
+
+        now = int(time.time())
+        day = now // 86400
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT days, last_day, chest_day FROM quest_chain WHERE user_id = ?", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                return False, 0, await self._balance_in(conn, user_id), "Цепочка ещё не начата"
+            days = int(row["days"] or 0)
+            if int(row["last_day"] or 0) not in (day, day - 1):
+                days = 0        # день пропущен — цепочка уже сгорела
+            chest = chain_chest(days)
+            if chest is None:
+                return False, 0, await self._balance_in(conn, user_id), "Пока нечего забирать"
+            if int(row["chest_day"] or 0) >= chest["days"]:
+                return False, 0, await self._balance_in(conn, user_id), "Сундук уже забрали"
+            await conn.execute(
+                "UPDATE quest_chain SET chest_day = ? WHERE user_id = ?",
+                (chest["days"], user_id),
+            )
+            await self._credit(conn, user_id, int(chest["reward"]), "сундук за серию дней", now)
+            return True, int(chest["reward"]), await self._balance_in(conn, user_id), ""
+
+    # --------------------------------------------------------------- рефералы
+    async def attach_referral(self, invited_id: int, inviter_id: int) -> tuple[bool, str]:
+        """Запомнить, кто кого позвал. Платим позже — после первой ставки друга."""
+        if invited_id == inviter_id:
+            return False, "Себя пригласить нельзя"
+        inviter = await self._fetchone("SELECT user_id FROM users WHERE user_id = ?", (inviter_id,))
+        if inviter is None:
+            return False, "Приглашение не найдено"
+        already = await self._fetchone(
+            "SELECT invited_id FROM referrals WHERE invited_id = ?", (invited_id,)
+        )
+        if already is not None:
+            return False, ""
+        played = await self._fetchone(
+            "SELECT (SELECT COUNT(*) FROM bets WHERE user_id = ?)"
+            " + (SELECT COUNT(*) FROM expresses WHERE user_id = ?)"
+            " + (SELECT COUNT(*) FROM casino_bets WHERE user_id = ?) AS acts",
+            (invited_id, invited_id, invited_id),
+        )
+        if played is not None and int(played["acts"] or 0) > 0:
+            return False, "Приглашение работает только до первой ставки"
+        await self._write(
+            "INSERT INTO referrals (invited_id, inviter_id, created_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
+            (invited_id, inviter_id, int(time.time())),
+        )
+        return True, ""
+
+    async def referral_state(self, user_id: int, inviter_bonus: int) -> dict[str, Any]:
+        """Сколько друзей позвал и сколько за них уже получил."""
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS invited,"
+            " COALESCE(SUM(CASE WHEN paid_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS paid"
+            " FROM referrals WHERE inviter_id = ?",
+            (user_id,),
+        )
+        invited = int(row["invited"] or 0) if row else 0
+        paid = int(row["paid"] or 0) if row else 0
+        return {
+            "invited": invited,
+            "paid": paid,
+            "earned": paid * int(inviter_bonus),
+            "pending": invited - paid,
+            "bonus": int(inviter_bonus),
+        }
+
+    async def pay_referral(self, invited_id: int, inviter_bonus: int, welcome_bonus: int) -> int:
+        """Друг сделал первый шаг — платим обоим. Возвращает бонус пригласившему (0 — некому)."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT inviter_id, paid_at FROM referrals WHERE invited_id = ?", (invited_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None or row["paid_at"] is not None:
+                return 0
+            inviter_id = int(row["inviter_id"])
+            await conn.execute(
+                "UPDATE referrals SET paid_at = ? WHERE invited_id = ?", (now, invited_id)
+            )
+            await self._credit(conn, inviter_id, int(inviter_bonus), "друг пришёл по ссылке", now)
+            await self._credit(conn, invited_id, int(welcome_bonus), "бонус за приглашение", now)
+            return int(inviter_bonus)
+
+    # ----------------------------------------------------------------- кэшаут
+    async def cashout_bet(
+        self, bet_id: int, user_id: int, rate: float
+    ) -> tuple[int, int]:
+        """Продать предматчевую ставку до старта: возвращаем часть ставки.
+
+        Это не «кэшаут по модели», а честная отмена с комиссией: игрок получает
+        `rate` от ставки, ставка больше не участвует в расчёте матча.
+        """
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT b.*, m.status AS match_status, m.start_time FROM bets b"
+                " JOIN matches m ON m.id = b.match_id WHERE b.id = ?",
+                (bet_id,),
+            ) as cur:
+                bet = await cur.fetchone()
+            if bet is None or int(bet["user_id"]) != user_id:
+                raise MatchNotFound("Ставка не найдена")
+            if int(bet["cashed_out"] or 0):
+                raise InvalidBet("Ставка уже продана")
+            if bet["payout"] is not None:
+                raise InvalidBet("Ставка уже рассчитана")
+            if str(bet["match_status"]) != "open" or int(bet["start_time"]) <= now:
+                raise InvalidBet("Матч уже начался — продать нельзя")
+            if str(bet["market"]) != "match":
+                raise InvalidBet("Продать можно только ставку на исход матча")
+
+            refund = round(int(bet["amount"]) * rate)
+            await conn.execute(
+                "UPDATE bets SET payout = ?, cashed_out = 1 WHERE id = ?", (refund, bet_id)
+            )
+            await self._credit(conn, user_id, refund, f"продажа ставки #{bet_id}", now)
+            return refund, await self._balance_in(conn, user_id)
+
     # --------------------------------------------------------------- события
+    async def has_event(self, user_id: int, name: str, payload: str = "") -> bool:
+        """Было ли уже такое событие — чтобы не писать игроку дважды об одном матче."""
+        row = await self._fetchone(
+            "SELECT 1 AS found FROM events WHERE user_id = ? AND name = ? AND payload = ? LIMIT 1",
+            (user_id, name[:64], payload[:500]),
+        )
+        return row is not None
+
     async def log_event(self, user_id: int | None, name: str, payload: str = "") -> None:
         """Событие для аналитики. Ошибки логирования не должны ломать ставку."""
         try:
@@ -846,13 +1193,84 @@ class Database:
             (limit,),
         )
 
+    # В зачёт сезона идёт только игра: ставки, экспрессы, казино, возвраты.
+    # Бонусы, задания и реферальные начисления — вне счёта недели.
+    SEASON_REASONS = (
+        "ставка ·",
+        "выплата ·",
+        "возврат ·",
+        "выигрыш ·",
+        "экспресс #",
+        "колесо фортуны",
+    )
+
+    @classmethod
+    def _season_filter(cls, column: str = "reason") -> tuple[str, tuple[Any, ...]]:
+        clauses = " OR ".join(f"{column} LIKE ?" for _ in cls.SEASON_REASONS)
+        return f"({clauses})", tuple(prefix + "%" for prefix in cls.SEASON_REASONS)
+
+    @staticmethod
+    def week_start(now: int | None = None) -> int:
+        """Начало текущей недели (понедельник 00:00 UTC) — окно сезона."""
+        moment = datetime.fromtimestamp(now if now is not None else time.time(), UTC)
+        monday = (moment - timedelta(days=moment.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return int(monday.timestamp())
+
+    async def season_top(self, limit: int = 10, since: int | None = None) -> list[Any]:
+        """Топ недели: чистая прибыль со ставок и экспрессов за текущую неделю."""
+        start = self.week_start() if since is None else since
+        where, args = self._season_filter("l.reason")
+        return await self._fetchall(
+            f"""
+            SELECT l.user_id AS user_id, u.username AS username, u.full_name AS full_name,
+                   SUM(l.delta) AS score, COUNT(*) AS moves
+            FROM ledger l JOIN users u ON u.user_id = l.user_id
+            WHERE l.created_at >= ? AND {where}
+            GROUP BY l.user_id, u.username, u.full_name
+            ORDER BY score DESC, l.user_id
+            LIMIT ?
+            """,
+            (start, *args, limit),
+        )
+
+    async def season_rank(self, user_id: int, since: int | None = None) -> dict[str, Any] | None:
+        """Место игрока в недельном зачёте — даже если он вне десятки."""
+        start = self.week_start() if since is None else since
+        where, args = self._season_filter("reason")
+        mine = await self._fetchone(
+            f"""
+            SELECT COALESCE(SUM(delta), 0) AS score, COUNT(*) AS moves FROM ledger
+            WHERE user_id = ? AND created_at >= ? AND {where}
+            """,
+            (user_id, start, *args),
+        )
+        score = int(mine["score"]) if mine is not None else 0
+        better = await self._fetchone(
+            f"""
+            SELECT COUNT(*) AS n FROM (
+                SELECT user_id, SUM(delta) AS score FROM ledger
+                WHERE created_at >= ? AND {where}
+                GROUP BY user_id
+                HAVING SUM(delta) > ?
+            ) AS ahead
+            """,
+            (start, *args, score),
+        )
+        return {
+            "rank": (int(better["n"]) + 1) if better is not None else 1,
+            "score": score,
+            "moves": int(mine["moves"]) if mine is not None else 0,
+        }
+
     async def player_stats(self, user_id: int) -> dict[str, Any]:
         """Итоги игрока: сколько поставил, сколько вернулось, винрейт и любимый турнир."""
         bets = await self._fetchall(
             """
             SELECT b.amount, b.payout, m.status AS match_status, m.tournament
             FROM bets b LEFT JOIN matches m ON m.id = b.match_id
-            WHERE b.user_id = ?
+            WHERE b.user_id = ? AND b.cashed_out = 0
             """,
             (user_id,),
         )
@@ -1613,7 +2031,9 @@ class Database:
             if str(match["status"]) in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
-            async with conn.execute("SELECT * FROM bets WHERE match_id = ?", (match_id,)) as cur:
+            async with conn.execute(
+                "SELECT * FROM bets WHERE match_id = ? AND cashed_out = 0", (match_id,)
+            ) as cur:
                 bets = list(await cur.fetchall())
 
             total_stake = sum(int(bet["amount"]) for bet in bets)
@@ -1785,7 +2205,9 @@ class Database:
             if str(match["status"]) in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
-            async with conn.execute("SELECT * FROM bets WHERE match_id = ?", (match_id,)) as cur:
+            async with conn.execute(
+                "SELECT * FROM bets WHERE match_id = ? AND cashed_out = 0", (match_id,)
+            ) as cur:
                 bets = list(await cur.fetchall())
 
             total_stake = sum(int(bet["amount"]) for bet in bets)
@@ -2107,7 +2529,7 @@ class Database:
             FROM bets b
             JOIN matches m ON m.id = b.match_id
             LEFT JOIN match_maps mm ON mm.id = b.map_id
-            WHERE b.user_id = ? AND (
+            WHERE b.user_id = ? AND b.cashed_out = 0 AND (
                 -- ставка на исход матча: CS2, футбол и хоккей (у каждого свой market)
                 (b.market IN ('match', 'football', 'hockey')
                  AND m.status IN ('open', 'live', 'awaiting'))
@@ -2124,7 +2546,7 @@ class Database:
         return await self._fetchall(
             """
             SELECT b.id, b.match_id, b.side, b.amount, b.odds, b.payout, b.created_at,
-                   b.market, mm.map_number,
+                   b.market, b.cashed_out, mm.map_number,
                    m.tournament, m.team_a, m.team_b, m.start_time,
                    m.status AS match_status, m.winner, m.finished_at,
                    mm.status AS map_status, mm.winner AS map_winner
@@ -2185,7 +2607,8 @@ class Database:
 
             # ставки на конкретные карты рассчитываются отдельно, по своей карте
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match' AND cashed_out = 0",
+                (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -2382,7 +2805,8 @@ class Database:
 
             # ставки на конкретные карты рассчитываются отдельно, по своей карте
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match' AND cashed_out = 0",
+                (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -2444,7 +2868,8 @@ class Database:
                 raise MatchNotFound("Матч не найден")
 
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map' AND cashed_out = 0",
+                (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -2493,7 +2918,8 @@ class Database:
                 raise MatchAlreadySettled("Матч уже рассчитан или отменён")
 
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market <> 'map' AND cashed_out = 0",
+                (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
@@ -2587,7 +3013,8 @@ class Database:
                 raise BettingError("Матч входит в экспресс — такой пересчёт не поддержан")
 
             async with conn.execute(
-                "SELECT * FROM bets WHERE match_id = ? AND market = 'match'", (match_id,)
+                "SELECT * FROM bets WHERE match_id = ? AND market = 'match' AND cashed_out = 0",
+                (match_id,)
             ) as cur:
                 bets = list(await cur.fetchall())
 
