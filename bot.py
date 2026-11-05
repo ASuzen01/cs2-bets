@@ -320,11 +320,26 @@ def build_web_app(
                 }
                 last = await db.last_backup()
                 payload["last_backup_at"] = int(last["created_at"]) if last else None
+                payload["db"] = "ok"
+                raw = await db.get_meta("last_sync_at")
+                sync_at = int(raw) if raw else 0
+                age = int(time.time()) - sync_at if sync_at else None
+                payload["last_sync_age_seconds"] = age
+                payload["feed_stale"] = bool(age is None or age > max(900, settings.sync_interval * 20))
             except Exception:
                 log.debug("health: не смог прочитать состояние линии", exc_info=True)
+                payload["db"] = "error"
         return web.json_response(payload)
 
     app.router.add_get("/health", health)
+
+    async def metrics_view(_: web.Request) -> web.Response:
+        """Счётчики процесса: тот же /metrics, что и у мини-аппа."""
+        from app.web.limits import metrics
+
+        return web.Response(text=metrics.text(), content_type="text/plain", charset="utf-8")
+
+    app.router.add_get("/metrics", metrics_view)
 
     async def ping(_: web.Request) -> web.Response:
         """Лёгкий ответ без базы: его дёргает keep-alive и внешний пингер."""
