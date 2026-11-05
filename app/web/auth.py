@@ -19,6 +19,7 @@ from app.web.limits import limiter, metrics
 log = logging.getLogger(__name__)
 
 DB_KEY = web.AppKey("db", Any)
+BOT_KEY = web.AppKey("bot", Any)
 USER_KEY = web.RequestKey("user", dict)
 ALERT_KEY = web.AppKey("alert", Any)
 _ALERT_AT_KEY = web.AppKey("alert_at", float)
@@ -146,6 +147,7 @@ MIDDLEWARES = [json_error_middleware, auth_middleware, rate_limit_middleware, gz
 
 __all__ = [
     "ALERT_KEY",
+    "BOT_KEY",
     "COMPRESS_MIN_BYTES",
     "DB_KEY",
     "MIDDLEWARES",

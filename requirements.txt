@@ -8,3 +8,4 @@ aiohttp>=3.9
 # aiogram[redis]>=3.22,<4
 # Postgres/Neon (хостинг). Локально не нужен — работает SQLite.
 psycopg[binary,pool]>=3.2
+Pillow>=10.2          # купон ставки картинкой

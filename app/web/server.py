@@ -23,13 +23,14 @@ from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, bonus_amount
 from app.services import games
 from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
+from app.services.coupon import render_coupon
 from app.services.football import market_label, parse_side
 from app.services.hockey import market_label as hockey_label
 from app.services.hockey import parse_side as hockey_side
 from app.services.miniapp import AuthError
 from app.services.quests import day_number
 from app.services.quests import payload as quests_payload
-from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
+from app.web.auth import BOT_KEY, DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.limits import metrics
 from app.web.payloads import (
     bet_payload,
@@ -74,6 +75,8 @@ def register_routes(
     app.router.add_post("/api/tease", api_tease)
     app.router.add_post("/api/quest", api_quest)
     app.router.add_get("/api/stats", api_stats)
+    app.router.add_get("/api/coupon/{kind}/{bet_id}.png", api_coupon)
+    app.router.add_post("/api/share", api_share)
     app.router.add_get("/api/top", api_top)
     app.router.add_get("/api/history", api_history)
     app.router.add_get("/api/bets", api_bets)
@@ -522,6 +525,80 @@ async def api_wheel(request: web.Request) -> web.Response:
             "wait_seconds": 0, "balance": balance,
         }
     )
+
+
+COUPON_KINDS = {"bet": "single", "express": "express"}
+
+
+async def _coupon_item(db: Database, user_id: int, kind: str, bet_id: int) -> dict[str, Any] | None:
+    """Купон только для своей ставки: чужие id не отдаём даже картинкой."""
+    wanted = COUPON_KINDS.get(kind)
+    if wanted is None:
+        return None
+    payload = await bets_history(db, user_id)
+    for item in list(payload.get("open") or []) + list(payload.get("settled") or []):
+        if int(item.get("id") or 0) == int(bet_id) and str(item.get("kind") or "single") == wanted:
+            return item
+    return None
+
+
+async def api_coupon(request: web.Request) -> web.Response:
+    """Картинка купона: PNG 1080×1350, годится и для чата, и для сторис."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    kind = str(request.match_info["kind"])
+    try:
+        bet_id = int(request.match_info["bet_id"])
+    except ValueError:
+        return _bad("Неверный номер ставки")
+
+    item = await _coupon_item(db, user_id, kind, bet_id)
+    if item is None:
+        return _bad("Ставка не найдена", 404)
+
+    png = render_coupon(item)
+    return web.Response(
+        body=png,
+        content_type="image/png",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
+
+
+async def api_share(request: web.Request) -> web.Response:
+    """Отправить купон игроку в чат с ботом — оттуда его можно переслать другу."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    kind = str(body.get("kind") or "bet").strip().lower()
+    try:
+        bet_id = int(body.get("id") or 0)
+    except (TypeError, ValueError):
+        return _bad("Неверный номер ставки")
+
+    item = await _coupon_item(db, user_id, kind, bet_id)
+    if item is None:
+        return _bad("Ставка не найдена", 404)
+
+    bot = request.app.get(BOT_KEY)
+    if bot is None:
+        # мини-апп, поднятый без бота: честно говорим, что чата нет, и отдаём картинку
+        return _bad("Чат с ботом недоступен — купон можно открыть картинкой", 503)
+
+    from aiogram.types import BufferedInputFile
+
+    png = render_coupon(item)
+    try:
+        await bot.send_photo(
+            chat_id=user_id,
+            photo=BufferedInputFile(png, filename="coupon.png"),
+            caption="Твой купон · Добрая лудка",
+        )
+    except Exception as exc:  # личка закрыта, бот заблокирован и т.п.
+        log.info("Купон не ушёл в чат: %s", exc)
+        return _bad("Бот не смог написать в личку — проверь, что он не заблокирован", 502)
+
+    await db.log_event(user_id, "coupon_shared", kind)
+    return web.json_response({"ok": True, "sent": True})
 
 
 async def api_quest(request: web.Request) -> web.Response:

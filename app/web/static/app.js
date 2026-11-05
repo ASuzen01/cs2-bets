@@ -2053,13 +2053,21 @@
     meta.append(right);
     card.append(meta);
 
+    // действия внизу карточки: повторить (если матч ещё в линии) и купон картинкой
+    const actions = el("div", "bet-actions");
+
+    const share = el("button", "btn ghost small", "Поделиться картинкой");
+    share.type = "button";
+    const kind = item.kind === "express" ? "express" : "bet";
+    share.addEventListener("click", () => shareCoupon(kind, item.id, share));
+    actions.append(share);
+
     // повтор: та же сторона, тот же матч — сумма спрашивается заново
     const matchId = Number(item.match_id || 0);
     const simpleSide = item.side === "a" || item.side === "b" || item.side === "x";
     if (matchId && simpleSide && (item.market || "match") === "match") {
       const again = el("button", "btn ghost small", "Повторить");
       again.type = "button";
-      again.style.marginTop = "8px";
       const match = findMatch(matchId);
       if (!match) {
         again.disabled = true;
@@ -2074,9 +2082,36 @@
           openAmountSheet(match, item.side, null, null);
         });
       }
-      card.append(again);
+      actions.append(again);
     }
+    card.append(actions);
     return card;
+  }
+
+  // Купон картинкой: бот присылает PNG в личку, оттуда его пересылают другу.
+  // Если бот недоступен (локальный запуск) — открываем картинку напрямую.
+  async function shareCoupon(kind, betId, button) {
+    const url = `/api/coupon/${kind}/${betId}.png`;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Готовлю картинку…";
+    }
+    try {
+      const data = await api("/api/share", { method: "POST", body: { kind: kind, id: betId } });
+      toast(data.sent ? "Купон отправил в чат" : "Купон готов — смотри в чате", "ok");
+    } catch (err) {
+      if (err.status === 503) {
+        toast("Чат недоступен — открываю картинку", "bad");
+        window.open(url, "_blank");
+      } else {
+        toast(err.message, "bad");
+      }
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Поделиться картинкой";
+      }
+    }
   }
 
   function findMatch(matchId) {

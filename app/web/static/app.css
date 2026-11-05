@@ -172,6 +172,8 @@
     border-top:1px dashed #223143;padding-top:7px;margin-top:2px}
   .bet-meta b{color:var(--text);font-variant-numeric:tabular-nums}
   .bet-legs{font-size:11.5px;color:#9fb3c8;margin-bottom:6px;line-height:1.5}
+  .bet-actions{display:flex;gap:8px;margin-top:8px}
+  .bet-actions .btn{margin-top:0;flex:1}
   .bet-sub{font-size:11.5px;color:var(--muted);margin-bottom:6px}
   .section-title{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
   .section-title:first-child{margin-top:2px}

@@ -350,6 +350,9 @@ def build_web_app(
     # мини-приложение в том же процессе: один адрес, одна база
     if db is not None:
         register_routes(app, db, serve_health=False, index_path="/")
+        from app.web.auth import BOT_KEY
+
+        app[BOT_KEY] = bot      # купон ставки уходит игроку в чат через бота
         if settings.admin_ids_list:
             from app.web.auth import ALERT_KEY
 
