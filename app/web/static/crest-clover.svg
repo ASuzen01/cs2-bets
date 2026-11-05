@@ -1,27 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Dobrolud Casino 2026</title>
+  <desc id="desc">Four-leaf clover inside a circular green and ivory casino seal.</desc>
   <defs>
-    <linearGradient id="gold" x1="14" y1="8" x2="51" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F4D990"/>
-      <stop offset=".48" stop-color="#C9A85E"/>
-      <stop offset="1" stop-color="#80602C"/>
+    <linearGradient id="ring-green" x1="64" y1="40" x2="442" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07934a"/>
+      <stop offset=".52" stop-color="#007a3d"/>
+      <stop offset="1" stop-color="#005d31"/>
     </linearGradient>
-    <radialGradient id="enamel" cx="0" cy="0" r="1" gradientTransform="matrix(37 35 -35 37 18 12)" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20231F"/>
-      <stop offset="1" stop-color="#0B0D0E"/>
-    </radialGradient>
+    <linearGradient id="leaf-green" x1="-52" y1="-145" x2="54" y2="-5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b984e"/>
+      <stop offset="1" stop-color="#006b36"/>
+    </linearGradient>
+    <path id="top-arc" d="M61 256a195 195 0 0 1 390 0"/>
+    <path id="bottom-arc" d="M61 256a195 195 0 0 0 390 0"/>
+    <g id="clover-leaf">
+      <path d="M0 0c-8-33-37-63-37-100 0-27 17-46 37-51 20 5 37 24 37 51C37-63 8-33 0 0Z"
+        fill="url(#leaf-green)" stroke="#080c09" stroke-width="11" stroke-linejoin="round"/>
+      <path d="M0-12v-124M-3-47c-11-13-21-28-27-43M3-47c11-13 21-28 27-43M-2-81c-8-10-14-20-19-30M2-81c8-10 14-20 19-30"
+        fill="none" stroke="#f5f1e7" stroke-width="6" stroke-linecap="round"/>
+    </g>
   </defs>
-  <circle cx="32" cy="32" r="29" fill="url(#enamel)" stroke="url(#gold)" stroke-width="1.6"/>
-  <circle cx="32" cy="32" r="24.5" stroke="#C7A65D" stroke-opacity=".36"/>
-  <path d="M32 32c5 5.2 8 10.5 10.8 17" stroke="url(#gold)" stroke-width="3.2" stroke-linecap="round"/>
-  <g fill="url(#gold)" stroke="#FFF1C2" stroke-opacity=".34" stroke-width=".7">
-    <ellipse cx="32" cy="20.5" rx="8.8" ry="11.2"/>
-    <ellipse cx="43.5" cy="32" rx="11.2" ry="8.8"/>
-    <ellipse cx="32" cy="43.5" rx="8.8" ry="11.2"/>
-    <ellipse cx="20.5" cy="32" rx="11.2" ry="8.8"/>
+
+  <!-- Heavy black rim and emerald band -->
+  <circle cx="256" cy="256" r="249" fill="#050806"/>
+  <circle cx="256" cy="256" r="237" fill="url(#ring-green)" stroke="#f4f0e5" stroke-width="5"/>
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#e1eadf" stroke-opacity=".48" stroke-width="2"/>
+  <circle cx="256" cy="256" r="170" fill="#f5f2e8" stroke="#050806" stroke-width="8"/>
+  <circle cx="256" cy="256" r="157" fill="none" stroke="#007a3d" stroke-opacity=".28" stroke-width="2"/>
+
+  <!-- Curved club inscription -->
+  <g fill="#fffdf5" font-family="Georgia, 'Times New Roman', serif" font-weight="700" text-anchor="middle">
+    <text font-size="34" letter-spacing="7">
+      <textPath href="#top-arc" startOffset="50%">CASINO</textPath>
+    </text>
+    <text font-size="27" letter-spacing="3.5">
+      <textPath href="#bottom-arc" startOffset="50%">2026 · DOBROLUD</textPath>
+    </text>
   </g>
-  <circle cx="32" cy="32" r="3.2" fill="#F7E8BC"/>
-  <circle cx="32" cy="8" r="1.1" fill="#EBD28F"/>
-  <circle cx="32" cy="56" r="1.1" fill="#EBD28F"/>
-  <circle cx="8" cy="32" r="1.1" fill="#EBD28F"/>
-  <circle cx="56" cy="32" r="1.1" fill="#EBD28F"/>
+  <path d="m61 256 10-11 10 11-10 11zm370 0 10-11 10 11-10 11z" fill="#e4d4a5"/>
+
+  <!-- Four distinctive clover leaves and an elegant stem -->
+  <path d="M256 257c4 25 4 53 0 80" fill="none" stroke="#050806" stroke-width="25" stroke-linecap="round"/>
+  <path d="M256 257c4 25 4 53 0 80" fill="none" stroke="#007a3d" stroke-width="15" stroke-linecap="round"/>
+  <g transform="translate(256 257)">
+    <use href="#clover-leaf" transform="rotate(45)"/>
+    <use href="#clover-leaf" transform="rotate(135)"/>
+    <use href="#clover-leaf" transform="rotate(225)"/>
+    <use href="#clover-leaf" transform="rotate(315)"/>
+  </g>
+  <circle cx="256" cy="257" r="13" fill="#f5f2e8" stroke="#050806" stroke-width="5"/>
 </svg>
