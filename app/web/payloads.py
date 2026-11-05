@@ -14,6 +14,7 @@ from app.db import Database
 from app.services import football as football_service
 from app.services import hockey as hockey_service
 from app.services.football import market_label, parse_side, tournament_category
+from app.services.legs import label as leg_label
 
 # вторая часть названия иногда не лига, а стадия: «Премьер-Лига. 12-й тур»
 _ROUND_PART = re.compile(r"^(\d|тур\b|сезон|этап|раунд|плей-офф|финал|групп|общий)", re.IGNORECASE)
@@ -238,7 +239,7 @@ def _leg_view(leg: Any) -> dict[str, Any]:
         "match_id": int(leg["match_id"]),
         "side": side,
         "odds": float(leg["odds"]),
-        "team": side_label(side, str(leg["team_a"]), str(leg["team_b"])),
+        "team": leg_label(leg, side),
         "match": f"{leg['team_a']} — {leg['team_b']}",
         "result": str(leg["result"]),
         "match_status": str(leg["match_status"]),

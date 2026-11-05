@@ -1886,6 +1886,8 @@ class Database:
         Возвращает (express_id, итоговый кэф, новый баланс).
         `token` защищает от двойного списания при повторном тапе.
         """
+        from app.services.legs import odds as leg_odds
+
         if len(legs) < 2:
             raise InvalidBet("В экспрессе должно быть минимум 2 исхода")
         if stake <= 0:
@@ -1907,8 +1909,10 @@ class Database:
             total_odds = 1.0
             prepared: list[tuple[int, str, float]] = []
             for leg in legs:
-                side = leg["side"]
-                if side not in ("a", "b"):
+                # исход матча (a/x/b) или рынок (f:… футбол, h:… хоккей):
+                # кэф берём из базы, а не из запроса клиента
+                side = str(leg["side"] or "")
+                if not side:
                     raise InvalidBet("Исход должен быть 1 или 2")
                 async with conn.execute(
                     "SELECT * FROM matches WHERE id = ?", (int(leg["match_id"]),)
@@ -1919,7 +1923,7 @@ class Database:
                 refusal = self._betting_refusal(match, now)
                 if refusal:
                     raise MatchNotOpen(f"Матч #{match['id']}: {refusal.lower()}")
-                odds = match["odds_a"] if side == "a" else match["odds_b"]
+                odds = leg_odds(match, side)
                 if not odds:
                     raise InvalidBet(f"На матч #{match['id']} нет кэфа на этот исход")
                 total_odds *= float(odds)
@@ -1983,12 +1987,22 @@ class Database:
     async def _resolve_expresses(
         self, conn: Any, match_id: int, winner: str | None
     ) -> list[dict[str, Any]]:
-        """Обновляет ноги экспрессов после расчёта матча (winner=None — матч отменён)."""
+        """Обновляет ноги экспрессов после расчёта матча (winner=None — матч отменён).
+
+        Нога — это не обязательно «победа команды»: в экспрессе может стоять рынок
+        (тотал, фора, победа с ОТ), поэтому исход ноги определяет `app.services.legs`
+        по счёту уже рассчитанного матча.
+        """
+        from app.services.legs import outcome as leg_outcome
+
+        async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+            match_row = await cur.fetchone()
+
         async with conn.execute(
             """
-            SELECT i.* FROM express_items i
+            SELECT i.*, e.status AS express_status FROM express_items i
             JOIN expresses e ON e.id = i.express_id
-            WHERE i.match_id = ? AND e.status = 'open'
+            WHERE i.match_id = ?
             """,
             (match_id,),
         ) as cur:
@@ -1996,11 +2010,18 @@ class Database:
 
         affected: set[int] = set()
         for item in items:
-            result = "void" if winner is None else ("won" if item["side"] == winner else "lost")
+            result = (
+                leg_outcome(match_row, str(item["side"]), winner)
+                if match_row is not None
+                else ("void" if winner is None else "lost")
+            )
+            # ногу помечаем всегда — даже если экспресс уже рассчитан по другой ноге:
+            # иначе в истории у него навсегда висит «ждёт»
             await conn.execute(
                 "UPDATE express_items SET result = ? WHERE id = ?", (result, item["id"])
             )
-            affected.add(int(item["express_id"]))
+            if str(item["express_status"]) == "open":
+                affected.add(int(item["express_id"]))
 
         resolved: list[dict[str, Any]] = []
         now = int(time.time())

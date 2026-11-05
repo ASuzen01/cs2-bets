@@ -420,6 +420,16 @@
       card.append(box);
     }
 
+    card.append(legAddRow(match, () => [
+      { side: "a", name: match.team_a, odds: match.odds_a },
+      { side: "b", name: match.team_b, odds: match.odds_b },
+    ], isWaiting));
+
+    return card;
+  }
+
+  // «В экспресс» под карточкой матча: один вид кнопки на CS2, футбол и хоккей
+  function legAddRow(match, variants, waiting) {
     const actions = el("div", "custom");
     actions.style.margin = "9px 0 0";
     const inCart = state.cart.find((leg) => leg.match_id === match.id);
@@ -430,22 +440,20 @@
     add.append(el("span", null, inCart ? "В экспрессе" : "Добавить в экспресс"));
     if (inCart) {
       // повторный тап убирает ногу — не нужно лезть в корзину, чтобы передумать
-      add.append(el("span", "count", (inCart.side === "a" ? match.team_a : match.team_b) + " · убрать"));
+      add.append(el("span", "count", (inCart.team || labelForSide(match, inCart.side)) + " · убрать"));
       add.addEventListener("click", () => removeLeg(match.id));
     } else {
       add.append(el("span", "count", "＋"));
-      add.addEventListener("click", () => addLeg(match));
+      add.addEventListener("click", () => addLeg(match, variants));
     }
     // матч начался (или ждёт результата) — в экспресс такой исход уже не собрать
     const startedOpen = match.status === "open" && Number(match.start_time) * 1000 <= Date.now();
-    if (isWaiting || startedOpen) {
+    if (waiting || startedOpen) {
       add.disabled = true;
       if (startedOpen) add.append(el("span", "count", "матч начался"));
     }
     actions.append(add);
-    card.append(actions);
-
-    return card;
+    return actions;
   }
 
   function teamName(match, side) {
@@ -460,6 +468,34 @@
     if (side === "b") return match.odds_b;
     if (side === "x") return match.odds_x;
     return null;
+  }
+
+  // рынок по коду исхода: `f:total:over:2.5` / `h:final:1` → объект росписи
+  function marketOfSide(match, side) {
+    const code = String(side || "");
+    if (code === "a" || code === "x" || code === "b") return null;
+    const prefix = match && match.sport === "hockey" ? "h:" : "f:";
+    if (!code.startsWith(prefix)) return null;
+    const [, key, param] = code.split(":", 3);
+    if (!key || param === undefined) return null;
+    const markets = Array.isArray(match.markets) ? match.markets : [];
+    return markets.find((market) => market.key === key && market.param === param) || null;
+  }
+
+  // кэф по коду исхода: исход матча берём из линии, рынок — из росписи
+  function oddsForSide(match, side) {
+    const market = marketOfSide(match, side);
+    if (market) return market.odds;
+    return sideOdds(match, side);
+  }
+
+  // подпись ноги экспресса: команда, ничья или название рынка
+  function labelForSide(match, side) {
+    if (side === "a") return match.team_a + (match.sport === "hockey" ? " (осн. время)" : "");
+    if (side === "b") return match.team_b + (match.sport === "hockey" ? " (осн. время)" : "");
+    if (side === "x") return "Ничья";
+    const market = marketOfSide(match, side);
+    return market ? market.label : String(side);
   }
 
   function tournamentKey() {
@@ -630,6 +666,13 @@
       card.append(el("div", "hint live-hint", "Ставки на исход открыты · роспись — до старта"));
     }
 
+    // в экспресс по футболу берём исход: П1 / X / П2 — ровно те кэфы, что в линии
+    card.append(legAddRow(match, () => [
+      { side: "a", name: match.team_a, odds: match.odds_a },
+      { side: "x", name: "Ничья", odds: match.odds_x },
+      { side: "b", name: match.team_b, odds: match.odds_b },
+    ], closed));
+
     const markets = (Array.isArray(match.markets) ? match.markets : [])
       .filter((market) => market.key !== "result");
     if (markets.length && match.status === "open") {
@@ -733,7 +776,32 @@
       if (open) card.append(renderMarketGroups(match, rest));
     }
 
+    // в экспресс по хоккею: основное время (П1/X/П2) и победа в матче (с ОТ)
+    card.append(legAddRow(match, () => hockeyLegVariants(match), closed));
+
     return card;
+  }
+
+  function hockeyLegVariants(match) {
+    const markets = Array.isArray(match.markets) ? match.markets : [];
+    const variants = [];
+    markets.filter((market) => market.key === "reg").forEach((market) => {
+      const team = market.param === "1" ? match.team_a
+        : market.param === "x" ? "Ничья" : match.team_b;
+      variants.push({ side: sideOfMarket(market, match), name: team + " (осн. время)", odds: market.odds });
+    });
+    markets.filter((market) => market.key === "final").forEach((market) => {
+      const team = market.param === "1" ? match.team_a : match.team_b;
+      variants.push({ side: sideOfMarket(market, match), name: team + " (с ОТ)", odds: market.odds });
+    });
+    // в live росписи нет — берём кэфы линии на основное время
+    if (!variants.length) {
+      [["a", match.team_a], ["x", "Ничья"], ["b", match.team_b]].forEach(([side, team]) => {
+        const odd = sideOdds(match, side);
+        if (odd) variants.push({ side, name: team + " (осн. время)", odds: odd });
+      });
+    }
+    return variants;
   }
 
   function renderMarketGroups(match, markets) {
@@ -916,7 +984,7 @@
         delete leg.missing;
         changed = true;
       }
-      const current = Number(sideOdds(match, leg.side));
+      const current = Number(oddsForSide(match, leg.side));
       if (!current) return;
       const previous = Number(leg.odds);
       if (current !== previous) {
@@ -1188,6 +1256,8 @@
       "Экспресс — несколько исходов в одной ставке, кэфы перемножаются. " +
       "Зашли все — выплата по итоговому кэфу, не зашёл хотя бы один — сгорает вся ставка. " +
       "Отменённый матч считается с кэфом 1.0. " +
+      "Исходы берутся из всех линий: CS2 — серия, футбол — П1/X/П2, " +
+      "хоккей — основное время или победа в матче с ОТ. " +
       "Исходов: от 2, потолка по кэфу нет. " +
       `Минимальная ставка — ${money(state.limits.min_bet)}.`));
     host.append(rules);
@@ -1504,7 +1574,7 @@
     toast("Убрал из экспресса");
   }
 
-  function addLeg(match) {
+  function addLeg(match, buildVariants) {
     if (state.cart.some((leg) => leg.match_id === match.id)) {
       toast("Этот матч уже в корзине", "bad");
       return;
@@ -1514,12 +1584,17 @@
       toast(`Максимум ${maxLegs} исходов`, "bad");
       return;
     }
+    // у футбола и хоккея исходов больше двух, поэтому список вариантов приходит
+    // из карточки матча; у CS2 остаются две команды
+    const variants = buildVariants ? buildVariants() : [
+      { side: "a", name: match.team_a, odds: match.odds_a },
+      { side: "b", name: match.team_b, odds: match.odds_b },
+    ];
     openSheet((sheet) => {
       sheet.append(el("h3", null, "Какой исход берём?"));
       sheet.append(el("div", "sub", match.short_tournament));
-      const pick = (side) => {
-        const team = teamName(match, side);
-        const odd = sideOdds(match, side);
+      const pick = (side, name, odd) => {
+        const team = name || teamName(match, side);
         state.cart.push({
           match_id: match.id,
           side,
@@ -1527,6 +1602,7 @@
           odds: odd,     // текущий кэф исхода
           base: odd,     // кэф в момент добавления: показываем «было», если линия сдвинулась
           tournament: match.short_tournament,
+          sport: match.sport || "cs2",
         });
         saveCart();
         closeSheet();
@@ -1537,13 +1613,18 @@
         const total = cartOdds();
         toast(`Добавлено: ${team} · кэф ${oddsText(total)}` + (state.cart.length < 2 ? " · нужен ещё исход" : ""), "ok");
       };
-      [["a", match.team_a, match.odds_a], ["b", match.team_b, match.odds_b]].forEach(([side, team, odd]) => {
+      variants.forEach((variant) => {
         const btn = el("button", "btn ghost");
         btn.type = "button";
         btn.style.marginBottom = "8px";
         btn.style.justifyContent = "space-between";
-        btn.append(el("span", null, team), el("b", null, oddsText(odd)));
-        btn.addEventListener("click", () => pick(side));
+        btn.append(el("span", null, variant.name), el("b", null, oddsText(variant.odds)));
+        if (!variant.odds) {
+          btn.disabled = true;    // кэфа нет: рынок мог закрыться
+          sheet.append(btn);
+          return;
+        }
+        btn.addEventListener("click", () => pick(variant.side, variant.name, variant.odds));
         sheet.append(btn);
       });
       const cancel = el("button", "btn ghost", "Отмена");

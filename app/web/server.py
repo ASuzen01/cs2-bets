@@ -27,6 +27,7 @@ from app.services.coupon import render_coupon
 from app.services.football import market_label, parse_side
 from app.services.hockey import market_label as hockey_label
 from app.services.hockey import parse_side as hockey_side
+from app.services.legs import label as leg_label
 from app.services.miniapp import AuthError
 from app.services.quests import day_number
 from app.services.quests import payload as quests_payload
@@ -38,7 +39,6 @@ from app.web.payloads import (
     display_name,
     express_payload,
     match_payload,
-    side_label,
 )
 
 log = logging.getLogger(__name__)
@@ -413,7 +413,9 @@ async def api_express(request: web.Request) -> web.Response:
         for leg in raw_legs
         if isinstance(leg, dict)
     ]
-    if len(legs) < 2 or any(leg["side"] not in ("a", "x", "b") for leg in legs):
+    # исход матча (a/x/b) или рынок (f:… футбол, h:… хоккей) — что именно,
+    # проверит база: у неё есть линия и кэфы
+    if len(legs) < 2 or any(not leg["side"] for leg in legs):
         return _bad("Нужно минимум 2 исхода")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
@@ -430,23 +432,17 @@ async def api_express(request: web.Request) -> web.Response:
         token=body.get("token"),
     )
 
-    view_legs = []
-    for leg in legs:
-        match = await db.get_match(leg["match_id"])
-        if match is None:
-            continue
-        view_legs.append(
-            {
-                "match_id": leg["match_id"],
-                "side": leg["side"],
-                "team": side_label(
-                    leg["side"], str(match["team_a"]), str(match["team_b"])
-                ),
-                "odds": float(
-                    {"a": match["odds_a"], "x": match["odds_x"], "b": match["odds_b"]}[leg["side"]]
-                ),
-            }
-        )
+    # кэфы ног берём из того, что реально записалось в базу: клиентские цифры
+    # не должны попадать в ответ
+    view_legs = [
+        {
+            "match_id": int(item["match_id"]),
+            "side": str(item["side"]),
+            "team": leg_label(item, str(item["side"])),
+            "odds": float(item["odds"]),
+        }
+        for item in await db.express_items(express_id)
+    ]
 
     return web.json_response(
         {
