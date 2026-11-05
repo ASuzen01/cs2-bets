@@ -210,7 +210,10 @@ League. Bo3`, `Counter-Strike. IEM Пекин. Open Qualifier. Bo3`; остаю�
 | `DATABASE_URL` | строка подключения Neon целиком |
 
 `WEBHOOK_BASE_URL` и `MINIAPP_URL` должны быть **полными адресами** —
-`https://<сервис>.onrender.com` (не имя сервиса), `WEBHOOK_SECRET` — только `A-Z a-z 0-9 _ -`.
+`https://<сервис>.onrender.com` (не имя сервиса: с `cs2-bets-bot` вместо домена Telegram
+отвечает `Failed to resolve host`, вебхук не встаёт). В `render.yaml` они помечены
+`sync: false`, чтобы синхронизация блюпринта не перетёрла их значением
+`fromService: property: host` — оно отдаёт имя сервиса без домена, `WEBHOOK_SECRET` — только `A-Z a-z 0-9 _ -`.
 Подробный чек-лист с реальными граблями: `docs/deploy-render-neon.md`.
 
 Перенос балансов из локальной SQLite:
@@ -520,7 +523,10 @@ python scripts/restore_db.py backups/file.json.gz --yes    # восстанов�
    `/help` прямо скажет, чего не хватает. Задайте `https://<сервис>.onrender.com` и перезапустите.
 2. **«Нет матчей» в приложении** → смотрите логи: строка `Линия: N матчей тир-1`. `N=0` — линия
    пуста, фильтр `TIER1_INCLUDE` слишком строгий или хостинг не видит Fonbet.
-3. **Приложение висит на загрузке** → `curl -s $MINIAPP_URL/health` должен вернуть `{"ok": true}`.
+3. **Вебхук не ставится (`bad webhook: Failed to resolve host`)** → в `WEBHOOK_BASE_URL`
+   имя сервиса вместо адреса. Сервис при этом не падает: ошибка видна в `/health` →
+   `webhook.error`, а установка повторяется каждые 5 минут.
+4. **Приложение висит на загрузке** → `curl -s $MINIAPP_URL/health` должен вернуть `{"ok": true}`.
    После сна free-плана первый запрос занимает 30–50 с — это нормально.
 4. **`401` на `/api/state`** → нет подписи `initData`: приложение открыто не из Telegram
    (в браузере нужен `MINIAPP_DEV_USER`).

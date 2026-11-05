@@ -165,14 +165,13 @@ async def on_startup(
 
     await _set_commands(bot)
 
-    if settings.run_mode == "webhook":
-        await bot.set_webhook(
-            url=settings.webhook_url,
-            secret_token=settings.webhook_secret,
-            drop_pending_updates=settings.drop_pending_updates,
-            allowed_updates=allowed_updates,
+    # вебхук: ошибка (например, неверный WEBHOOK_BASE_URL) не должна убивать сервис —
+    # иначе Render считает деплой неудачным и продолжает крутить старую версию
+    if not await install_webhook(bot, allowed_updates):
+        global _WEBHOOK_TASK
+        _WEBHOOK_TASK = asyncio.create_task(
+            _webhook_watchdog(bot, allowed_updates), name="webhook-watchdog"
         )
-        log.info("Webhook установлен: %s", settings.webhook_url)
 
 
 async def on_shutdown(
@@ -279,6 +278,8 @@ def build_web_app(
             "recheck_loop": recheck.stats if recheck is not None else None,
             # держим сервис проснувшимся: когда был последний успешный пинг
             "keepalive": KEEPALIVE.stats,
+            # встал ли вебхук: видно, если Telegram не принял адрес
+            "webhook": dict(WEBHOOK_STATE),
         }
         # состояние линии и бэкапов — без авторизации, но и без личных данных
         if db is not None:
@@ -351,6 +352,47 @@ def run_webhook(
 
 
 _lock_handle = None
+
+# Поставился ли вебхук: если Telegram отверг адрес, сервис всё равно живёт, а
+# состояние видно в /health — иначе ошибка конфигурации роняет весь деплой.
+WEBHOOK_STATE: dict[str, Any] = {"ok": None, "url": "", "error": None, "set_at": None}
+_WEBHOOK_TASK: asyncio.Task[None] | None = None
+
+
+async def install_webhook(bot: Bot, allowed_updates: list[str]) -> bool:
+    """Ставит вебхук. Не падает: при ошибке сервис продолжает работать."""
+    if settings.run_mode != "webhook":
+        return True
+    try:
+        await bot.set_webhook(
+            url=settings.webhook_url,
+            secret_token=settings.webhook_secret,
+            drop_pending_updates=settings.drop_pending_updates,
+            allowed_updates=allowed_updates,
+        )
+    except Exception as exc:
+        WEBHOOK_STATE.update(
+            {"ok": False, "url": settings.webhook_url, "error": str(exc)[:300], "set_at": None}
+        )
+        log.error(
+            "Вебхук %s не поставился (%s). Сервис работает, повторяю каждые 5 минут.",
+            settings.webhook_url,
+            exc,
+        )
+        return False
+    WEBHOOK_STATE.update(
+        {"ok": True, "url": settings.webhook_url, "error": None, "set_at": int(time.time())}
+    )
+    log.info("Webhook установлен: %s", settings.webhook_url)
+    return True
+
+
+async def _webhook_watchdog(bot: Bot, allowed_updates: list[str], delay: int = 300) -> None:
+    """Повторяет установку вебхука, пока Telegram не примет адрес."""
+    while True:
+        await asyncio.sleep(delay)
+        if await install_webhook(bot, allowed_updates):
+            return
 
 
 def acquire_single_instance_lock() -> None:

@@ -36,7 +36,11 @@ class FakeBot:
 
         return Me()
 
+    fail_webhook = False
+
     async def set_webhook(self, **kwargs) -> bool:
+        if self.fail_webhook:
+            raise RuntimeError("Telegram server says - Bad Request: Failed to resolve host")
         self.webhook = kwargs
         return True
 
@@ -142,6 +146,47 @@ async def test_startup_and_shutdown_run_clean(db: Database, monkeypatch) -> None
 
     await bot_module.on_shutdown(bot=bot, db=db, syncer=syncer, recheck=recheck)
     assert recheck._task is None
+
+
+async def test_bad_webhook_does_not_kill_the_service(db: Database, monkeypatch) -> None:
+    """Неверный WEBHOOK_BASE_URL ронял старт → Render откатывал деплой.
+
+    Теперь сервис поднимается, ошибка видна в /health, а вебхук переставляется
+    в фоне — вместо того чтобы весь контейнер выходил с кодом 1.
+    """
+    import bot as bot_module
+
+    bot = FakeBot()
+    bot.fail_webhook = True
+    monkeypatch.setattr(bot_module.settings, "run_mode", "webhook")
+    monkeypatch.setattr(bot_module.settings, "webhook_base_url", "https://cs2-bets-bot")
+
+    await bot_module.on_startup(
+        bot=bot, db=db, syncer=FakeSyncer(), allowed_updates=[], backup=None
+    )
+
+    assert bot_module.WEBHOOK_STATE["ok"] is False
+    assert "Failed to resolve host" in (bot_module.WEBHOOK_STATE["error"] or "")
+    assert bot_module._WEBHOOK_TASK is not None      # повтор в фоне
+
+    bot_module._WEBHOOK_TASK.cancel()
+    await bot_module.on_shutdown(bot=bot, db=db, syncer=FakeSyncer())
+
+
+async def test_webhook_is_installed_on_startup(db: Database, monkeypatch) -> None:
+    import bot as bot_module
+
+    bot = FakeBot()
+    monkeypatch.setattr(bot_module.settings, "run_mode", "webhook")
+    monkeypatch.setattr(bot_module.settings, "webhook_base_url", "https://bot.onrender.com")
+
+    await bot_module.on_startup(
+        bot=bot, db=db, syncer=FakeSyncer(), allowed_updates=[], backup=None
+    )
+
+    assert bot.webhook is not None
+    assert bot.webhook["url"] == "https://bot.onrender.com/webhook"
+    assert bot_module.WEBHOOK_STATE["ok"] is True
 
 
 async def test_startup_works_without_recheck_service(db: Database) -> None:

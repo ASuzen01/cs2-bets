@@ -9,11 +9,11 @@ services:
     envVars:
       - key: RUN_MODE
         value: webhook
+      # ВАЖНО: полный адрес вида https://cs2-bets-bot.onrender.com, руками (sync: false).
+      # `fromService: property: host` отдаёт имя сервиса без домена — Telegram такой
+      # вебхук не принимает («Failed to resolve host»), и приложение не стартует.
       - key: WEBHOOK_BASE_URL
-        fromService:
-          type: web
-          name: cs2-bets-bot
-          property: host
+        sync: false
       - key: WEBHOOK_PATH
         value: /webhook
       - key: WEBHOOK_SECRET
@@ -46,7 +46,4 @@ services:
       - key: KEEPALIVE_INTERVAL
         value: "600"
       - key: MINIAPP_URL
-        fromService:
-          type: web
-          name: cs2-bets-bot
-          property: host
+        sync: false
