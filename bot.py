@@ -260,6 +260,9 @@ def build_web_app(
         payload: dict[str, Any] = {
             "ok": True,
             "mode": "webhook",
+            # какой коммит реально работает: Render подставляет RENDER_GIT_COMMIT,
+            # без него видно только локальную сборку
+            "commit": (os.getenv("RENDER_GIT_COMMIT") or "local")[:7],
             "sync_interval": settings.sync_interval,
             "live_betting": settings.live_betting,
             "football": settings.football_include,
