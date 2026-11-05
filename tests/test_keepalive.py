@@ -60,6 +60,13 @@ async def test_ping_records_failure(monkeypatch) -> None:
     assert "TimeoutError" in (keep.stats["last_error"] or "")
 
 
+def test_failed_ping_is_retried_sooner() -> None:
+    """Не ответил — пробуем через пару минут, а не через весь интервал."""
+    keep = KeepAlive("https://bot.onrender.com", interval=600)
+    assert keep.next_delay(True) == 600
+    assert keep.next_delay(False) == 120
+
+
 async def test_ping_without_url_does_nothing() -> None:
     keep = KeepAlive("")
     assert keep.stats["enabled"] is False

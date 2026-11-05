@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 PING_PATH = "/ping"
 # Первый пинг — не сразу: HTTP-сервер начинает слушать уже после startup-хуков.
 FIRST_PING_DELAY_SECONDS = 30
+# Не ответил — пробуем ещё раз пораньше (сервис мог ещё подниматься).
+RETRY_AFTER_FAIL_SECONDS = 120
 
 
 def resolve_url(explicit: str = "", base: str = "") -> str:
@@ -120,8 +122,14 @@ class KeepAlive:
         if self.first_delay:
             await asyncio.sleep(self.first_delay)
         while True:
-            await self.ping_once()
-            await asyncio.sleep(self.interval)
+            ok = await self.ping_once()
+            # после неудачи не ждём полный интервал: вдруг сервис ещё поднимался
+            await asyncio.sleep(self.next_delay(ok))
+
+    def next_delay(self, ok: bool) -> int:
+        if ok:
+            return self.interval
+        return min(self.interval, RETRY_AFTER_FAIL_SECONDS)
 
     # ----------------------------------------------------------------- пинг
     async def ping_once(self) -> bool:
@@ -158,4 +166,11 @@ class KeepAlive:
 
 KEEPALIVE = KeepAlive.from_settings()
 
-__all__ = ["KEEPALIVE", "PING_PATH", "KeepAlive", "resolve_url"]
+__all__ = [
+    "FIRST_PING_DELAY_SECONDS",
+    "KEEPALIVE",
+    "PING_PATH",
+    "RETRY_AFTER_FAIL_SECONDS",
+    "KeepAlive",
+    "resolve_url",
+]
