@@ -14,9 +14,11 @@ from aiogram.exceptions import TelegramAPIError
 from app import keyboards, texts
 from app.config import settings
 from app.db import Database
+from app.services.cs2_rules import map_winner, required_maps
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, parse_football
-from app.services.notify import notify_bettors, notify_map_bettors
+from app.services.maps import finish_maps_of_match, settle_map_by_score
+from app.services.notify import notify_bettors
 
 log = logging.getLogger(__name__)
 
@@ -53,14 +55,9 @@ def decisive_score(tournament: str, score_a: int | None, score_b: int | None) ->
     return score_a >= need or score_b >= need
 
 
-def required_maps(tournament: str) -> int:
-    """Сколько карт нужно взять, чтобы выиграть серию."""
-    name = (tournament or "").lower()
-    if "bo5" in name:
-        return 3
-    if "bo1" in name:
-        return 1
-    return 2
+def _map_winner(score_a: int | None, score_b: int | None) -> str | None:
+    """Победитель карты по раундам — см. app/services/cs2_rules."""
+    return map_winner(score_a, score_b)
 
 
 async def series_from_maps(db: Database, row: Any) -> tuple[str | None, str | None]:
@@ -245,18 +242,13 @@ class MatchSyncer:
                 score_b=card.score_b,
             )
 
-    @staticmethod
-    def _map_winner(score_a: int | None, score_b: int | None) -> str | None:
-        """Победитель карты по раундам: до 13, с разницей минимум 2 (овертайм — до 16+)."""
-        if score_a is None or score_b is None or score_a == score_b:
-            return None
-        high, low = max(score_a, score_b), min(score_a, score_b)
-        if high < 13 or high - low < 2:
-            return None
-        return "a" if score_a > score_b else "b"
-
     async def _settle_maps(self, maps_by_parent: dict[int, list[FonbetMap]], stats: dict) -> None:
-        """Раскладываем ставки по картам, как только карта доиграна."""
+        """Раскладываем ставки по картам, как только карта доиграна.
+
+        Победителя берём из счёта раундов (13 раундов, овертайм), а не из флага
+        `finished`: Fonbet этот флаг почти никогда не присылает, из-за чего карты
+        висели нерассчитанными, а потом уходили в возврат вместе с серией.
+        """
         by_event: dict[int, FonbetMap] = {}
         for cards in maps_by_parent.values():
             for card in cards:
@@ -264,26 +256,26 @@ class MatchSyncer:
 
         for row in await self.db.maps_by_status(["open", "live"]):
             card = by_event.get(int(row["fonbet_id"]))
-            if card is None:
-                # карта ушла из линии, а счёта нет — пусть подтвердит админ через /maps
-                await self.db.set_map_status(int(row["id"]), "awaiting")
-                continue
-            if not card.finished:
-                continue
-            winner = self._map_winner(card.score_a, card.score_b)
+            if card is not None and card.score_a is not None and card.score_b is not None:
+                await self.db.upsert_map(
+                    match_id=int(row["match_id"]),
+                    fonbet_id=card.event_id,
+                    map_number=card.map_number,
+                    odds_a=card.odds_a,
+                    odds_b=card.odds_b,
+                    score_a=card.score_a,
+                    score_b=card.score_b,
+                )
+
+            # счёт берём самый свежий: из линии, а если карта оттуда ушла — из базы
+            score_a = card.score_a if card is not None and card.score_a is not None else row["score_a"]
+            score_b = card.score_b if card is not None and card.score_b is not None else row["score_b"]
+            winner = map_winner(score_a, score_b)
             if winner is None:
-                await self.db.set_map_status(int(row["id"]), "awaiting")
+                # карта ещё идёт (или её счёт потерялся) — ставки продолжают приниматься
                 continue
-            try:
-                result = await self.db.settle_map(int(row["id"]), winner, source="fonbet")
-            except Exception:
-                log.exception("Не смог рассчитать карту #%s", row["id"])
-                continue
-            stats["maps_settled"] += 1
-            await notify_map_bettors(self.bot, self.db, result, score=card.score_text)
-            log.info(
-                "Карта #%s рассчитана: %s (%s)", row["id"], result["team"], card.score_text
-            )
+            if await settle_map_by_score(self.db, self.bot, row):
+                stats["maps_settled"] += 1
 
     # --------------------------------------------------------------- футбол
     @staticmethod
@@ -545,18 +537,8 @@ class MatchSyncer:
         log.info("Матч #%s рассчитан: %s (%s)", row["id"], result["team"], score)
 
     async def _void_unplayed_maps(self, match_id: int) -> None:
-        """Серия закончилась раньше — ставки на несыгранные карты возвращаем."""
-        for card in await self.db.match_maps(match_id):
-            if str(card["status"]) not in ("open", "live", "awaiting"):
-                continue
-            try:
-                result = await self.db.cancel_map(int(card["id"]))
-            except Exception:
-                log.exception("Не смог вернуть ставки по карте #%s", card["id"])
-                continue
-            if result["bets"]:
-                await notify_map_bettors(self.bot, self.db, result, void=True)
-                log.info("Карта #%s не игралась — возвращено %s", card["id"], result["refunded"])
+        """Серия закончилась — закрываем её карты: по счёту считаем, неначатые возвращаем."""
+        await finish_maps_of_match(self.db, self.bot, match_id)
 
     async def _close_stale(self, stats: dict[str, Any]) -> None:
         """Матч давно висит без результата.

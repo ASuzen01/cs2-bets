@@ -7,8 +7,8 @@ import time
 import pytest
 
 from app.db import Database, MatchNotOpen
+from app.services.cs2_rules import map_winner, required_maps, series_winner
 from app.services.fonbet import FonbetClient, parse_maps
-from app.services.sync import MatchSyncer
 
 
 @pytest.fixture
@@ -98,13 +98,37 @@ def test_parse_maps_ignores_unknown_parent() -> None:
 
 # ------------------------------------------------------------- расчёт карты
 def test_map_winner_by_rounds() -> None:
-    winner = MatchSyncer._map_winner
-    assert winner(13, 9) == "a"
-    assert winner(7, 13) == "b"
-    assert winner(16, 14) == "a"      # овертайм
-    assert winner(12, 11) is None     # карта ещё идёт
-    assert winner(13, 12) is None     # разница 1 — так не бывает, ждём
-    assert winner(None, 13) is None
+    assert map_winner(13, 9) == "a"       # карта до 13 раундов
+    assert map_winner(7, 13) == "b"
+    assert map_winner(12, 11) is None     # карта ещё идёт
+    assert map_winner(13, 12) is None     # разница 1 — так не бывает, ждём
+    assert map_winner(None, 13) is None
+
+
+def test_map_winner_with_overtime() -> None:
+    """12:12 — овертайм: шесть раундов, для победы нужно взять четыре."""
+    assert map_winner(12, 12) is None     # начался овертайм
+    assert map_winner(15, 12) is None     # три раунда блока — ещё играют
+    assert map_winner(14, 12) is None     # такого финала не бывает
+    assert map_winner(15, 14) is None     # разница 1 — не победа
+    assert map_winner(15, 15) is None     # ровно — следующий блок из шести
+    assert map_winner(16, 12) == "a"      # 4:0 в овертайме
+    assert map_winner(16, 14) == "a"      # 4:2 в овертайме
+    assert map_winner(14, 16) == "b"
+    assert map_winner(19, 17) == "a"      # второй блок овертайма
+    assert map_winner(19, 14) is None     # отрыв 5 — такого счёта не бывает
+
+
+def test_series_needs_two_maps_in_bo3() -> None:
+    """Bo1 — одна карта, Bo3 — две, Bo5 — три."""
+    assert required_maps("Counter-Strike. IEM. Bo1") == 1
+    assert required_maps("Counter-Strike. IEM. Bo3") == 2
+    assert required_maps("Counter-Strike. IEM. Bo5") == 3
+    assert series_winner(2, 0, "Bo3") == "a"
+    assert series_winner(2, 1, "Bo3") == "a"
+    assert series_winner(1, 1, "Bo3") is None
+    assert series_winner(1, 0, "Bo1") == "a"
+    assert series_winner(2, 1, "Bo5") is None
 
 
 # --------------------------------------------------------------- приём ставок

@@ -41,6 +41,7 @@ from app.services.backup import (
     send_dump,
     summary,
 )
+from app.services.maps import finish_maps_of_match
 from app.services.notify import notify_bettors, notify_map_bettors
 from app.services.sync import series_from_maps
 
@@ -212,10 +213,13 @@ async def cmd_recount(message: Message, command: CommandObject, db: Database) ->
 
     bot = callback_bot(message)
     await notify_bettors(bot, db, result)
+    maps = await finish_maps_of_match(db, bot, match_id, source="recount")
     await message.answer(
         f"Пересчитал матч #{match_id}: победила <b>{result['team']}</b>.\n"
         f"Выплачено {texts.money(result['paid'])}, откатил возвратов "
-        f"{texts.money(result.get('reversed', 0))}."
+        f"{texts.money(result.get('reversed', 0))}.\n"
+        f"Карты: рассчитано {maps['settled']}, возвращено {maps['refunded']}, "
+        f"ждут результата {maps['waiting']}."
     )
 
 

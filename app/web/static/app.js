@@ -298,9 +298,15 @@
         const row = el("div", "maprow");
         const label = el("span", "maplabel", `Карта ${card_market.number}`);
         if (card_market.score) label.append(el("span", "mapscore", card_market.score));
+        // карта живёт своей жизнью: серия может ждать результат, а карта — идти
+        const mapOpen = card_market.status === "open" || card_market.status === "live";
+        if (!mapOpen) {
+          const hint = card_market.status === "awaiting" ? "ждём"
+            : card_market.status === "cancelled" ? "возврат" : "готово";
+          label.append(el("span", "maphint", hint));
+        }
         row.append(label);
-        const closedMap = closed || card_market.status === "finished" ||
-          card_market.status === "cancelled";
+        const closedMap = closed || !mapOpen;
         ["a", "b"].forEach((side) => {
           const btn = oddButton(
             match, side,

@@ -30,7 +30,12 @@ async def main() -> None:
     await db.conn.commit()
 
     for number, (odds_a, odds_b, score, status) in enumerate(
-        [(1.55, 2.4, (13, 9), "finished"), (1.9, 1.9, (6, 8), "live")], start=1
+        [
+            (1.55, 2.4, (13, 9), "finished"),      # карта сыграна — рассчитана
+            (1.9, 1.9, (6, 8), "live"),           # идёт: счёт есть, ставки открыты
+            (1.8, 2.0, (9, 3), "awaiting"),       # счёт потерялся — ждём результата
+            (1.7, 2.1, (None, None), "cancelled"),  # не игралась — возврат
+        ], start=1
     ):
         card, _ = await db.upsert_map(
             match_id=match_id,

@@ -832,11 +832,14 @@ class Database:
             if match is None:
                 raise MatchNotFound("Матч не найден")
 
-            refusal = self._betting_refusal(match, now)
-            if refusal:
-                raise MatchNotOpen(refusal)
+            # статус матча тут не главный: серия может числиться в «ждём результат»,
+            # пока идёт очередная карта. Смотрим на саму карту.
+            if str(match["status"]) in ("finished", "cancelled"):
+                raise MatchNotOpen("Матч уже рассчитан — ставки на карту закрыты")
             if str(card["status"]) not in ("open", "live"):
                 raise MatchNotOpen("Ставки на эту карту закрыты")
+            if not settings.live_betting and int(match["start_time"]) <= now:
+                raise MatchNotOpen("Матч уже начался — ставки не принимаются")
 
             odds = card["odds_a"] if side == "a" else card["odds_b"]
             if not odds:

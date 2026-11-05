@@ -27,6 +27,7 @@ from typing import Any
 from aiogram import Bot
 
 from app.db import BettingError, Database
+from app.services.maps import finish_maps_of_match
 from app.services.notify import notify_bettors
 
 log = logging.getLogger(__name__)
@@ -111,6 +112,9 @@ async def apply_manual_results(
 
         if bot is not None:
             await notify_bettors(bot, db, result, score=score or None)
+
+        # карты серии: доигранные считаем по счёту, неначатые возвращаем
+        await finish_maps_of_match(db, bot, int(match["id"]), source="manual")
 
         line = (
             f"#{match['id']} {match['team_a']} — {match['team_b']}: "

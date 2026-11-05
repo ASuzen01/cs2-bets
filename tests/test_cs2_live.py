@@ -23,7 +23,7 @@ def _quiet_notifications(monkeypatch):
         return None
 
     monkeypatch.setattr("app.services.sync.notify_bettors", _noop)
-    monkeypatch.setattr("app.services.sync.notify_map_bettors", _noop)
+    monkeypatch.setattr("app.services.maps.notify_map_bettors", _noop)
 
 
 @pytest.fixture
