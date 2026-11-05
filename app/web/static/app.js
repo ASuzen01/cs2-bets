@@ -2,11 +2,20 @@
   "use strict";
 
   const boot = window.__BOOT__ || { user: null, matches: [], error: null, dev: false };
-  const tg = (window.Telegram && window.Telegram.WebApp) || window.__TG_SHIM__ || null;
-  const hasTelegram = !!(tg && tg.initData);
+  // Telegram SDK загружается async: не фиксируем shim при старте — приложение
+  // могло бы навсегда остаться без initData, если SDK появился чуть позже.
+  const tg = new Proxy({}, {
+    get(_target, key) {
+      const app = (window.Telegram && window.Telegram.WebApp) || window.__TG_SHIM__ || null;
+      const value = app && app[key];
+      return typeof value === "function" ? value.bind(app) : value;
+    },
+  });
+  const hasTelegram = () => Boolean(tg.initData);
 
   const state = {
     user: boot.user || null,
+    authPending: !boot.user && !boot.dev,
     matches: boot.matches || [],
     football: boot.football || [],
     hockey: boot.hockey || [],
@@ -223,10 +232,45 @@
   }
 
   // --------------------------------------------------------------------- API
+  let authWaitAttempted = false;
+  function pause(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  let telegramInitializedApp = null;
+  function initializeTelegram() {
+    const app = window.Telegram && window.Telegram.WebApp;
+    if (!app || app === telegramInitializedApp) return;
+    telegramInitializedApp = app;
+    try {
+      app.ready();
+      app.expand();
+      if (app.setHeaderColor) app.setHeaderColor("#0f1720");
+      if (app.setBackgroundColor) app.setBackgroundColor("#0f1720");
+      if (app.disableVerticalSwipes) app.disableVerticalSwipes();
+      const theme = app.themeParams || {};
+      if (theme.button_color) document.documentElement.style.setProperty("--accent", theme.button_color);
+    } catch (e) { /* SDK ещё инициализируется; retry вызовет setup ещё раз при замене объекта */ }
+  }
+  async function waitForTelegramData(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      initializeTelegram();
+      if (hasTelegram()) return true;
+      if (Date.now() >= deadline) return false;
+      await pause(100);
+    }
+  }
+
   async function api(path, options) {
     const opts = options || {};
+    // На некоторых клиентах SDK приходит после app.js. Даём ему немного времени,
+    // прежде чем посылать первый запрос без initData и показывать ошибку входа.
+    if (path === "/api/state" && !hasTelegram() && !boot.dev && !boot.user && !authWaitAttempted) {
+      authWaitAttempted = true;
+      await waitForTelegramData(1800);
+    }
     const headers = { "Content-Type": "application/json" };
-    if (hasTelegram) headers["X-Telegram-Init-Data"] = tg.initData;
+    if (hasTelegram()) headers["X-Telegram-Init-Data"] = tg.initData;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -969,14 +1013,29 @@
     renderCategorySegments();
 
     if (!state.user) {
+      const card = el("div", "card");
+      if (state.authPending) {
+        card.append(el("div", "empty", "Подключаемся к Telegram…"));
+        card.append(el("div", "skeleton"));
+        host.append(card);
+        return;
+      }
       const message = boot.error && /Откройте/i.test(boot.error)
         ? "Откройте приложение кнопкой в боте — тогда появятся матчи и баланс."
-        : (boot.error || "Не удалось авторизоваться. Обновите экран.");
-      const card = el("div", "card");
+        : (boot.error || "Не удалось авторизоваться. Проверьте подключение и попробуйте снова.");
       card.append(el("div", "empty", message));
       const retry = el("button", "btn", "Обновить");
       retry.type = "button";
-      retry.addEventListener("click", () => location.reload());
+      retry.addEventListener("click", async () => {
+        retry.disabled = true;
+        retry.textContent = "Подключаемся…";
+        await waitForTelegramData(3000);
+        await refreshState();
+        if (retry.isConnected) {
+          retry.disabled = false;
+          retry.textContent = "Обновить";
+        }
+      });
       card.append(retry);
       host.append(card);
       return;
@@ -1378,7 +1437,7 @@
         share.disabled = !data.link;
         share.addEventListener("click", () => {
           const params = { url: data.link, text: "Заходи в «Добрую лудку» — виртуальные монеты, без реальных ставок" };
-          if (hasTelegram && tg.openTelegramLink) {
+          if (hasTelegram() && tg.openTelegramLink) {
             const shareUrl = "https://t.me/share/url?url=" + encodeURIComponent(data.link) +
               "&text=" + encodeURIComponent(params.text);
             tg.openTelegramLink(shareUrl);
@@ -3032,6 +3091,7 @@
       const balanceBefore = state.user ? state.user.balance : null;
 
       state.user = data.user;
+      state.authPending = false;
       state.matches = data.matches;
       state.football = football;
       state.hockey = hockey;
@@ -3066,6 +3126,7 @@
       if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
+        state.authPending = false;
         state.user = boot.user || null;
         renderHeader();
         renderMatches();
@@ -3957,17 +4018,7 @@
       if (event.target === $("#sheetWrap")) closeSheet();
     });
 
-    if (tg) {
-      try {
-        tg.ready();
-        tg.expand();
-        if (tg.setHeaderColor) tg.setHeaderColor("#0f1720");
-        if (tg.setBackgroundColor) tg.setBackgroundColor("#0f1720");
-        if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
-        const theme = tg.themeParams || {};
-        if (theme.button_color) document.documentElement.style.setProperty("--accent", theme.button_color);
-      } catch (e) { /* старые клиенты */ }
-    }
+    initializeTelegram();
 
     attachReferral();
 
