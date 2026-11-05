@@ -212,7 +212,8 @@ async def test_match_without_score_keeps_bets_after_format(db: Database) -> None
         odds_a=1.7,
         odds_b=2.1,
     )
-    await db.place_bet(int(row["id"]), 1, None, "a", 100)     # ставка до начала
+    await db.set_status(int(row["id"]), "live")     # матч идёт: live-ставки разрешены
+    await db.place_bet(int(row["id"]), 1, None, "a", 100)     # ставка сделана в игре
     await db.set_status(int(row["id"]), "awaiting")
     stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
 
@@ -234,6 +235,7 @@ async def test_stuck_awaiting_without_score_is_never_refunded(db: Database) -> N
         odds_a=1.6,
         odds_b=2.2,
     )
+    await db.set_status(int(row["id"]), "live")
     await db.place_bet(int(row["id"]), 1, None, "b", 100)
     await db.set_status(int(row["id"]), "awaiting")
     stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
@@ -257,8 +259,8 @@ async def test_stale_match_with_bets_is_not_cancelled(db: Database) -> None:
         odds_a=1.7,
         odds_b=2.1,
     )
-    await db.place_bet(int(row["id"]), 1, None, "a", 100)
     await db.set_status(int(row["id"]), "live")
+    await db.place_bet(int(row["id"]), 1, None, "a", 100)
     stats = {"settled": 0, "awaiting": 0, "cancelled": 0}
 
     await MatchSyncer(bot=None, db=db)._close_stale(stats)

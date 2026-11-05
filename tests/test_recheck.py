@@ -130,6 +130,7 @@ async def test_cs2_series_is_fixed_by_maps(db: Database) -> None:
         odds_b=2.3,
     )
     match_id = int(row["id"])
+    await db.set_status(match_id, "live")
     await db.place_bet(match_id, 1, None, "b", 100)      # ставили на TYLOO
     await db.settle_match(match_id, "a", source="fonbet")
     assert await db.get_balance(1) == 900

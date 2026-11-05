@@ -167,6 +167,16 @@ CREATE TABLE IF NOT EXISTS casino_bets (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
+
+-- идемпотентность действий игрока: один и тот же тап не должен списать дважды
+CREATE TABLE IF NOT EXISTS bet_requests (
+    user_id    INTEGER NOT NULL,
+    channel    TEXT    NOT NULL,
+    token      TEXT    NOT NULL,
+    bet_id     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, channel, token)
+);
 """
 
 SCHEMA_POSTGRES = (

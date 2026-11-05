@@ -285,6 +285,72 @@ class Database:
             await self.conn.commit()
             return result
 
+    # ------------------------------------------------- идемпотентность ставок
+    @staticmethod
+    def _clean_token(token: str | None) -> str:
+        """Токен тапа: короткая строка от клиента, всё остальное игнорируем."""
+        if not token:
+            return ""
+        text = str(token).strip()[:80]
+        return text if text.isascii() else ""
+
+    async def _claim_token(
+        self, conn: Any, user_id: int, channel: str, token: str, now: int
+    ) -> int | None:
+        """Первый запрос с этим токеном выигрывает; повторный получает id прошлой ставки.
+
+        Нужно, чтобы двойной тап на медленной сети не списывал деньги дважды.
+        Возвращает None, если действие новое (можно продолжать), иначе id ставки/раунда.
+        """
+        if not token:
+            return None
+        cur = await conn.execute(
+            """
+            INSERT INTO bet_requests (user_id, channel, token, bet_id, created_at)
+            VALUES (?, ?, ?, 0, ?)
+            ON CONFLICT DO NOTHING
+            """,
+            (user_id, channel, token, now),
+        )
+        if cur.rowcount:
+            return None
+        row = await (
+            await conn.execute(
+                "SELECT bet_id FROM bet_requests WHERE user_id = ? AND channel = ? AND token = ?",
+                (user_id, channel, token),
+            )
+        ).fetchone()
+        return int(row["bet_id"]) if row is not None else 0
+
+    async def _remember_token(
+        self, conn: Any, user_id: int, channel: str, token: str, bet_id: int
+    ) -> None:
+        if not token:
+            return
+        await conn.execute(
+            "UPDATE bet_requests SET bet_id = ? WHERE user_id = ? AND channel = ? AND token = ?",
+            (int(bet_id), user_id, channel, token),
+        )
+
+    async def _previous_id(self, conn: Any, user_id: int, channel: str, token: str) -> int:
+        row = await (
+            await conn.execute(
+                "SELECT bet_id FROM bet_requests WHERE user_id = ? AND channel = ? AND token = ?",
+                (user_id, channel, token),
+            )
+        ).fetchone()
+        return int(row["bet_id"]) if row is not None else 0
+
+    async def _repeat_bet(
+        self, conn: Any, user_id: int, channel: str, token: str, table: str
+    ) -> tuple[int, float]:
+        """Ответ на повторный тап: баланс и кэф уже сделанной ставки."""
+        previous = await self._previous_id(conn, user_id, channel, token)
+        row = await (
+            await conn.execute(f"SELECT odds FROM {table} WHERE id = ?", (previous,))
+        ).fetchone()
+        return await self._balance_in(conn, user_id), float(row["odds"]) if row is not None else 0.0
+
     async def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> Any | None:
         async with self.conn.execute(sql, params) as cur:
             return await cur.fetchone()
@@ -505,6 +571,7 @@ class Database:
         outcome: str,
         won: bool,
         payout: int,
+        token: str | None = None,
     ) -> tuple[int, int]:
         """Проводит раунд рулетки/костей: списывает ставку, пишет историю, платит выигрыш.
 
@@ -517,8 +584,12 @@ class Database:
         if payout < 0:
             raise InvalidBet("Выплата не может быть отрицательной")
 
+        tap = self._clean_token(token)
         now = int(time.time())
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "casino", tap, now) is not None:
+                previous = await self._previous_id(conn, user_id, "casino", tap)
+                return await self._balance_in(conn, user_id), previous
             cur = await conn.execute(
                 "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
                 (amount, user_id, amount),
@@ -553,7 +624,9 @@ class Database:
                     now,
                 ),
             )
-            return await self._balance_in(conn, user_id), int(inserted.lastrowid or 0)
+            round_id = int(inserted.lastrowid or 0)
+            await self._remember_token(conn, user_id, "casino", tap, round_id)
+            return await self._balance_in(conn, user_id), round_id
 
     async def casino_history(self, user_id: int, limit: int = 20) -> list[Any]:
         """Последние раунды игрока — для ленты «недавние ставки»."""
@@ -626,6 +699,19 @@ class Database:
             "SELECT user_id, username, full_name, balance FROM users ORDER BY balance DESC, user_id LIMIT ?",
             (limit,),
         )
+
+    async def rank_of_user(self, user_id: int) -> dict[str, Any] | None:
+        """Место игрока в общем зачёте и его баланс — даже если он не попал в топ-10."""
+        row = await self._fetchone("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        if row is None:
+            return None
+        better = await self._fetchone(
+            "SELECT COUNT(*) AS n FROM users WHERE balance > ?", (int(row["balance"]),)
+        )
+        return {
+            "rank": int(better["n"]) + 1 if better is not None else 1,
+            "balance": int(row["balance"]),
+        }
 
     async def history(self, user_id: int, limit: int = 10) -> list[Any]:
         return await self._fetchall(
@@ -1152,25 +1238,42 @@ class Database:
     def _betting_refusal(match: Any, now: int) -> str | None:
         """None — ставку принять можно; иначе текст отказа для игрока."""
         status = str(match["status"])
+        started = int(match["start_time"]) <= now
         if status == "live":
             return None if settings.live_betting else "Матч уже начался — ставки не принимаются"
         if status == "open":
-            if settings.live_betting or int(match["start_time"]) > now:
-                return None
-            return "Матч уже начался — ставки не принимаются"
+            # матч уже начался, а фид ещё не перевёл его в live: принимать нельзя,
+            # иначе игрок ставит по предматчевому кэфу на идущую игру
+            if started:
+                return "Матч уже начался — ставки не принимаются"
+            return None
         return "Ставки по этому матчу закрыты"
 
     async def place_bet(
-        self, match_id: int, user_id: int, chat_id: int | None, side: str, amount: int
+        self,
+        match_id: int,
+        user_id: int,
+        chat_id: int | None,
+        side: str,
+        amount: int,
+        *,
+        token: str | None = None,
     ) -> tuple[int, float]:
-        """Списывает ставку по текущему кэфу матча. Возвращает (новый баланс, кэф)."""
+        """Списывает ставку по текущему кэфу матча. Возвращает (новый баланс, кэф).
+
+        `token` — метка тапа от клиента: повторный запрос с тем же токеном
+        не списывает деньги второй раз, а отдаёт результат первой ставки.
+        """
         if side not in ("a", "b", "x"):
             raise InvalidBet("Сторона должна быть 1, X или 2")
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
+        tap = self._clean_token(token)
         now = int(time.time())
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "bet", tap, now) is not None:
+                return await self._repeat_bet(conn, user_id, "bet", tap, "bets")
             async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
                 match = await cur.fetchone()
             if match is None:
@@ -1192,12 +1295,15 @@ class Database:
             if cur.rowcount == 0:
                 raise InsufficientFunds("Недостаточно монет на балансе")
 
-            await conn.execute(
+            inserted = await conn.execute(
                 """
                 INSERT INTO bets (match_id, user_id, chat_id, side, amount, odds, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (match_id, user_id, chat_id, side, amount, float(odds), now),
+            )
+            await self._remember_token(
+                conn, user_id, "bet", tap, int(inserted.lastrowid or 0)
             )
             await self._ledger(conn, user_id, -amount, f"ставка · {match_tag(match)}", now)
             async with conn.execute(
@@ -1552,10 +1658,12 @@ class Database:
         legs: list[dict[str, Any]],
         *,
         max_odds: float | None = None,
+        token: str | None = None,
     ) -> tuple[int, float, int]:
         """Ставит экспресс. legs: [{'match_id': int, 'side': 'a'|'b'}].
 
         Возвращает (express_id, итоговый кэф, новый баланс).
+        `token` защищает от двойного списания при повторном тапе.
         """
         if len(legs) < 2:
             raise InvalidBet("В экспрессе должно быть минимум 2 исхода")
@@ -1566,8 +1674,15 @@ class Database:
         if len(set(match_ids)) != len(match_ids):
             raise InvalidBet("Нельзя брать два исхода одного матча в один экспресс")
 
+        tap = self._clean_token(token)
         now = int(time.time())
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "express", tap, now) is not None:
+                previous = await self._previous_id(conn, user_id, "express", tap)
+                row = await (
+                    await conn.execute("SELECT odds FROM expresses WHERE id = ?", (previous,))
+                ).fetchone()
+                return previous, float(row["odds"]) if row is not None else 0.0, await self._balance_in(conn, user_id)
             total_odds = 1.0
             prepared: list[tuple[int, str, float]] = []
             for leg in legs:
@@ -1608,6 +1723,7 @@ class Database:
             )
             created = await cur.fetchone()
             express_id = int(created["id"]) if created else int(cur.lastrowid or 0)
+            await self._remember_token(conn, user_id, "express", tap, express_id)
 
             for match_id, side, odds in prepared:
                 await conn.execute(

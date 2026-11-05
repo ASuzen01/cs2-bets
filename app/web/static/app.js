@@ -38,7 +38,8 @@
     casinoStake: { roulette: 50, dice: 50 },
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
-    casinoResult: null,       // последний раунд: переживает перерисовку
+    casinoResults: { roulette: null, dice: null },  // результат своей игры у каждой игры
+    casinoToken: null,        // метка тапа текущего раунда (защита от двойного списания)
     recentNumbers: [],        // дорожка выпавших чисел
     rouletteAngle: 0,
     ballAngle: 0,
@@ -60,6 +61,17 @@
   // кэф может быть снят (идёт матч, Fonbet убрал рынок) — тогда прочерк, а не 0.00
   const oddsText = (n) => (n === null || n === undefined ? "—" : Number(n).toFixed(2));
   const balance = () => (state.user ? state.user.balance : 0);
+  const minBet = () => Math.max(1, Number((state.limits && state.limits.min_bet) || 10));
+  // кнопка не должна предлагать действие, которое сервер всё равно отклонит
+  const canBet = () => Boolean(state.user) && balance() >= minBet();
+
+  // метка тапа: одинаковый токен в повторном запросе = одна и та же ставка
+  function newToken() {
+    try {
+      if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    } catch (e) { /* старый вебвью */ }
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
 
   function timeText(ts) {
     const d = new Date(ts * 1000);
@@ -77,7 +89,7 @@
     node.textContent = text;
     node.className = "toast show" + (kind ? " " + kind : "");
     clearTimeout(node._t);
-    node._t = setTimeout(() => { node.className = "toast"; }, 2600);
+    node._t = setTimeout(() => { node.className = "toast"; }, 2400);
   }
 
   function haptic(type) {
@@ -177,6 +189,17 @@
     return box;
   }
 
+  // пустое состояние с полезным действием: не тупик, а следующий шаг
+  function emptyAction(text, label, onTap) {
+    const box = emptyWithMascot(text);
+    const btn = el("button", "btn ghost", label);
+    btn.type = "button";
+    btn.style.marginTop = "12px";
+    btn.addEventListener("click", onTap);
+    box.append(btn);
+    return box;
+  }
+
   function renderFatal(message) {
     const host = $("#matches");
     host.textContent = "";
@@ -268,10 +291,16 @@
     }
     state.oddsPrev[flashKey] = value;
 
+    // матч уже начался, а фид не успел перевести его в live: сервер такую ставку отклонит
+    const started = match.status === "open" && Number(match.start_time) * 1000 <= Date.now();
     if (value === null || value === undefined) {
       // кэф снят (идёт карта или матч уже начался) — ставить не на что
       btn.disabled = true;
       btn.classList.add("off");
+    } else if (started) {
+      btn.disabled = true;
+      btn.classList.add("off");
+      btn.title = "Матч уже начался";
     }
     btn.append(name, val);
     btn.addEventListener("click", onPick);
@@ -373,7 +402,12 @@
       add.append(el("span", "count", "＋"));
       add.addEventListener("click", () => addLeg(match));
     }
-    if (isWaiting) add.disabled = true;
+    // матч начался (или ждёт результата) — в экспресс такой исход уже не собрать
+    const startedOpen = match.status === "open" && Number(match.start_time) * 1000 <= Date.now();
+    if (isWaiting || startedOpen) {
+      add.disabled = true;
+      if (startedOpen) add.append(el("span", "count", "матч начался"));
+    }
     actions.append(add);
     card.append(actions);
 
@@ -908,10 +942,11 @@
       summary.append(el("div", "hint", "Один из матчей уже не в линии — убери его, иначе экспресс не собрать."));
     }
 
-    const place = el("button", "btn", "Поставить экспресс");
+    const fewLegs = state.cart.length < 2;
+    const place = el("button", "btn", fewLegs ? "Добавь ещё один исход" : "Поставить экспресс");
     place.type = "button";
-    place.disabled = broken;
-    place.addEventListener("click", () => openExpressSheet());
+    place.disabled = broken || fewLegs;
+    if (!place.disabled) place.addEventListener("click", () => openExpressSheet());
     card.append(place);
 
     const clear = el("button", "btn ghost", "Очистить");
@@ -939,34 +974,60 @@
     }
   }
 
-  function renderTop(rows) {
+  function renderTop(rows, mine) {
     const host = $("#top");
     host.textContent = "";
     if (!rows || !rows.length) {
-      host.append(el("div", "empty", "Пока никто не играл."));
+      host.append(emptyAction("Пока никто не играл — будь первым.", "К матчам",
+        () => switchTab("matches")));
       return;
     }
     const medals = ["🥇", "🥈", "🥉"];
-    rows.forEach((row) => {
-      const node = el("div", "rowcard");
-      node.append(el("div", "rank", medals[row.rank - 1] || String(row.rank)));
+    const rowCard = (rank, name, amount, me) => {
+      const node = el("div", "rowcard" + (me ? " me" : ""));
+      node.append(el("div", "rank", medals[rank - 1] || String(rank)));
       const grow = el("div", "grow");
-      grow.append(el("b", null, row.name + (row.me ? " · вы" : "")));
-      grow.append(el("span", null, row.me ? "это вы" : "игрок"));
-      node.append(grow, el("div", "money", money(row.balance)));
-      host.append(node);
-    });
+      grow.append(el("b", null, name + (me ? " · вы" : "")));
+      grow.append(el("span", null, me ? "это вы" : "игрок"));
+      node.append(grow, el("div", "money", money(amount)));
+      return node;
+    };
+    rows.forEach((row) => host.append(rowCard(row.rank, row.name, row.balance, row.me)));
+
+    // игрок вне десятки: показываем его место отдельно, чтобы не искать себя глазами
+    const inTop = rows.some((row) => row.me);
+    if (!inTop && mine && mine.rank) {
+      host.append(el("h2", null, "Ваше место"));
+      host.append(rowCard(mine.rank, (state.user && state.user.name) || "Вы", mine.balance, true));
+    }
+  }
+
+  function dayLabel(ts) {
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 86400000);
+    if (d.toDateString() === now.toDateString()) return "Сегодня";
+    if (d.toDateString() === yesterday.toDateString()) return "Вчера";
+    return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "long" });
   }
 
   function renderHistory(items) {
     const host = $("#history");
     host.textContent = "";
     if (!items || !items.length) {
-      host.append(el("div", "empty", "История пуста — сделай первую ставку."));
+      host.append(emptyAction("История пуста — сделай первую ставку.", "К матчам",
+        () => switchTab("matches")));
       return;
     }
     const card = el("div", "card");
+    let day = "";
     items.forEach((item) => {
+      // заголовок дня: в длинном списке иначе не понять, где сегодня, а где неделя назад
+      const label = dayLabel(item.at);
+      if (label !== day) {
+        day = label;
+        card.append(el("div", "day", label));
+      }
       const row = el("div", "rowcard");
       row.style.margin = "0";
       row.style.border = "0";
@@ -1061,6 +1122,26 @@
     wrap.classList.add("show");
   }
   function closeSheet() { $("#sheetWrap").classList.remove("show"); }
+
+  // Вместо листа ставки при пустом балансе — объяснение и дорога к бонусам.
+  function openNoCoinsSheet(need) {
+    openSheet((sheet) => {
+      sheet.append(el("h3", null, "Не хватает монет"));
+      sheet.append(el("div", "sub",
+        `Для ставки нужно минимум ${money(need)}, а на балансе ${money(balance())}. ` +
+        "Забери ежедневный бонус или крутни колесо — и возвращайся."));
+      const bonus = el("button", "btn", "К бонусам");
+      bonus.type = "button";
+      bonus.style.marginTop = "12px";
+      bonus.addEventListener("click", () => { closeSheet(); switchTab("bonus"); });
+      sheet.append(bonus);
+      const cancel = el("button", "btn ghost", "Отмена");
+      cancel.type = "button";
+      cancel.style.marginTop = "8px";
+      cancel.addEventListener("click", closeSheet);
+      sheet.append(cancel);
+    });
+  }
 
   // ------------------------------------------------- сумма ставки: хелперы
   // Единые правила для всех, кто спрашивает «сколько?»: листы ординаров,
@@ -1200,6 +1281,7 @@
 
   function openAmountSheet(match, side, map, market) {
     haptic("light");
+    if (!canBet()) { haptic("bad"); openNoCoinsSheet(minBet()); return; }
     const team = market ? market.label : teamName(match, side);
     const odd = market
       ? market.odds
@@ -1209,6 +1291,8 @@
     const marketTitle = market
       ? `${team} · ${oddsText(market.odds)}`
       : (map ? `Карта ${map.number} · ${team}` : team);
+    // один токен на весь лист: повторный тап (или ретрай после обрыва) не спишет дважды
+    const token = newToken();
     let body;
     if (market) body = {
       match_id: match.id,
@@ -1236,7 +1320,7 @@
         try {
           const data = await api("/api/bet", {
             method: "POST",
-            body: Object.assign({}, body, { amount }),
+            body: Object.assign({}, body, { amount, token }),
           });
           setBalance(data.balance);
           closeSheet();
@@ -1269,6 +1353,8 @@
 
   function openExpressSheet() {
     if (state.cart.length < 2) { toast("Нужно минимум 2 исхода", "bad"); return; }
+    if (!canBet()) { haptic("bad"); openNoCoinsSheet(minBet()); return; }
+    const token = newToken();
     const total = cartOdds();
 
     openSheet((sheet) => {
@@ -1288,7 +1374,11 @@
         try {
           const data = await api("/api/express", {
             method: "POST",
-            body: { amount, legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })) },
+            body: {
+              amount,
+              token,
+              legs: state.cart.map((leg) => ({ match_id: leg.match_id, side: leg.side })),
+            },
           });
           setBalance(data.balance);
           state.cart = [];
@@ -1695,6 +1785,11 @@
     if (state.teaseTaps >= (state.bonus.wheel.tease_taps || 10)) {
       state.teaseTaps = 0;
       claimTease();
+      return;
+    }
+    if (state.teaseTaps === 1) {
+      // первый тап в ожидании: человек должен понять, что кнопка живая, и когда ждать
+      toast(`Бонус уже получен — следующий через ${waitText(state.bonus.daily.wait_seconds)}`);
     }
   }
 
@@ -1863,7 +1958,7 @@
   async function loadTop() {
     try {
       const data = await api("/api/top");
-      renderTop(data.top);
+      renderTop(data.top, data.me);
     } catch (err) {
       $("#top").textContent = "";
       $("#top").append(el("div", "empty", err.message));
@@ -2263,7 +2358,6 @@
     input.addEventListener("blur", () => {
       state.casinoTyping = false;
       const raw = Number(state.casinoStake[game]) || 0;
-      if (raw > max) toast(`Максимум за раунд — ${money(max)}`, "bad");
       state.casinoStake[game] = clampStake(raw, min, max);
       input.value = String(state.casinoStake[game]);
       syncStakeUI(game);
@@ -2305,9 +2399,8 @@
       ball.append(dot);
       wrap.append(ball);
       wrap.append(el("div", "roulette-pointer"));
-      const last = state.casinoResult && state.casinoResult.game === "roulette"
-        ? state.casinoResult.number
-        : (state.recentNumbers || [])[0];
+      const mine = state.casinoResults.roulette;
+      const last = mine ? mine.number : (state.recentNumbers || [])[0];
       wrap.append(rouletteHubNode(last === undefined ? null : last));
       panel.append(wrap);
       panel.append(numberStrip());
@@ -2331,6 +2424,18 @@
     return box;
   }
 
+  // «что выпало» одной строкой: нужно и в блоке результата, и в тосте,
+  // когда игрок уже ушёл на другую вкладку
+  function outcomeText(result) {
+    if (!result) return "";
+    if (result.game === "roulette") {
+      const colour = rouletteColour(result.number);
+      const word = colour === "green" ? "зеро" : colour === "red" ? "красное" : "чёрное";
+      return `${result.number} — ${word}`;
+    }
+    return `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
+  }
+
   function paintOutcome(result, options) {
     const box = $("#casinoOutcome");
     if (!box) return;
@@ -2343,13 +2448,7 @@
     box.className = "casino-outcome show " + (result.win ? "win" : "lose") + (pop ? " pop" : "");
     box.textContent = "";
 
-    let what;
-    if (result.game === "roulette") {
-      const colour = rouletteColour(result.number);
-      what = `${result.number}` + (colour === "green" ? " — зеро" : colour === "red" ? " — красное" : " — чёрное");
-    } else {
-      what = `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
-    }
+    const what = outcomeText(result);
 
     const line1 = el("div", "line1");
     line1.append(el("span", null, "Выпало"));
@@ -2486,7 +2585,9 @@
     host.append(historyNode());
     host.append(rulesNode(game));
 
-    paintOutcome(state.casinoResult);
+    paintOutcome(state.casinoResults[game]);
+    // перерисовали экран посреди раунда — блокировка должна остаться
+    if (state.casinoBusy) lockTable(true);
   }
 
   // ------------------------------------------------------- анимация рулетки
@@ -2606,35 +2707,50 @@
     const info = stakeState(game);
     if (info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return; }
     if (info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return; }
-    if (amount > balance()) {
-      toast("Монет не хватает — загляни в бонусы", "bad");
+    if (!canBet() || amount > balance()) {
       haptic("bad");
+      openNoCoinsSheet(minBet());
       return;
     }
 
     state.casinoBusy = true;
-    state.casinoResult = null;
+    state.casinoToken = state.casinoToken || newToken();
+    const token = state.casinoToken;
+    state.casinoResults[game] = null;
     paintOutcome(null);
     lockTable(true);
 
     try {
       const data = await api("/api/casino/play", {
         method: "POST",
-        body: { game, selection, amount },
+        body: { game, selection, amount, token },
       });
+      state.casinoToken = null;   // раунд состоялся: следующий — с новой меткой
+      // экран мог уехать на другую вкладку или в другую игру, пока крутилось колесо
 
-      if (game === "roulette") await spinRouletteTo(data.number);
-      else await rollDiceTo(data.dice);
+      if (state.game === game) {
+        if (game === "roulette") await spinRouletteTo(data.number);
+        else await rollDiceTo(data.dice);
+      }
 
       setBalance(data.balance);
-      state.casinoResult = data;
-      paintOutcome(data, { pop: true });
+      state.casinoResults[game] = data;
+      const onScreen = state.tab === "games" && state.game === game;
+      if (onScreen) paintOutcome(data, { pop: true });
+      else {
+        // результат некуда рисовать — говорим тостом, но именно про эту игру
+        const name = game === "roulette" ? "Рулетка" : "Кости";
+        toast(`${name} · ${outcomeText(data)} · ` +
+          (data.win ? `+${money(data.payout)}` : `−${money(amount)}`), data.win ? "ok" : "bad");
+      }
       haptic(data.win ? "ok" : "bad");
 
-      if (game === "roulette") {
+      if (game === "roulette" && state.game === game) {
         pushNumber(data.number);
         const strip = $("#numStrip");
         if (strip && strip.children.length) strip.children[0].classList.remove("fresh");
+      } else if (game === "roulette") {
+        state.recentNumbers = [data.number].concat(state.recentNumbers || []).slice(0, 10);
       }
 
       // сводку и историю ведём локально, чтобы не перерисовывать колесо
@@ -2670,8 +2786,14 @@
     document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
+        if (state.casinoBusy) {
+          // посреди раунда игру не меняем: иначе результат одной игры
+          // оказался бы на экране другой
+          haptic("bad");
+          toast("Дождись конца раунда", "bad");
+          return;
+        }
         state.game = btn.dataset.game;
-        state.casinoResult = null;
         haptic("light");
         renderGames();
       });

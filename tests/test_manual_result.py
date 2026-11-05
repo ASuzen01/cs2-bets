@@ -39,6 +39,7 @@ async def _match(db: Database, fonbet_id: int = 701) -> int:
         odds_a=1.6,
         odds_b=2.2,
     )
+    await db.set_status(int(row["id"]), "live")     # матч идёт — live-ставки разрешены
     return int(row["id"])
 
 

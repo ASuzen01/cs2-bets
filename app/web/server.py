@@ -331,7 +331,9 @@ async def api_bet(request: web.Request) -> web.Response:
         )
         match = await db.get_match(int(card["match_id"])) if card is not None else None
     else:
-        balance, odds = await db.place_bet(match_id, int(user["user_id"]), None, side, amount)
+        balance, odds = await db.place_bet(
+            match_id, int(user["user_id"]), None, side, amount, token=body.get("token")
+        )
         match = await db.get_match(match_id)
     return web.json_response(
         {
@@ -363,7 +365,12 @@ async def api_express(request: web.Request) -> web.Response:
         return _bad("Нужно минимум 2 исхода")
 
     express_id, odds, balance = await db.place_express(
-        int(user["user_id"]), None, amount, legs, max_odds=settings.max_express_odds
+        int(user["user_id"]),
+        None,
+        amount,
+        legs,
+        max_odds=settings.max_express_odds,
+        token=body.get("token"),
     )
 
     view_legs = []
@@ -484,9 +491,11 @@ async def api_top(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     me = int(request[USER_KEY]["user_id"])
     rows = await db.top_users(10)
+    mine = await db.rank_of_user(me)
     return web.json_response(
         {
             "ok": True,
+            "me": mine,
             "top": [
                 {
                     "rank": index + 1,
@@ -602,6 +611,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     try:
         balance, round_id = await db.play_casino(
             user_id,
+            token=body.get("token"),
             game=game,
             selection=selection,
             label=result["label"],
