@@ -98,8 +98,23 @@
     const fragment = document.createDocumentFragment();
     const parts = text.split(COIN_EMOJI);
     parts.forEach((part, index) => {
+      if (index < parts.length - 1 && /\s$/.test(part)) {
+        // Не оставляем значок на следующей строке отдельно от суммы.
+        part = part.slice(0, -1) + "\u00a0";
+      }
       if (part) fragment.append(document.createTextNode(part));
-      if (index < parts.length - 1) fragment.append(coinIcon());
+      if (index < parts.length - 1) {
+        const next = parts[index + 1];
+        const punctuation = next.match(/^[.,;:!?…]/);
+        const unit = document.createElement("span");
+        unit.className = "currency-unit";
+        unit.append(coinIcon());
+        if (punctuation) {
+          unit.append(document.createTextNode(punctuation[0]));
+          parts[index + 1] = next.slice(punctuation[0].length);
+        }
+        fragment.append(unit);
+      }
     });
     node.replaceWith(fragment);
   }
