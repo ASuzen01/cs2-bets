@@ -143,10 +143,22 @@
   </section>
 
   <section class="screen" id="screen-games">
-    <div class="segments" id="gameSwitch">
-      <button class="seg active" type="button" data-game="roulette">Рулетка</button>
-      <button class="seg" type="button" data-game="dice">Кости</button>
-      <button class="seg" type="button" data-game="ladder">Лесенка</button>
+    <div class="game-menu" id="gameSwitch" role="group" aria-label="Выбор игры">
+      <button class="game-tile active" type="button" data-game="roulette" aria-pressed="true">
+        <span class="game-tile-icon" aria-hidden="true">🎡</span>
+        <b class="game-tile-title">Рулетка</b>
+        <small class="game-tile-description">Число, цвет или сектор</small>
+      </button>
+      <button class="game-tile" type="button" data-game="dice" aria-pressed="false">
+        <span class="game-tile-icon" aria-hidden="true">🎲</span>
+        <b class="game-tile-title">Кости</b>
+        <small class="game-tile-description">Угадай сумму броска</small>
+      </button>
+      <button class="game-tile" type="button" data-game="ladder" aria-pressed="false">
+        <span class="game-tile-icon" aria-hidden="true">🚪</span>
+        <b class="game-tile-title">Лесенка</b>
+        <small class="game-tile-description">Выбирай двери и забирай выплату</small>
+      </button>
     </div>
     <div id="games"><div class="skeleton"></div><div class="skeleton"></div></div>
   </section>

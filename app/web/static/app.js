@@ -3816,8 +3816,10 @@
     const host = $("#games");
     if (!host) return;
 
-    document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.game === state.game);
+    document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
+      const active = btn.dataset.game === state.game;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", String(active));
     });
 
     if (!state.user) {
@@ -4087,7 +4089,7 @@
   }
 
   function bindGames() {
-    document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
+    document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
         if (state.casinoBusy || state.ladderBusy) {
