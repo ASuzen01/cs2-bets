@@ -11,7 +11,9 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from app.db import Database
-from app.services.football import market_label, markets_of, parse_side
+from app.services import football as football_service
+from app.services import hockey as hockey_service
+from app.services.football import market_label, parse_side
 
 # вторая часть названия иногда не лига, а стадия: «Премьер-Лига. 12-й тур»
 _ROUND_PART = re.compile(r"^(\d|тур\b|сезон|этап|раунд|плей-офф|финал|групп|общий)", re.IGNORECASE)
@@ -20,6 +22,11 @@ _CUPS = (
     ("лига чемпионов", "ЛЧ"),
     ("лига европы", "ЛЕ"),
     ("лига конференций", "ЛК"),
+    # хоккей: лига стоит в начале названия, как еврокубки, — страну не показываем
+    ("фонбет кхл", "КХЛ"),
+    ("кхл", "КХЛ"),
+    ("нхл", "НХЛ"),
+    ("чемпионат мира", "ЧМ"),
 )
 
 
@@ -58,7 +65,22 @@ def side_label(side: str, team_a: str, team_b: str) -> str:
     if side == "x":
         return "Ничья"
     parsed = parse_side(side)
-    return market_label(parsed[0], parsed[1]) if parsed else side
+    if parsed:
+        return market_label(parsed[0], parsed[1])
+    hockey = hockey_service.parse_side(side)
+    if hockey:
+        return hockey_service.market_label(hockey[0], hockey[1])
+    return side
+
+
+def markets_for(row: Any) -> list[dict[str, Any]]:
+    """Роспись матча по его виду спорта: футбол и хоккей считаются разными моделями."""
+    sport = str(row["sport"]) if "sport" in row.keys() else "cs2"  # noqa: SIM118
+    if sport == "football":
+        return football_service.markets_of(row)
+    if sport == "hockey":
+        return hockey_service.markets_of(row)
+    return []
 
 
 def map_payload(row: Any) -> dict[str, Any]:
@@ -102,8 +124,8 @@ def match_payload(row: Any, maps: Iterable[Any] = ()) -> dict[str, Any]:
         "maps": [map_payload(card) for card in maps],
         "sport": str(row["sport"]) if "sport" in row.keys() else "cs2",  # noqa: SIM118
         "odds_x": float(row["odds_x"]) if ("odds_x" in row.keys() and row["odds_x"]) else None,  # noqa: SIM118
-        # роспись футбола: тоталы, форы, точный счёт. Для CS2 список пустой
-        "markets": markets_of(row) if "sport" in row.keys() else [],  # noqa: SIM118
+        # роспись футбола и хоккея: тоталы, форы, исходы. Для CS2 список пустой
+        "markets": markets_for(row),
     }
 
 

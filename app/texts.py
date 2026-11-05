@@ -103,9 +103,11 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
     team_a = escape(str(match["team_a"]))
     team_b = escape(str(match["team_b"]))
     status = str(match["status"])
-    football = _sport_of(match) == "football"
-    icon = "⚽️" if football else "🎮"
-    score_label = "Счёт" if football else "Счёт по картам"
+    sport = _sport_of(match)
+    football = sport == "football"
+    hockey = sport == "hockey"
+    icon = "⚽️" if football else ("🏒" if hockey else "🎮")
+    score_label = "Счёт" if football or hockey else "Счёт по картам"
 
     live_open = settings.live_betting
     head = {
@@ -161,6 +163,29 @@ def football_settled_text(result: Mapping[str, Any], match_id: int, score: str |
     )
 
 
+def hockey_settled_text(
+    result: Mapping[str, Any],
+    match_id: int,
+    reg_score: str | None = None,
+    final_score: str | None = None,
+) -> str:
+    """Итог хоккейного матча: счёт основного времени и счёт с овертаймом."""
+    parts = []
+    if reg_score:
+        parts.append(f"основное время <b>{reg_score}</b>")
+    if final_score:
+        parts.append(f"итог <b>{final_score}</b>")
+    score_part = f" · {' · '.join(parts)}" if parts else ""
+    refunded = int(result.get("refunded") or 0)
+    refund_part = f" · возвращено: {money(refunded)}" if refunded else ""
+    return (
+        f"🏒 Матч #{match_id}: {escape(str(result['team_a']))} — "
+        f"{escape(str(result['team_b']))}{score_part}\n"
+        f"Победил <b>{escape(str(result['team']))}</b> · выплачено: {money(int(result['paid']))} · "
+        f"ставок: {result['bets']} · угадали: {result['winners']}{refund_part}"
+    )
+
+
 def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
     score_part = f"\nСчёт в линии: <b>{score}</b>" if score else ""
     return (
@@ -169,6 +194,16 @@ def awaiting_text(match: Mapping[str, Any], score: str | None = None) -> str:
         f"{escape(str(match['team_a']))} 🆚 {escape(str(match['team_b']))}\n"
         "Админ, подтверди исход кнопкой ниже 👇"
     )
+
+def hockey_awaiting_text(match: Mapping[str, Any]) -> str:
+    """Хоккей без автоматического результата: счёт вводит админ командой."""
+    return (
+        f"🏒 Матч #{match['id']} закончился, но счёта у меня нет."
+        f"\n{escape(str(match['team_a']))} — {escape(str(match['team_b']))}\n"
+        f"Админ, введи счёт: <code>/hockey {match['id']} 2:2 3:2</code>\n"
+        "(основное время, затем итог с овертаймом и буллитами)"
+    )
+
 
 # ------------------------------------------------------------------ экспрессы
 

@@ -11,6 +11,7 @@
     /backup [status]       — снять копию базы и прислать файлом
     (файл .json.gz в личку) — восстановить базу из копии
     /results               — матчи, которые ждут подтверждения исхода
+    /hockey ID 2:2 3:2     — рассчитать хоккей: счёт основного времени и итоговый
     /stats                 — короткая сводка по базе
 
 Кнопки «🏆 победитель» / «🚫 матч не состоялся» приходят вместе с уведомлением,
@@ -126,11 +127,92 @@ async def cmd_results(message: Message, db: Database) -> None:
 
     await message.answer(f"Ждут подтверждения исхода: <b>{len(rows)}</b>")
     for row in rows[:10]:
-        await message.answer(
+        title = (
             f"#{row['id']} {texts.short_tournament(str(row['tournament']))}\n"
-            f"{row['team_a']} 🆚 {row['team_b']}",
-            reply_markup=keyboards.confirm_result_kb(row),
+            f"{row['team_a']} 🆚 {row['team_b']}"
         )
+        if str(row["sport"]) == "hockey":
+            # у хоккея два счёта, кнопками «победила первая/вторая» не обойтись
+            await message.answer(
+                f"{title}\n🏒 Хоккей. Расчёт: "
+                f"<code>/hockey {row['id']} 2:2 3:2</code>\n"
+                "(основное время, затем итог с овертаймом и буллитами)"
+            )
+            continue
+        await message.answer(title, reply_markup=keyboards.confirm_result_kb(row))
+
+
+def _parse_score(token: str) -> tuple[int, int] | None:
+    """«3:2» или «3-2» → (3, 2)."""
+    for sep in (":", "-", "х", "x"):
+        if sep in token:
+            left, _, right = token.partition(sep)
+            if left.isdigit() and right.isdigit():
+                return int(left), int(right)
+            return None
+    return None
+
+
+@router.message(Command("hockey"))
+async def cmd_hockey(message: Message, command: CommandObject, db: Database) -> None:
+    """Ручной расчёт хоккея: /hockey ID 2:2 3:2 (основное время и итог).
+
+    КХЛ автоматически не считается — фид результатов её не отдаёт. Если матч
+    закончился в основное время, хватит одного счёта: /hockey ID 4:1.
+    """
+    tokens = (command.args or "").split()
+    if len(tokens) < 2:
+        await message.reply(
+            "Формат: <code>/hockey ID 2:2 3:2</code> — id матча, счёт основного времени "
+            "и итоговый счёт (с овертаймом и буллитами).\n"
+            "Матч закончился в основное время — хватит одного счёта: "
+            "<code>/hockey ID 4:1</code>.\nСписок ждущих: /results"
+        )
+        return
+
+    match_id_token, *score_tokens = tokens
+    if not match_id_token.isdigit() or len(score_tokens) > 2:
+        await message.reply("Не понял формат. Пример: <code>/hockey 12 2:2 3:2</code>")
+        return
+
+    reg = _parse_score(score_tokens[0])
+    if reg is None:
+        await message.reply("Счёт основного времени не разобрал. Пример: <code>2:2</code>")
+        return
+    final = _parse_score(score_tokens[1]) if len(score_tokens) > 1 else reg
+    if final is None:
+        await message.reply("Итоговый счёт не разобрал. Пример: <code>3:2</code>")
+        return
+
+    match_id = int(match_id_token)
+    try:
+        match = await db.get_match(match_id)
+        if match is None:
+            raise ValueError("матч не найден")
+        if final == reg and reg[0] == reg[1]:
+            await message.reply(
+                "Хоккей не заканчивается вничью: если в основное время ничья, "
+                "нужен итоговый счёт (овертайм или буллиты)."
+            )
+            return
+        result = await db.settle_hockey(match_id, reg[0], reg[1], final[0], final[1], source="admin")
+    except (BettingError, ValueError) as exc:
+        await message.reply(f"Не вышло: {exc}")
+        return
+
+    bot = callback_bot(message)
+    await notify_bettors(
+        bot, db, result,
+        score=f"{reg[0]}:{reg[1]} (осн.) · {final[0]}:{final[1]} (итог)",
+    )
+    await message.answer(texts.hockey_settled_text(
+        result, match_id, f"{reg[0]}:{reg[1]}", f"{final[0]}:{final[1]}"
+    ))
+    for express in result.get("expresses") or []:
+        chat_id = express.get("chat_id")
+        if chat_id:
+            with contextlib.suppress(Exception):
+                await bot.send_message(int(chat_id), texts.express_result(express))
 
 
 @router.message(Command("cleanup"))

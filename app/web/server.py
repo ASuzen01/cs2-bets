@@ -22,6 +22,8 @@ from app.config import settings
 from app.db import Database
 from app.services.bonus import TEASE_PRIZE, TEASE_TAPS, daily_layout, slots_payload, spin
 from app.services.football import market_label, parse_side
+from app.services.hockey import market_label as hockey_label
+from app.services.hockey import parse_side as hockey_side
 from app.services.miniapp import AuthError
 from app.web.auth import DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.payloads import (
@@ -159,6 +161,9 @@ async def index(request: web.Request) -> web.Response:
         boot["football"] = await _line_with_maps(
             db, await db.open_matches(limit=200, sport="football")
         )
+        boot["hockey"] = await _line_with_maps(
+            db, await db.open_matches(limit=120, sport="hockey")
+        )
 
     return web.Response(text=render_index(boot), content_type="text/html")
 
@@ -186,6 +191,9 @@ async def api_state(request: web.Request) -> web.Response:
             "live": await _line_with_maps(db, await db.live_matches(limit=40)),
             "football": await _line_with_maps(
                 db, await db.open_matches(limit=200, sport="football")
+            ),
+            "hockey": await _line_with_maps(
+                db, await db.open_matches(limit=120, sport="hockey")
             ),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
@@ -261,6 +269,26 @@ async def api_bet(request: web.Request) -> web.Response:
     amount = _as_int(body.get("amount"))
     market = str(body.get("market") or "match")
     map_id = _as_int(body.get("map_id"))
+
+    hockey = hockey_side(side)
+    if hockey is not None:      # рынок хоккея: основное время, победа в матче, тотал
+        balance, odds = await db.place_hockey_bet(
+            match_id, int(user["user_id"]), None, hockey[0], hockey[1], amount
+        )
+        match = await db.get_match(match_id)
+        return web.json_response(
+            {
+                "ok": True,
+                "balance": balance,
+                "odds": odds,
+                "match": match_payload(match) if match is not None else None,
+                "market": "hockey",
+                "side": side,
+                "label": hockey_label(hockey[0], hockey[1]),
+                "amount": amount,
+                "potential": round(amount * odds),
+            }
+        )
 
     parsed = parse_side(side)
     if parsed is not None:      # рынок футбола: тотал, фора, точный счёт…

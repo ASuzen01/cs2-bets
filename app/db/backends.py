@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS matches (
     odds_b            REAL,
     score_a           INTEGER,
     score_b           INTEGER,
+    reg_a             INTEGER,
+    reg_b             INTEGER,
     status            TEXT    NOT NULL DEFAULT 'open',
     winner            TEXT,
     result_source     TEXT,

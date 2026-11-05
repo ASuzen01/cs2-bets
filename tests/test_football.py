@@ -55,7 +55,10 @@ EXCLUDE = ["азии", "женщ"]
 
 
 def test_default_line_covers_top_leagues_and_national_teams() -> None:
-    """В линии по умолчанию: еврокубки, топ-5, Беларусь, РПЛ и турниры сборных."""
+    """В линии по умолчанию: еврокубки, топ-5, Беларусь, РПЛ, турниры сборных.
+
+    Отбор и квалификацию не берём вообще: только финальные части турниров.
+    """
     from app.services.football import _is_football
 
     include, exclude = settings.football_include_list, settings.football_exclude_list
@@ -73,8 +76,11 @@ def test_default_line_covers_top_leagues_and_national_teams() -> None:
         "Беларусь. Высшая лига",
         "Россия. Премьер-Лига. Сезон 26/27",
         "Лига наций УЕФА. Дивизион А. Групповой этап",
-        "Чемпионат Европы. Отборочный турнир",
-        "ЧМ 2028. Отборочные матчи. Групповой этап",
+        "Лига наций УЕФА. Дивизион В. Групповой этап",
+        "Лига наций УЕФА. Дивизион С. Групповой этап",
+        "Лига наций УЕФА. Дивизион D. Групповой этап",
+        "Чемпионат Европы. Групповой этап",
+        "Чемпионат мира. Групповой этап",
     ):
         assert kept(name), name
 
@@ -88,6 +94,10 @@ def test_default_line_covers_top_leagues_and_national_teams() -> None:
         "Франция. Женщины. Дивизион 1",
         "Бразилия. До 19 лет. Кубок Атлантико",
         "Сборная России. Товарищеские матчи",
+        # отбор и квалификация больше не в линии
+        "Чемпионат Европы. Отборочный турнир",
+        "ЧМ 2028. Отборочные матчи. Групповой этап",
+        "Лига Чемпионов УЕФА. Квалификация",
     ):
         assert not kept(name), name
 
@@ -362,3 +372,38 @@ async def test_unknown_market_rejected(db) -> None:
         await db.place_football_bet(match_id, 1, None, "total", "over:9.5", 100)
     with pytest.raises(InvalidBet):
         await db.place_football_bet(match_id, 1, None, "qualify", "1", 100)   # не плей-офф
+
+
+def test_foreign_sport_segments_are_not_football() -> None:
+    """«Лига Чемпионов» есть и в хоккее, «Бундеслига» — и в баскетболе.
+
+    Имя турнира не различает виды спорта, поэтому сегмент берём только у спорта 1.
+    """
+    packet = {
+        "sports": [
+            {"id": 1, "kind": "sport", "name": "Футбол"},
+            {"id": 2, "kind": "sport", "name": "Хоккей"},
+            {"id": 4, "kind": "sport", "name": "Баскетбол"},
+            {"id": 100, "kind": "segment", "name": "Лига Чемпионов УЕФА. Общий этап", "parentId": 1},
+            {"id": 200, "kind": "segment", "name": "Лига Чемпионов. 1/8 финала", "parentId": 2},
+            {"id": 300, "kind": "segment", "name": "Германия. Бундеслига", "parentId": 4},
+        ],
+        "events": [],
+        "customFactors": [],
+        "eventMiscs": [],
+        "liveEventInfos": [],
+    }
+    from app.services.football import parse_football
+
+    assert parse_football(packet, ["лига чемпионов", "бундеслига"], ["азии"]) == []
+
+    packet["events"] = [
+        {
+            "id": 1, "level": 1, "sportId": 200, "team1": "КооКоо", "team2": "Айсберен",
+            "startTime": 1,
+        },
+    ]
+    packet["customFactors"] = [
+        {"e": 1, "factors": [{"f": 921, "v": 2.0}, {"f": 922, "v": 4.0}, {"f": 923, "v": 3.0}]},
+    ]
+    assert parse_football(packet, ["лига чемпионов", "бундеслига"], ["азии"]) == []

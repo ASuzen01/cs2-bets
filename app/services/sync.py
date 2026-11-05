@@ -19,6 +19,7 @@ from app.services.cs2_rules import map_winner, required_maps
 from app.services.cs2_settle import settle_from_feed
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, is_placeholder_team, parse_football
+from app.services.hockey import HockeyMatch, parse_hockey
 from app.services.maps import finish_maps_of_match, settle_map_by_score
 from app.services.notify import notify_bettors
 from app.services.results import FootballResult, ResultsClient
@@ -38,6 +39,10 @@ CS2_FEED_RECHECK_SECONDS = 600
 FOOTBALL_RESULT_RETRY_SECONDS = 600
 # Как часто обновлять английские названия команд (для поиска результатов).
 FOOTBALL_NAMES_TTL_SECONDS = 1800
+# Хоккейный матч: три периода по 20 минут + перерывы + овертайм — час с небольшим.
+# Раньше этого срока фид результатов не спрашиваем.
+HOCKEY_FINISH_MINUTES = 100
+HOCKEY_RESULT_RETRY_SECONDS = 600
 
 
 # Сколько матч формата может идти (минуты): пока не истекло, live-приём открыт,
@@ -98,6 +103,7 @@ class MatchSyncer:
         self.bot = bot
         self.db = db
         self.results = results or ResultsClient()
+        self.hockey_results = ResultsClient(sport="hockey")
         self.cs2_results = cs2_results or Cs2ResultsClient()
         self._feed_checked: dict[int, int] = {}
         self._names_en_at = 0
@@ -147,6 +153,11 @@ class MatchSyncer:
         football = parse_football(
             packet, settings.football_include_list, settings.football_exclude_list
         )
+        hockey = (
+            parse_hockey(packet, settings.hockey_include_list, settings.hockey_exclude_list)
+            if settings.hockey_enabled
+            else []
+        )
         stats = {
             "fetched": len(matches),
             "created": 0,
@@ -157,16 +168,20 @@ class MatchSyncer:
             "maps_settled": 0,
             "football": len(football),
             "football_created": 0,
+            "hockey": len(hockey),
+            "hockey_created": 0,
         }
 
         await self._store(matches, maps_by_parent, stats)
         await self._store_football(football, stats)
+        await self._store_hockey(hockey, stats)
         await self._close_started(stats)
         # сначала карты: матч считается в том числе по их результатам
         await self._settle_maps(maps_by_parent, stats)
         await self._settle(matches, stats)
         await self._refresh_english_names()
         await self._settle_football(football, stats)
+        await self._settle_hockey(hockey, stats)
         await self._close_stale(stats)
 
         self.last_sync_at = int(time.time())
@@ -302,7 +317,9 @@ class MatchSyncer:
 
     # --------------------------------------------------------------- футбол
     @staticmethod
-    def _prepare_three_way(match: FootballMatch) -> tuple[float | None, float | None, float | None]:
+    def _prepare_three_way(
+        match: FootballMatch | HockeyMatch,
+    ) -> tuple[float | None, float | None, float | None]:
         """Кэфы 1X2 как у книги; в режиме fair — с убранной маржой."""
         if not match.has_result_odds:
             return match.odds_1, match.odds_x, match.odds_2
@@ -345,6 +362,133 @@ class MatchSyncer:
             if created:
                 stats["football_created"] += 1
 
+    # --------------------------------------------------------------- хоккей
+    async def _store_hockey(self, matches: list[HockeyMatch], stats: dict[str, Any]) -> None:
+        """Пишем хоккейные матчи рядом с футболом: sport='hockey' их различает."""
+        now = int(time.time())
+        for match in matches:
+            if not match.has_result_odds:
+                continue
+            if match.start_time and match.start_time < now - 6 * 3600:
+                tracked = await self.db.match_by_fonbet(match.event_id)
+                if tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"):
+                    continue
+            odds_1, odds_x, odds_2 = self._prepare_three_way(match)
+            row, created = await self.db.upsert_match(
+                fonbet_id=match.event_id,
+                tournament=match.tournament,
+                team_a=match.team_a,
+                team_b=match.team_b,
+                start_time=match.start_time,
+                odds_a=odds_1,
+                odds_x=odds_x,
+                odds_b=odds_2,
+                score_a=match.score_a,
+                score_b=match.score_b,
+                sport="hockey",
+            )
+            del row
+            if created:
+                stats["hockey_created"] += 1
+
+    async def _settle_hockey(
+        self, matches: list[HockeyMatch], stats: dict[str, Any]
+    ) -> None:
+        """Считаем хоккей по фиду результатов: НХЛ есть, КХЛ там нет.
+
+        По счёту из линии считать нельзя: Fonbet отдаёт итоговый счёт (с овертаймом),
+        а для рынка «Основное время» нужен счёт после трёх периодов — в фиде он есть
+        (`Tr1OR`/`Tr2OR`), в линии нет. Поэтому НХЛ закрывается автоматически, а КХЛ
+        ждёт ручного расчёта админом — деньги важнее скорости.
+        """
+        del matches      # счёт из линии не используем — см. докстринг
+        now = int(time.time())
+        for row in await self.db.matches_by_status(["open", "live", "awaiting"]):
+            if str(row["sport"]) != "hockey":
+                continue
+            if now - int(row["start_time"]) < HOCKEY_FINISH_MINUTES * 60:
+                continue
+
+            last_check = int(row["last_result_check"] or 0)
+            if last_check and now - last_check < HOCKEY_RESULT_RETRY_SECONDS:
+                continue
+            await self.db.mark_result_check(int(row["id"]), now)
+
+            result = await self._hockey_result_from_feed(row)
+            if result is not None and result.void:
+                await self._cancel_market_row(row, stats, reason=f"статус {result.status}")
+                continue
+            if result is not None and result.finished:
+                await self._settle_hockey_row(
+                    row, result.score_home, result.score_away,
+                    result.final_home, result.final_away, stats,
+                )
+                continue
+
+            if str(row["status"]) != "awaiting":
+                # без кнопок «победила первая/вторая»: у хоккея два счёта,
+                # их вводит админ командой /hockey
+                await self.db.set_status(int(row["id"]), "awaiting")
+                stats["awaiting"] += 1
+                text = texts.hockey_awaiting_text(row)
+                for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
+                    await self._safe_send(chat_id, text)
+                log.info(
+                    "Хоккей #%s %s — %s: результата в фиде нет (КХЛ считает админ)",
+                    row["id"], row["team_a"], row["team_b"],
+                )
+
+    async def _hockey_result_from_feed(self, row: Any) -> FootballResult | None:
+        """Счёт из хоккейного фида: reg — основное время, final — с овертаймом."""
+        try:
+            return await self.hockey_results.find(
+                str(row["team_a"]),
+                str(row["team_b"]),
+                int(row["start_time"]),
+                english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
+                english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
+            )
+        except Exception:
+            log.exception("Не смог получить результат хоккейного матча #%s", row["id"])
+            return None
+
+    async def _settle_hockey_row(
+        self,
+        row: Any,
+        reg_a: int,
+        reg_b: int,
+        final_a: int,
+        final_b: int,
+        stats: dict[str, Any],
+    ) -> None:
+        """Расплатиться по хоккейному матчу и рассказать об этом в чаты."""
+        try:
+            result = await self.db.settle_hockey(
+                int(row["id"]), reg_a, reg_b, final_a, final_b, source="feed"
+            )
+        except Exception:
+            log.exception("Не смог рассчитать хоккейный матч #%s", row["id"])
+            return
+
+        stats["settled"] += 1
+        text = texts.hockey_settled_text(
+            result, int(row["id"]), f"{reg_a}:{reg_b}", f"{final_a}:{final_b}"
+        )
+        for chat_id in await self.db.chat_ids_with_bets(int(row["id"])):
+            await self._safe_send(chat_id, text)
+        await notify_bettors(
+            self.bot, self.db, result,
+            score=f"{reg_a}:{reg_b} (осн.) · {final_a}:{final_b} (итог)",
+        )
+        for express in result.get("expresses") or []:
+            target = express.get("chat_id") or None
+            if target:
+                await self._safe_send(int(target), texts.express_result(express))
+        log.info(
+            "Хоккей #%s рассчитан: %s — %s (основное %s:%s, итог %s:%s), выплачено %s",
+            row["id"], row["team_a"], row["team_b"], reg_a, reg_b, final_a, final_b, result["paid"],
+        )
+
     async def _settle_football(
         self, matches: list[FootballMatch], stats: dict[str, Any]
     ) -> None:
@@ -382,7 +526,7 @@ class MatchSyncer:
 
             result = await self._football_result_from_feed(row)
             if result is not None and result.void:
-                await self._cancel_football_row(row, stats, reason=f"статус {result.status}")
+                await self._cancel_market_row(row, stats, reason=f"статус {result.status}")
                 continue
             if result is not None and result.finished:
                 await self._settle_football_row(row, result.score_home, result.score_away, stats)
@@ -420,6 +564,8 @@ class MatchSyncer:
         if now - self._names_en_at < FOOTBALL_NAMES_TTL_SECONDS:
             return
         pending = await self.db.matches_without_names_en("football")
+        if settings.hockey_enabled:
+            pending = list(pending) + list(await self.db.matches_without_names_en("hockey"))
         if not pending:
             return
         self._names_en_at = now
@@ -434,10 +580,14 @@ class MatchSyncer:
                 continue
             await self.db.set_match_names_en(int(row["id"]), pair[0], pair[1])
 
-    async def _cancel_football_row(
+    async def _cancel_market_row(
         self, row: Any, stats: dict[str, Any], *, reason: str
     ) -> None:
-        """Матч не состоялся (перенесён/отменён) — только здесь возврат и уместен."""
+        """Матч не состоялся (перенесён/отменён) — только здесь возврат и уместен.
+
+        Один и тот же путь для футбола и хоккея: ставки у них лежат с market
+        'football'/'hockey', и `cancel_match` (он про CS2) их не видит.
+        """
         if await self.db.match_bet_count(int(row["id"])) == 0:
             await self.db.set_status(int(row["id"]), "cancelled")
             log.info("Футбол #%s не состоялся (%s), ставок нет", row["id"], reason)
@@ -449,7 +599,8 @@ class MatchSyncer:
             return
         stats["cancelled"] = stats.get("cancelled", 0) + 1
         await notify_bettors(self.bot, self.db, result, void=True)
-        log.info("Футбол #%s не состоялся (%s) — ставки возвращены", row["id"], reason)
+        log.info("Матч #%s (%s) не состоялся (%s) — ставки возвращены",
+                 row["id"], row["sport"], reason)
 
     async def _settle_football_row(
         self, row: Any, score_a: int, score_b: int, stats: dict[str, Any]
@@ -702,7 +853,12 @@ class MatchSyncer:
             log.info("Матч #%s завис без результата и без ставок — снят с линии", row["id"])
 
     async def _close_stale_football(self, row: Any, stats: dict[str, Any]) -> None:
-        """Зависший футбольный матч: реальные ждут фид, «Хозяева — Гости» снимаем."""
+        """Зависший матч не-CS2: реальные ждут фид, «Хозяева — Гости» снимаем."""
+        if str(row["sport"]) == "hockey" and not settings.hockey_manual_settle:
+            # ручной расчёт выключен, а фид результата не знает — возвращаем деньги,
+            # вместо того чтобы держать ставки в «ждём результат» бесконечно
+            await self._cancel_market_row(row, stats, reason="результат не найден")
+            return
         if not (is_placeholder_team(str(row["team_a"])) or is_placeholder_team(str(row["team_b"]))):
             return                # настоящий матч ждёт финального счёта из фида
         try:

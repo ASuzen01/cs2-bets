@@ -37,6 +37,9 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "odds_x", "ALTER TABLE matches ADD COLUMN odds_x REAL"),
     ("matches", "team_a_en", "ALTER TABLE matches ADD COLUMN team_a_en TEXT"),
     ("matches", "team_b_en", "ALTER TABLE matches ADD COLUMN team_b_en TEXT"),
+    # хоккей: score_a/score_b — итоговый счёт (с ОТ и буллитами), reg_* — основное время
+    ("matches", "reg_a", "ALTER TABLE matches ADD COLUMN reg_a INTEGER"),
+    ("matches", "reg_b", "ALTER TABLE matches ADD COLUMN reg_b INTEGER"),
 )
 
 
@@ -1243,6 +1246,185 @@ class Database:
             "expresses": expresses,
         }
 
+    # --------------------------------------------------------------- хоккей
+    async def place_hockey_bet(
+        self,
+        match_id: int,
+        user_id: int,
+        chat_id: int | None,
+        key: str,
+        param: str,
+        amount: int,
+    ) -> tuple[int, float]:
+        """Ставка на рынок хоккейного матча (основное время, победа в матче, тотал)."""
+        from app.services.hockey import markets_of, side_code
+
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if str(match["sport"]) != "hockey":
+                raise InvalidBet("Это не хоккейный матч")
+            if str(match["status"]) != "open" or int(match["start_time"]) <= now:
+                raise MatchNotOpen("Матч начался — роспись закрыта")
+
+            market = next(
+                (m for m in markets_of(match) if m["key"] == key and m["param"] == param), None
+            )
+            if market is None:
+                raise InvalidBet("Такого рынка нет в линии")
+            odds = float(market["odds"])
+
+            cur = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (amount, user_id, amount),
+            )
+            if cur.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+
+            await conn.execute(
+                """
+                INSERT INTO bets (match_id, user_id, chat_id, side, amount, odds, market, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'hockey', ?)
+                """,
+                (match_id, user_id, chat_id, side_code(key, param), amount, odds, now),
+            )
+            from app.services.hockey import market_label
+
+            await self._ledger(
+                conn,
+                user_id,
+                -amount,
+                f"ставка · {market_label(key, param)} · {match_tag(match)}",
+                now,
+            )
+            async with conn.execute(
+                "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+            ) as cur2:
+                row = await cur2.fetchone()
+        return (int(row["balance"]) if row else 0), odds
+
+    async def settle_hockey(
+        self,
+        match_id: int,
+        reg_a: int,
+        reg_b: int,
+        final_a: int,
+        final_b: int,
+        source: str = "auto",
+    ) -> dict[str, Any]:
+        """Расчёт хоккея: основное время — по счёту трёх периодов, победа в матче — с ОТ.
+
+        Два счёта нужны потому, что это разные рынки: 2:2 в основное время — это
+        ничья для рынка «Основное время» и чья-то победа для рынка «Победа в матче»
+        (после овертайма или буллитов).
+        """
+        from app.services.hockey import market_label, market_outcome, parse_side
+
+        if final_a == final_b:
+            raise InvalidBet("Хоккей не заканчивается вничью: нужен счёт с овертаймом")
+
+        reg_winner = "a" if reg_a > reg_b else ("b" if reg_b > reg_a else "x")
+        winner = "a" if final_a > final_b else "b"
+
+        async with self.transaction() as conn:
+            async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
+                match = await cur.fetchone()
+            if match is None:
+                raise MatchNotFound("Матч не найден")
+            if str(match["status"]) in ("finished", "cancelled"):
+                raise MatchAlreadySettled("Матч уже рассчитан или отменён")
+
+            async with conn.execute("SELECT * FROM bets WHERE match_id = ?", (match_id,)) as cur:
+                bets = list(await cur.fetchall())
+
+            total_stake = sum(int(bet["amount"]) for bet in bets)
+            paid = 0
+            refunded = 0
+            payouts: dict[int, int] = {}
+            settlements: list[dict[str, Any]] = []
+
+            for bet in bets:
+                amount = int(bet["amount"])
+                side = str(bet["side"])
+                parsed = parse_side(side)
+                if parsed is None:
+                    # ставка на исход матча из экспресса/старого интерфейса: считаем по основному времени
+                    outcome = "win" if side == reg_winner else "lose"
+                    label = {"a": "П1 (основное время)", "x": "X (основное время)",
+                             "b": "П2 (основное время)"}.get(side, side)
+                else:
+                    outcome = market_outcome(parsed[0], parsed[1], reg_a, reg_b, final_a, final_b)
+                    label = market_label(parsed[0], parsed[1])
+
+                if outcome == "win":
+                    payout = round(amount * float(bet["odds"]))
+                elif outcome == "void":
+                    payout = amount
+                    refunded += payout
+                else:
+                    payout = 0
+                if payout:
+                    paid += payout
+                    payouts[int(bet["user_id"])] = payouts.get(int(bet["user_id"]), 0) + payout
+                settlements.append(
+                    {
+                        "bet_id": int(bet["id"]),
+                        "user_id": int(bet["user_id"]),
+                        "chat_id": int(bet["chat_id"]) if bet["chat_id"] else None,
+                        "side": side,
+                        "label": label,
+                        "amount": amount,
+                        "odds": float(bet["odds"]),
+                        "payout": payout,
+                        "won": outcome == "win",
+                        "void": outcome == "void",
+                    }
+                )
+                await conn.execute("UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"]))
+
+            for user_id, total in payouts.items():
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
+                )
+                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
+
+            await conn.execute(
+                """
+                UPDATE matches SET status = 'finished', winner = ?, result_source = ?,
+                                   score_a = ?, score_b = ?, reg_a = ?, reg_b = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (winner, source, final_a, final_b, reg_a, reg_b, int(time.time()), match_id),
+            )
+            # ноги экспресса — это «победа команды» без варианта ничьей, поэтому
+            # считаем их по итоговому счёту: иначе команда, выигравшая в овертайме,
+            # считалась бы проигравшей ногой экспресса
+            expresses = await self._resolve_expresses(conn, match_id, winner)
+
+        return {
+            "team": str(match["team_a"] if winner == "a" else match["team_b"]),
+            "score": f"{final_a}:{final_b}",
+            "reg_score": f"{reg_a}:{reg_b}",
+            "winner": winner,
+            "paid": paid,
+            "refunded": refunded,
+            "stake": total_stake,
+            "bets": len(bets),
+            "winners": len(payouts),
+            "payouts": payouts,
+            "settlements": settlements,
+            "team_a": str(match["team_a"]),
+            "team_b": str(match["team_b"]),
+            "expresses": expresses,
+            "sport": "hockey",
+        }
+
     # -------------------------------------------------------------- экспрессы
     async def place_express(
         self,
@@ -1449,8 +1631,9 @@ class Database:
             JOIN matches m ON m.id = b.match_id
             LEFT JOIN match_maps mm ON mm.id = b.map_id
             WHERE b.user_id = ? AND (
-                -- ставка на исход матча: и CS2, и футбол (у футбола свой market)
-                (b.market IN ('match', 'football') AND m.status IN ('open', 'live', 'awaiting'))
+                -- ставка на исход матча: CS2, футбол и хоккей (у каждого свой market)
+                (b.market IN ('match', 'football', 'hockey')
+                 AND m.status IN ('open', 'live', 'awaiting'))
                 OR (b.market = 'map' AND mm.status IN ('open', 'live', 'awaiting'))
             )
             ORDER BY m.start_time

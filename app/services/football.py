@@ -116,18 +116,52 @@ def has_qualify_market(tournament: str) -> bool:
     return is_knockout(tournament)
 
 
+# id футбола в линии Fonbet: сегменты (турниры) ссылаются на него через parentId
+SPORT_ID_FOOTBALL = 1
+
+
+def segments_of(
+    packet: dict[str, Any],
+    match: Any,
+    *,
+    sport_id: int | None,
+) -> dict[int, str]:
+    """Сегменты линии, которые относятся к нужному спорту и проходят фильтр.
+
+    Проверять только название турнира нельзя: «Лига Чемпионов» есть и в футболе,
+    и в хоккее, «Бундеслига» — и в футболе, и в баскетболе. Поэтому сегмент берём
+    ещё и по родительскому виду спорта (`parentId`).
+    """
+    sports = {s.get("id"): s for s in packet.get("sports", [])}
+    has_parent = any(
+        s.get("parentId") is not None for s in sports.values() if s.get("kind") == "segment"
+    )
+    segments: dict[int, str] = {}
+    for seg_id, sport in sports.items():
+        if sport.get("kind") != "segment":
+            continue
+        name = str(sport.get("name") or "")
+        if not match(name):
+            continue
+        if has_parent and sport_id is not None and sport.get("parentId") != sport_id:
+            continue
+        segments[seg_id] = name
+    return segments
+
+
 def parse_football(
     packet: dict[str, Any],
     include: Iterable[str],
     exclude: Iterable[str],
+    *,
+    sport_id: int | None = SPORT_ID_FOOTBALL,
 ) -> list[FootballMatch]:
     """Матчи футбола нужных турниров с исходом 1X2."""
-    sports = {s.get("id"): s for s in packet.get("sports", [])}
-    segments: dict[int, str] = {}
-    for sport_id, sport in sports.items():
-        name = str(sport.get("name") or "")
-        if sport.get("kind") == "segment" and _is_football(name, include, exclude):
-            segments[sport_id] = name
+    segments = segments_of(
+        packet,
+        lambda name: _is_football(name, include, exclude),
+        sport_id=sport_id,
+    )
     if not segments:
         return []
 

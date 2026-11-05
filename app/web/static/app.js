@@ -9,6 +9,7 @@
     user: boot.user || null,
     matches: boot.matches || [],
     football: boot.football || [],
+    hockey: boot.hockey || [],
     sport: "cs2",
     fbOpen: {},          // какие футбольные карточки раскрыты до полной росписи
     tournaments: {},     // выбранный турнир по каждому виду спорта
@@ -184,7 +185,7 @@
       tourBtn.addEventListener("click", () => {
         const source = state.segment === "live"
           ? state.liveMatches
-          : (state.sport === "football" ? state.football : state.matches);
+          : marketSource();
         openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
       });
     }
@@ -370,6 +371,13 @@
     return "ludka:tour:" + state.sport;
   }
 
+  // матчи текущей вкладки: у CS2 — основная линия, у футбола и хоккея — своя
+  function marketSource() {
+    if (state.sport === "football") return state.football;
+    if (state.sport === "hockey") return state.hockey;
+    return state.matches;
+  }
+
   function selectedTournament() {
     if (state.tournaments[state.sport] !== undefined) return state.tournaments[state.sport];
     try { return localStorage.getItem(tournamentKey()); } catch (err) { return null; }
@@ -449,7 +457,7 @@
       tourBtn.addEventListener("click", () => {
         const source = state.segment === "live"
           ? state.liveMatches
-          : (state.sport === "football" ? state.football : state.matches);
+          : marketSource();
         openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
       });
     }
@@ -522,6 +530,92 @@
     return card;
   }
 
+  function renderHockeyCard(match) {
+    // Хоккей: «Основное время» (П1/X/П2 — кэфы книги) и «Победа в матче» (с ОТ).
+    // В live остаются только кэфы линии на основное время — как у футбола.
+    const isLive = match.status === "live";
+    const closed = match.status !== "open" && match.status !== "live";
+    const card = el("div", "card" + (isLive ? " live" : ""));
+
+    const top = el("div", "top");
+    if (isLive) top.append(liveTag("LIVE", "live"));
+    top.append(el("span", "tour", match.short_tournament));
+    top.append(el("span", "kick", timeText(match.start_time)));
+    card.append(top);
+
+    const board = el("div", "fb-board");
+    const teams = el("div", "fb-teams");
+    teams.append(document.createTextNode(match.team_a));
+    teams.append(el("span", null, "—"));
+    teams.append(document.createTextNode(match.team_b));
+    board.append(teams);
+    if (match.score) board.append(el("div", "fb-score" + (isLive ? " live" : ""), match.score));
+    card.append(board);
+
+    const markets = Array.isArray(match.markets) ? match.markets : [];
+    const reg = markets.filter((market) => market.key === "reg");
+    const final = markets.filter((market) => market.key === "final");
+    const rest = markets.filter((market) => market.key !== "reg" && market.key !== "final");
+
+    const row = (name, items, columns) => {
+      const grid = el("div", "fb-odds");
+      if (columns === 2) grid.style.gridTemplateColumns = "repeat(2, 1fr)";
+      items.forEach((market) => {
+        const chip = el("button", "odd");
+        chip.type = "button";
+        chip.append(el("span", "name", market.label));
+        chip.append(el("span", "val", oddsText(market.odds)));
+        chip.disabled = closed;
+        chip.addEventListener("click", () => openAmountSheet(match, sideOfMarket(market, match), null, market));
+        grid.append(chip);
+      });
+      card.append(el("div", "market-title", name));
+      card.append(grid);
+    };
+
+    if (reg.length) {
+      row("Основное время", reg, 3);
+    } else if (isLive) {
+      // в live роспись закрыта, но кэфы основного времени приходят в самой линии
+      const live = el("div", "fb-odds");
+      [["a", "П1"], ["x", "X"], ["b", "П2"]].forEach(([side, label]) => {
+        const value = sideOdds(match, side);
+        const chip = el("button", "odd");
+        chip.type = "button";
+        chip.append(el("span", "name", label));
+        chip.append(el("span", "val", value ? oddsText(value) : "—"));
+        chip.disabled = closed || !value;
+        chip.addEventListener("click", () => openAmountSheet(match, side));
+        live.append(chip);
+      });
+      card.append(el("div", "market-title", "Основное время"));
+      card.append(live);
+    }
+
+    if (final.length) row("Победа в матче (с ОТ и буллитами)", final, 2);
+
+    if (isLive) {
+      card.append(el("div", "hint live-hint", "Ставки на основное время открыты · роспись — до старта"));
+    }
+
+    if (rest.length && match.status === "open") {
+      const open = Boolean(state.fbOpen[match.id]);
+      const toggle = el("button", "mkt-toggle" + (open ? " open" : ""));
+      toggle.type = "button";
+      toggle.append(el("span", null, open ? "Свернуть роспись" : "Тоталы и роспись"));
+      toggle.append(el("span", "cnt", rest.length + " " + marketsWord(rest.length)));
+      toggle.addEventListener("click", () => {
+        state.fbOpen[match.id] = !open;
+        haptic("light");
+        renderMatches();
+      });
+      card.append(toggle);
+      if (open) card.append(renderMarketGroups(match, rest));
+    }
+
+    return card;
+  }
+
   function renderMarketGroups(match, markets) {
     const box = el("div", "mkt-body");
     const order = [];
@@ -544,7 +638,8 @@
         chip.type = "button";
         chip.append(el("span", "lbl", market.label));
         chip.append(el("span", "val", oddsText(market.odds)));
-        chip.addEventListener("click", () => openAmountSheet(match, sideOfMarket(market), null, market));
+        chip.addEventListener("click", () =>
+          openAmountSheet(match, sideOfMarket(market, match), null, market));
         grid.append(chip);
       });
       block.append(grid);
@@ -562,9 +657,10 @@
     return "рынков";
   }
 
-  // сторона ставки для рынка: f:<ключ>:<параметр> — так её понимает сервер
-  function sideOfMarket(market) {
-    return "f:" + market.key + ":" + market.param;
+  // сторона ставки для рынка: f:<ключ>:<параметр> у футбола, h:… у хоккея
+  function sideOfMarket(market, match) {
+    const prefix = match && match.sport === "hockey" ? "h:" : "f:";
+    return prefix + market.key + ":" + market.param;
   }
 
   function renderMatches() {
@@ -589,7 +685,10 @@
 
     const liveMode = state.segment === "live";
     const footballMode = state.sport === "football";
-    const source = liveMode ? state.liveMatches : (footballMode ? state.football : state.matches);
+    const hockeyMode = state.sport === "hockey";
+    const source = liveMode
+      ? state.liveMatches
+      : (hockeyMode ? state.hockey : (footballMode ? state.football : state.matches));
     const sportOnly = source.filter((match) => (match.sport || "cs2") === state.sport);
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
@@ -611,14 +710,17 @@
       }
       host.append(emptyWithMascot(liveMode
         ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
-        : (footballMode
-          ? "Футбольная линия пуста.\nМатчи Лиги Чемпионов подтянутся к следующему туру."
-          : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже.")));
+        : (hockeyMode
+          ? "Хоккейная линия пуста.\nМатчи КХЛ и НХЛ подтянутся к следующему игровому дню."
+          : (footballMode
+            ? "Футбольная линия пуста.\nМатчи подтянутся к следующему туру."
+            : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже."))));
       return;
     }
 
     for (const match of list) {
-      host.append(footballMode ? renderFootballCard(match) : renderCard(match));
+      if (hockeyMode) host.append(renderHockeyCard(match));
+      else host.append(footballMode ? renderFootballCard(match) : renderCard(match));
     }
   }
 
@@ -632,6 +734,7 @@
     const byId = new Map();
     for (const match of state.matches) byId.set(match.id, match);
     for (const match of state.football) byId.set(match.id, match);
+    for (const match of state.hockey) byId.set(match.id, match);
     for (const match of state.liveMatches) byId.set(match.id, match);
 
     let changed = false;
@@ -913,7 +1016,11 @@
       ? `${team} · ${oddsText(market.odds)}`
       : (map ? `Карта ${map.number} · ${team}` : team);
     let body;
-    if (market) body = { match_id: match.id, side, market: "football" };
+    if (market) body = {
+      match_id: match.id,
+      side,
+      market: match.sport === "hockey" ? "hockey" : "football",
+    };
     else if (map) body = { match_id: match.id, side, market: "map", map_id: map.id };
     else body = { match_id: match.id, side, market: "match" };
 
@@ -1652,13 +1759,15 @@
       const data = await api("/api/state");
       const liveMatches = data.live || [];
       const football = data.football || [];
-      const matchesJson = JSON.stringify([data.matches, liveMatches, football]);
+      const hockey = data.hockey || [];
+      const matchesJson = JSON.stringify([data.matches, liveMatches, football, hockey]);
       const matchesChanged = matchesJson !== state.matchesJson;
       const balanceBefore = state.user ? state.user.balance : null;
 
       state.user = data.user;
       state.matches = data.matches;
       state.football = football;
+      state.hockey = hockey;
       state.liveMatches = liveMatches;
       state.matchesJson = matchesJson;
       state.bets = data.bets;
@@ -1711,7 +1820,7 @@
       tourBtn.addEventListener("click", () => {
         const source = state.segment === "live"
           ? state.liveMatches
-          : (state.sport === "football" ? state.football : state.matches);
+          : marketSource();
         openTournamentSheet(source.filter((m) => (m.sport || "cs2") === state.sport));
       });
     }

@@ -97,10 +97,16 @@ def _side_label(side: str, team_a: str, team_b: str) -> str:
         return team_b
     if side == "x":
         return "Ничья"
+    from app.services import hockey
     from app.services.football import market_label, parse_side
 
     parsed = parse_side(side)
-    return market_label(parsed[0], parsed[1]) if parsed else side
+    if parsed:
+        return market_label(parsed[0], parsed[1])
+    parsed_hockey = hockey.parse_side(side)
+    if parsed_hockey:
+        return hockey.market_label(parsed_hockey[0], parsed_hockey[1])
+    return side
 
 
 async def notify_bettors(

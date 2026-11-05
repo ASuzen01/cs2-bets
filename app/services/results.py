@@ -41,9 +41,13 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 BASE_URL = "https://prod-cdn-public-api.livescore.com/v1/api/app/date/soccer/{day}/0"
+# тот же фид, другой вид спорта: у хоккея есть счёт по периодам и счёт с овертаймом
+HOCKEY_URL = "https://prod-cdn-public-api.livescore.com/v1/api/app/date/hockey/{day}/0"
+SPORT_URLS = {"soccer": BASE_URL, "hockey": HOCKEY_URL}
 
 # Матч действительно закончен — счёт окончательный.
-FINAL_STATUSES = {"FT", "AET", "AP", "PEN", "AW"}
+# OT — хоккей: игра закончилась в овертайме, счёт уже итоговый.
+FINAL_STATUSES = {"FT", "AET", "AP", "PEN", "AW", "OT", "AOT"}
 # Матч не состоялся (перенесён, отменён, прерван) — ставки возвращаются.
 VOID_STATUSES = {"POSTP.", "CANC.", "ABAND.", "ABD.", "POSTP", "CANC", "ABAND"}
 
@@ -159,8 +163,9 @@ def same_team(left: str, right: str, *, threshold: float = 0.82) -> bool:
 class ResultsClient:
     """Клиент публичного фида результатов (livescore)."""
 
-    def __init__(self, timeout: int = 20) -> None:
+    def __init__(self, timeout: int = 20, sport: str = "soccer") -> None:
         self._timeout = timeout
+        self._sport = sport if sport in SPORT_URLS else "soccer"
         self._session: aiohttp.ClientSession | None = None
         self._cache: dict[str, tuple[float, list[FootballResult]]] = {}
         self._lock = asyncio.Lock()
@@ -181,19 +186,19 @@ class ResultsClient:
 
     async def day(self, day: date, *, ttl: int = 600) -> list[FootballResult]:
         """Все матчи за день; результат кэшируется на `ttl` секунд."""
-        key = day.strftime("%Y%m%d")
+        key = f"{self._sport}:{day.strftime('%Y%m%d')}"
         cached = self._cache.get(key)
         if cached is not None and time.time() - cached[0] < ttl:
             return cached[1]
 
-        url = BASE_URL.format(day=key)
+        url = SPORT_URLS[self._sport].format(day=day.strftime("%Y%m%d"))
         async with self._lock, self.session.get(url) as response:
             response.raise_for_status()
             packet = await response.json(content_type=None)
 
         results = parse_results(packet)
         self._cache[key] = (time.time(), results)
-        log.info("Результаты за %s: %s матчей", key, len(results))
+        log.info("Результаты (%s) за %s: %s матчей", self._sport, day, len(results))
         return results
 
     async def find(
@@ -225,6 +230,10 @@ class ResultsClient:
                         if not pair_matches(name_a, name_b, result.home, result.away):
                             continue
                         delta = abs(float(result.start_ts) - float(start_ts or result.start_ts))
+                        if result.start_ts and int(result.start_ts) % 86400 == 0:
+                            # у хоккея фид отдаёт только дату (время в пакете нулевое):
+                            # сверять минуты не с чем — хватает попадания в тот же день
+                            delta = 0.0
                         if delta < best_delta:
                             best_delta, best = delta, result
         return best
