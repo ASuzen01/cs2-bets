@@ -18,7 +18,7 @@ from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
 from app.services.cs2_settle import settle_from_feed
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
-from app.services.football import FootballMatch, parse_football
+from app.services.football import FootballMatch, is_placeholder_team, parse_football
 from app.services.maps import finish_maps_of_match, settle_map_by_score
 from app.services.notify import notify_bettors
 from app.services.results import FootballResult, ResultsClient
@@ -659,7 +659,11 @@ class MatchSyncer:
         """
         for row in await self.db.stale_matches(settings.stale_match_hours):
             if str(row["sport"]) != "cs2":
+                await self._close_stale_football(row, stats)
                 continue          # у футбола своя логика ожидания результата
+            # факт из фида — самый надёжный исход
+            if await self._settle_cs2_from_feed(row, stats):
+                continue
             # вдруг результат всё-таки известен по картам — тогда считаем, а не отменяем
             winner, series_score = await self._series_from_maps(row)
             if winner is not None:
@@ -696,6 +700,22 @@ class MatchSyncer:
                         log.exception("Не смог вернуть карту #%s", card["id"])
             await self._edit_card(int(row["id"]))
             log.info("Матч #%s завис без результата и без ставок — снят с линии", row["id"])
+
+    async def _close_stale_football(self, row: Any, stats: dict[str, Any]) -> None:
+        """Зависший футбольный матч: реальные ждут фид, «Хозяева — Гости» снимаем."""
+        if not (is_placeholder_team(str(row["team_a"])) or is_placeholder_team(str(row["team_b"]))):
+            return                # настоящий матч ждёт финального счёта из фида
+        try:
+            result = await self.db.cancel_football_match(
+                int(row["id"]), reason="событие без названий команд"
+            )
+        except Exception:
+            log.exception("Не смог снять фейковый матч #%s", row["id"])
+            return
+        stats["cancelled"] = stats.get("cancelled", 0) + 1
+        await notify_bettors(self.bot, self.db, result, void=True)
+        await self._edit_card(int(row["id"]))
+        log.info("Матч #%s без названий команд снят с линии", row["id"])
 
     async def _mark_awaiting(self, row: Any, score: str | None) -> None:
         already = str(row["status"]) == "awaiting"

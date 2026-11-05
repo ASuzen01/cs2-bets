@@ -25,6 +25,21 @@ def _admin_execute(sql: str) -> None:
 
 
 @pytest.fixture(autouse=True)
+def offline_cs2_feed(monkeypatch):
+    """Тесты не ходят в интернет: фид результатов CS2 по умолчанию ничего не знает.
+
+    Тесты, которым нужен фид, подставляют свой клиент (`test_cs2_feed.py`).
+    """
+    from app.services.cs2_results import Cs2ResultsClient
+
+    async def _empty(self, *args, **kwargs):
+        return {"results": []}
+
+    monkeypatch.setattr(Cs2ResultsClient, "_get", _empty)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def database_backend(monkeypatch):
     """Подменяет конструктор Database: SQLite по умолчанию, Postgres по флагу."""
     if not PG_URL:

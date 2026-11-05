@@ -707,11 +707,15 @@ class Database:
         return int(row["c"]) if row else 0
 
     async def stale_matches(self, hours: int) -> list[Any]:
-        """Матчи, которые давно идут (или ждут), а результата так и нет."""
+        """Матчи, которые давно идут (или ждут), а результата так и нет.
+
+        `open` тоже здесь: событие могло пропасть из линии сразу после старта, и
+        тогда приём ставок никто не закрыл — такой матч нельзя оставлять в линии.
+        """
         threshold = int(time.time()) - hours * 3600
         return await self._fetchall(
-            "SELECT * FROM matches WHERE status IN ('live', 'awaiting') AND start_time < ? "
-            "ORDER BY start_time",
+            "SELECT * FROM matches WHERE status IN ('open', 'live', 'awaiting') "
+            "AND start_time < ? ORDER BY start_time",
             (threshold,),
         )
 
