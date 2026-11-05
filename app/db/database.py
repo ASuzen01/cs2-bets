@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -77,6 +78,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "tease_claims",
     "casino_bets",
     "ladder_games",
+    "blackjack_games",
     "quests",
     "quest_chain",
     "achievements",
@@ -106,6 +108,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("tease_claims", "user_id"),
     ("casino_bets", "user_id"),
     ("ladder_games", "user_id"),
+    ("blackjack_games", "user_id"),
     ("achievements", "user_id"),
     ("quest_chain", "user_id"),
     ("referrals", "invited_id"),
@@ -1289,6 +1292,207 @@ class Database:
             round_id = int(inserted.lastrowid or 0)
             await self._remember_token(conn, user_id, "casino", tap, round_id)
             return await self._balance_in(conn, user_id), round_id
+
+    @staticmethod
+    def _blackjack_payload(game_id: int, state: dict[str, Any], balance: int) -> dict[str, Any]:
+        from app.services.blackjack import public_state
+
+        return public_state(game_id, state, balance)
+
+    async def blackjack_state(self, user_id: int) -> dict[str, Any] | None:
+        """Последняя партия. Закрытая карта и shoe отдаются только в серверный слой."""
+        row = await self._fetchone(
+            "SELECT id, state_json FROM blackjack_games WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        )
+        if row is None:
+            return None
+        state = json.loads(str(row["state_json"]))
+        return self._blackjack_payload(
+            int(row["id"]), state, await self.get_balance(user_id)
+        )
+
+    async def _record_blackjack_settlement(
+        self, conn: Any, user_id: int, state: dict[str, Any], now: int
+    ) -> None:
+        payout = int(state["payout"])
+        total_wagered = int(state["total_wagered"])
+        if payout:
+            await conn.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
+            )
+            await self._ledger(conn, user_id, payout, "выплата · Блэкджек", now)
+        result = state.get("result") or {}
+        label = str(result.get("label") or "Раунд завершён")
+        await conn.execute(
+            """
+            INSERT INTO casino_bets
+                (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+            VALUES (?, 'blackjack', 'classic', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                "Блэкджек",
+                total_wagered,
+                payout / total_wagered if total_wagered else 0,
+                label,
+                1 if payout > total_wagered else 0,
+                payout,
+                now,
+            ),
+        )
+        await self._bump_quest(conn, user_id, "casino", now)
+
+    async def start_blackjack(
+        self, user_id: int, stake: int, state: dict[str, Any], token: str | None = None
+    ) -> dict[str, Any]:
+        """Списывает основную ставку и атомарно сохраняет новую раздачу."""
+        from app.services import blackjack
+
+        if stake <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+        now = int(time.time())
+        state["created_at"] = now
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "blackjack-start", tap, now)
+            if duplicate is not None:
+                previous = duplicate or await self._previous_id(
+                    conn, user_id, "blackjack-start", tap
+                )
+                if previous:
+                    row = await (await conn.execute(
+                        "SELECT id, state_json FROM blackjack_games WHERE id = ? AND user_id = ?",
+                        (previous, user_id),
+                    )).fetchone()
+                    if row is not None:
+                        saved = json.loads(str(row["state_json"]))
+                        return self._blackjack_payload(
+                            int(row["id"]), saved, await self._balance_in(conn, user_id)
+                        )
+            async with conn.execute(
+                "SELECT id, state_json FROM blackjack_games WHERE user_id = ? "
+                "AND status IN ('insurance', 'playing') ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ) as cur:
+                active = await cur.fetchone()
+            if active is not None:
+                active_id = int(active["id"])
+                saved = json.loads(str(active["state_json"]))
+                if tap:
+                    await self._remember_token(conn, user_id, "blackjack-start", tap, active_id)
+                return self._blackjack_payload(
+                    active_id, saved, await self._balance_in(conn, user_id)
+                )
+            debit = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (stake, user_id, stake),
+            )
+            if debit.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+            await self._ledger(conn, user_id, -stake, "ставка · Блэкджек · раздача", now)
+            encoded = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+            created = await conn.execute(
+                """
+                INSERT INTO blackjack_games
+                    (user_id, stake, status, state_json, payout, created_at, updated_at, settled_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                """,
+                (
+                    user_id,
+                    stake,
+                    str(state["status"]),
+                    encoded,
+                    int(state["payout"]),
+                    now,
+                    now,
+                    now if state["status"] == "settled" else None,
+                ),
+            )
+            created_row = await created.fetchone()
+            game_id = int(created_row["id"]) if created_row else int(created.lastrowid or 0)
+            if state["status"] == "settled":
+                await self._record_blackjack_settlement(conn, user_id, state, now)
+            if tap:
+                await self._remember_token(conn, user_id, "blackjack-start", tap, game_id)
+            balance = await self._balance_in(conn, user_id)
+        return blackjack.public_state(game_id, state, balance)
+
+    async def blackjack_action(
+        self,
+        user_id: int,
+        game_id: int,
+        action: str,
+        token: str | None = None,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Атомарно применяет ход; повтор того же token не может взять вторую карту."""
+        from app.services import blackjack
+
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM blackjack_games WHERE id = ? AND user_id = ?",
+                (game_id, user_id),
+            ) as cur:
+                game = await cur.fetchone()
+            if game is None:
+                raise InvalidBet("Раздача не найдена")
+            channel = f"blackjack-action-{game_id}"
+            state = json.loads(str(game["state_json"]))
+            if str(game["status"]) == "settled":
+                balance = await self._balance_in(conn, user_id)
+                return {
+                    "game": blackjack.public_state(game_id, state, balance),
+                    "balance": balance,
+                }
+            duplicate = await self._claim_token(conn, user_id, channel, tap, now)
+            if duplicate is not None:
+                balance = await self._balance_in(conn, user_id)
+                return {
+                    "game": blackjack.public_state(game_id, state, balance),
+                    "balance": balance,
+                }
+            if expected_revision is not None and int(state.get("revision", 0)) != expected_revision:
+                raise InvalidBet("Раздача уже обновилась — посмотри на новые карты и выбери ход ещё раз")
+            try:
+                extra = blackjack.apply_action(state, action)
+            except ValueError as exc:
+                raise InvalidBet(str(exc)) from exc
+            if extra:
+                debited = await conn.execute(
+                    "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                    (extra, user_id, extra),
+                )
+                if debited.rowcount == 0:
+                    raise InsufficientFunds("Не хватает монет на удвоение, сплит или страховку")
+                reason = {
+                    "double": "удвоение",
+                    "split": "сплит",
+                    "insurance": "страховка",
+                }.get(action, action)
+                await self._ledger(conn, user_id, -extra, f"ставка · Блэкджек · {reason}", now)
+            status = str(state["status"])
+            if status == "settled":
+                await self._record_blackjack_settlement(conn, user_id, state, now)
+            await conn.execute(
+                """UPDATE blackjack_games SET status = ?, state_json = ?, payout = ?,
+                   updated_at = ?, settled_at = ? WHERE id = ? AND user_id = ?""",
+                (
+                    status,
+                    json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                    int(state["payout"]),
+                    now,
+                    now if status == "settled" else None,
+                    game_id,
+                    user_id,
+                ),
+            )
+            if tap:
+                await self._remember_token(conn, user_id, channel, tap, game_id)
+            balance = await self._balance_in(conn, user_id)
+        return {"game": blackjack.public_state(game_id, state, balance), "balance": balance}
 
     async def ladder_state(self, user_id: int) -> dict[str, Any] | None:
         """Последняя партия: текущую дверь никогда не раскрываем до выбора игрока."""

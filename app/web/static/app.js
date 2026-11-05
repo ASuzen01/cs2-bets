@@ -52,6 +52,10 @@
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
     // ---------------------------------------------------------------- игры
     casino: null,             // роспись игр, сводка и история (из /api/state)
+    blackjack: null,          // последняя серверная раздача блэкджека
+    blackjackStake: 50,
+    blackjackBusy: false,
+    blackjackTyping: false,
     ladder: null,             // последняя партия в «Лесенку»
     ladderStake: 10,
     ladderBusy: false,
@@ -3143,6 +3147,7 @@
       state.achievements = data.achievements || state.achievements;
       state.tickets = Array.isArray(data.tickets) ? data.tickets : (state.tickets || []);
       state.casino = data.casino || state.casino;
+      state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
@@ -3161,7 +3166,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -3641,13 +3646,17 @@
       return host;
     }
     rows.slice(0, 8).forEach((row) => {
-      const line = el("div", "row " + (row.win ? "win" : "lose"));
+      const net = Number(row.payout) - Number(row.amount);
+      const line = el("div", "row " + (net > 0 ? "win" : net < 0 ? "lose" : "push"));
       const who = el("div", "who");
       who.append(document.createTextNode(row.label));
-      who.append(el("i", null, row.game === "roulette" ? "рулетка" : row.game === "ladder" ? "лесенка" : "кости"));
-      const tagText = row.game === "roulette" ? "№ " + row.outcome : row.game === "ladder" ? row.outcome : "сумма " + row.outcome;
+      who.append(el("i", null, row.game === "roulette" ? "рулетка"
+        : row.game === "ladder" ? "лесенка"
+          : row.game === "blackjack" ? "блэкджек" : "кости"));
+      const tagText = row.game === "roulette" ? "№ " + row.outcome
+        : row.game === "ladder" || row.game === "blackjack" ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
-      const res = el("div", "res", row.win ? "+" + money(row.payout - row.amount) : "−" + money(row.amount));
+      const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
       line.append(who, tag, res);
       host.append(line);
     });
@@ -3812,6 +3821,225 @@
     host.append(card);
   }
 
+  function blackjackCardNode(card) {
+    const node = el("div", "bj-card" + (card.hidden ? " hidden" : "") +
+      (card.suit === "♥" || card.suit === "♦" ? " red" : ""));
+    if (card.hidden) {
+      node.setAttribute("aria-label", "Закрытая карта");
+      node.append(el("span", "bj-back", "✦"));
+      return node;
+    }
+    node.setAttribute("aria-label", `${card.rank} ${card.suit}`);
+    node.append(el("b", "bj-rank", card.rank), el("span", "bj-suit", card.suit));
+    return node;
+  }
+
+  function blackjackStakeBlock() {
+    const { min, max } = casinoLimits();
+    const available = Math.max(min, Math.min(max, balance()));
+    const initial = clampStake(state.blackjackStake || min, min, available);
+    state.blackjackStake = initial;
+    const block = el("div", "stake-block bj-stake-block");
+    block.append(el("div", "bj-stake-label", "Ставка на раздачу"));
+    const presets = el("div", "stake-presets");
+    const values = pickPresets(min, available, 4);
+    if (available > values[values.length - 1]) values.push(available);
+    values.forEach((value) => {
+      const chip = el("button", "stake-chip" + (value === initial ? " active" : ""),
+        value === available && value > values[0] && value > min * 50 ? "Всё" : money(value));
+      chip.type = "button";
+      chip.dataset.blackjackStake = String(value);
+      presets.append(chip);
+    });
+    presets.style.gridTemplateColumns = `repeat(${values.length}, minmax(0, 1fr))`;
+
+    const input = el("input", "stake-input");
+    input.id = "blackjackStakeInput";
+    input.type = "number";
+    input.inputMode = "numeric";
+    input.min = String(min);
+    input.max = String(max);
+    input.value = String(initial);
+    input.setAttribute("aria-label", "Сумма ставки в блэкджеке");
+    const start = el("button", "btn play bj-start", "");
+    start.type = "button";
+    const update = () => {
+      const amount = Math.round(Number(input.value) || 0);
+      state.blackjackStake = amount;
+      presets.querySelectorAll(".stake-chip").forEach((chip) => {
+        chip.classList.toggle("active", Number(chip.dataset.blackjackStake) === amount);
+      });
+      const valid = amount >= min && amount <= max && amount <= balance();
+      start.disabled = state.blackjackBusy || !valid;
+      start.textContent = amount > balance() ? "Не хватает монет" : `Раздать карты · ${money(amount || min)}`;
+    };
+    values.forEach((value) => {
+      const chip = presets.querySelector(`[data-blackjack-stake="${value}"]`);
+      chip.addEventListener("click", () => { input.value = String(value); update(); });
+    });
+    input.addEventListener("focus", () => { state.blackjackTyping = true; });
+    input.addEventListener("input", update);
+    input.addEventListener("blur", () => { state.blackjackTyping = false; });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+    });
+    start.addEventListener("click", () => startBlackjack(Number(input.value)));
+    block.append(presets, input, start);
+    update();
+    return block;
+  }
+
+  function renderBlackjack(host) {
+    host.textContent = "";
+    const game = state.blackjack;
+    const table = el("div", "blackjack-table");
+    const heading = el("div", "bj-heading");
+    heading.append(el("div", "bj-kicker", "КЛАССИЧЕСКАЯ ИГРА 21"));
+    heading.append(el("h2", null, "Блэкджек"));
+    heading.append(el("div", "bj-rules-line", "Натуральный blackjack — 3:2 · дилер стоит на 17"));
+    table.append(heading);
+
+    const showCards = game && (game.status === "insurance" || game.status === "playing" || game.status === "settled");
+    if (showCards) {
+      const dealer = el("section", "bj-dealer");
+      const dealerHead = el("div", "bj-seat-head");
+      dealerHead.append(el("b", null, "Дилер"));
+      dealerHead.append(el("span", null, game.dealer.hidden ? "закрытая карта" : `${game.dealer.total}${game.dealer.soft ? " · мягкая" : ""}`));
+      dealer.append(dealerHead);
+      const dealerCards = el("div", "bj-cards");
+      game.dealer.cards.forEach((card) => dealerCards.append(blackjackCardNode(card)));
+      dealer.append(dealerCards);
+      table.append(dealer);
+
+      const players = el("section", "bj-player-hands");
+      game.hands.forEach((hand, index) => {
+        const card = el("div", "bj-hand" + (hand.active ? " active" : "") + (hand.busted ? " busted" : ""));
+        const handHead = el("div", "bj-seat-head");
+        const label = game.hands.length > 1 ? `Рука ${index + 1}` : "Твои карты";
+        handHead.append(el("b", null, `${label} · ${money(hand.bet)}`));
+        const status = hand.active ? "твой ход" : hand.result || (hand.stood ? "остановился" : hand.busted ? "перебор" : "");
+        handHead.append(el("span", null, status));
+        card.append(handHead);
+        const cards = el("div", "bj-cards");
+        hand.cards.forEach((item) => cards.append(blackjackCardNode(item)));
+        card.append(cards);
+        const total = el("div", "bj-total", `${hand.total}${hand.soft && hand.total <= 21 ? " · мягкая рука" : ""}`);
+        card.append(total);
+        players.append(card);
+      });
+      table.append(players);
+    }
+
+    if (game && game.status === "insurance") {
+      const insurance = el("div", "bj-insurance");
+      insurance.append(el("b", null, "Дилер показывает туза"));
+      insurance.append(el("span", null,
+        `Страховка ${money(game.insurance.amount)} · при блэкджеке вернётся ${money(game.insurance.amount * 3)}.`));
+      const choices = el("div", "bj-actions");
+      const take = el("button", "btn", `Застраховаться · ${money(game.insurance.amount)}`);
+      take.type = "button";
+      take.disabled = state.blackjackBusy || !game.insurance.can_take;
+      take.addEventListener("click", () => blackjackAction("insurance"));
+      const decline = el("button", "btn ghost", "Играть без страховки");
+      decline.type = "button";
+      decline.disabled = state.blackjackBusy;
+      decline.addEventListener("click", () => blackjackAction("decline_insurance"));
+      choices.append(take, decline);
+      insurance.append(choices);
+      if (!game.insurance.can_take) insurance.append(el("small", null, "Не хватает монет на страховку — можно продолжить без неё."));
+      table.append(insurance);
+    } else if (game && game.status === "playing") {
+      const hand = game.hands[game.active_hand];
+      const actions = el("div", "bj-actions");
+      [
+        ["hit", "Взять карту", hand && hand.can_hit],
+        ["stand", "Остановиться", hand && hand.can_stand],
+        ["double", `Удвоить · ${money(hand ? hand.bet : 0)}`, hand && hand.can_double],
+        ["split", `Разделить · ${money(hand ? hand.bet : 0)}`, hand && hand.can_split],
+      ].forEach(([action, label, enabled]) => {
+        const button = el("button", "btn" + (action === "hit" ? " play" : " ghost"), label);
+        button.type = "button";
+        button.disabled = state.blackjackBusy || !enabled;
+        button.addEventListener("click", () => blackjackAction(action));
+        actions.append(button);
+      });
+      table.append(actions);
+      if (hand && hand.split_aces) table.append(el("div", "bj-note", "После разделения тузов раздаётся по одной карте, затем руки останавливаются."));
+    }
+
+    if (game && game.status === "settled" && game.result) {
+      const result = el("div", "bj-result " + (game.result.net > 0 ? "positive" : game.result.net < 0 ? "negative" : "even"));
+      result.append(el("b", null, game.result.label));
+      const netText = `${game.result.net > 0 ? "+" : game.result.net < 0 ? "−" : ""}${money(Math.abs(game.result.net))}`;
+      result.append(el("span", null, `Выплата ${money(game.result.payout)} · чистая прибыль ${netText}`));
+      if (game.insurance.taken) {
+        result.append(el("small", null, `Страховка ${money(game.insurance.taken)} · выплата ${money(game.insurance.payout)}`));
+      }
+      table.append(result);
+    }
+
+    if (!game || game.status === "settled") {
+      const startBox = el("div", "bj-start-box");
+      startBox.append(el("p", null, game ? "Раздача завершена — сыграем ещё?" : "Выбери ставку и начни раздачу."));
+      startBox.append(blackjackStakeBlock());
+      table.append(startBox);
+    }
+    const footer = el("div", "bj-footnote",
+      "Обычная победа приносит чистую прибыль 1:1, ничья возвращает ставку; натуральный блэкджек — 3:2. " +
+      "Дилер стоит на любой 17. Удвоение доступно на первых двух картах; сплит одинаковых рангов — до 4 рук. " +
+      "Тузы нельзя делить повторно, после сплита тузов выдаётся по одной карте. Страховка против туза стоит " +
+      "блэкджеке дилера возвращает 3× сумму страховки.");
+    table.append(footer);
+    host.append(table, summaryNode(), historyNode());
+  }
+
+  async function startBlackjack(amount) {
+    if (state.blackjackBusy) return;
+    const { min, max } = casinoLimits();
+    if (amount < min || amount > max) { toast(`Ставка — от ${money(min)} до ${money(max)}`, "bad"); return; }
+    if (amount > balance()) { toast("Недостаточно монет на балансе", "bad"); return; }
+    state.blackjackBusy = true;
+    renderGames();
+    try {
+      const data = await api("/api/blackjack/start", {
+        method: "POST", body: { amount, token: newToken() },
+      });
+      state.blackjack = data.game;
+      setBalance(data.balance);
+      haptic("light");
+      await refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      state.blackjackBusy = false;
+      renderGames();
+    }
+  }
+
+  async function blackjackAction(action) {
+    if (state.blackjackBusy || !state.blackjack) return;
+    const gameId = state.blackjack.id;
+    state.blackjackBusy = true;
+    renderGames();
+    try {
+      const data = await api("/api/blackjack/action", {
+        method: "POST", body: {
+          game_id: gameId, action, revision: state.blackjack.revision, token: newToken(),
+        },
+      });
+      state.blackjack = data.game;
+      setBalance(data.balance);
+      haptic(data.game.status === "settled" ? "ok" : "light");
+      if (data.game.status === "settled") await refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+      await refreshState({ silent: true });
+    } finally {
+      state.blackjackBusy = false;
+      renderGames();
+    }
+  }
+
   function renderGames() {
     const host = $("#games");
     if (!host) return;
@@ -3829,6 +4057,10 @@
     }
     if (state.game === "ladder") {
       renderLadder(host);
+      return;
+    }
+    if (state.game === "blackjack") {
+      renderBlackjack(host);
       return;
     }
     if (!state.casino) {
@@ -4092,7 +4324,7 @@
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy || state.ladderBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");

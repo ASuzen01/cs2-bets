@@ -23,6 +23,7 @@ from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
 from app.services import achievements, games
+from app.services import blackjack as blackjack_game
 from app.services import ladder as ladder_game
 from app.services.bonus import (
     TEASE_PRIZE,
@@ -100,6 +101,8 @@ def register_routes(
     app.router.add_get("/api/bets", api_bets)
     app.router.add_get("/api/casino", api_casino_state)
     app.router.add_post("/api/casino/play", api_casino_play)
+    app.router.add_post("/api/blackjack/start", api_blackjack_start)
+    app.router.add_post("/api/blackjack/action", api_blackjack_action)
     app.router.add_post("/api/ladder/start", api_ladder_start)
     app.router.add_post("/api/ladder/pick", api_ladder_pick)
     app.router.add_post("/api/ladder/continue", api_ladder_continue)
@@ -290,6 +293,7 @@ async def api_state(request: web.Request) -> web.Response:
                 for row in await db.tickets(user_id)
             ],
             "casino": await _casino_payload(db, user_id),
+            "blackjack": await db.blackjack_state(user_id),
             "ladder": await db.ladder_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
@@ -1004,6 +1008,47 @@ async def api_casino_play(request: web.Request) -> web.Response:
 
     await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
     return web.json_response({"ok": True, "round": round_id, "balance": balance, **result})
+
+
+async def api_blackjack_start(request: web.Request) -> web.Response:
+    """Начинает серверную раздачу классического блэкджека."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    amount = _as_int(body.get("amount"))
+    if amount < settings.min_bet:
+        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
+    if amount > CASINO_MAX_BET:
+        return _bad(f"Максимальная ставка — {CASINO_MAX_BET} 🪙")
+    metrics.count_casino()
+    try:
+        state = blackjack_game.new_game(amount)
+        game = await db.start_blackjack(user_id, amount, state, body.get("token"))
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_blackjack_action(request: web.Request) -> web.Response:
+    """Исполняет hit/stand/double/split/insurance только на сервере."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    action = str(body.get("action") or "").strip().lower()
+    token = body.get("token")
+    revision = _as_int(body.get("revision"))
+    if game_id <= 0:
+        return _bad("Раздача не найдена")
+    try:
+        result = await db.blackjack_action(user_id, game_id, action, token, revision)
+    except InsufficientFunds as exc:
+        return _bad(str(exc))
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, **result})
 
 
 async def api_ladder_start(request: web.Request) -> web.Response:

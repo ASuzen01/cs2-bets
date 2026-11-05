@@ -186,6 +186,22 @@ CREATE INDEX IF NOT EXISTS idx_ladder_user ON ladder_games(user_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ladder_one_active ON ladder_games(user_id)
     WHERE status IN ('choosing', 'won');
 
+-- блэкджек: shoe и закрытая карта дилера доступны только серверу
+CREATE TABLE IF NOT EXISTS blackjack_games (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    stake      INTEGER NOT NULL,
+    status     TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    payout     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    settled_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_blackjack_user ON blackjack_games(user_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_blackjack_one_active ON blackjack_games(user_id)
+    WHERE status IN ('insurance', 'playing');
+
 -- задания дня: прогресс и награда, по строке на игрока в сутки
 CREATE TABLE IF NOT EXISTS quests (
     user_id    INTEGER NOT NULL,
