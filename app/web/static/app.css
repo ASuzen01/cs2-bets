@@ -53,42 +53,47 @@
   .seg.active{background:var(--card2);color:var(--text);box-shadow:0 1px 0 rgba(255,255,255,.04) inset}
   #screen-games.catalog-mode{margin:-14px -14px 0;padding:22px 14px 28px;min-height:calc(100svh - 132px);
     color:var(--text);background:var(--bg)}
-  .game-catalog-head{padding:0 3px 15px}
-  .game-catalog-eyebrow{color:#d34e80;font-size:10px;letter-spacing:.18em;font-weight:900}
-  .game-catalog-head h1{margin:1px 0 0;color:var(--text);font-size:25px;line-height:1.15;letter-spacing:-.03em}
+  .game-catalog-head{padding:0 3px 18px}
+  .game-catalog-eyebrow{display:flex;align-items:center;gap:7px;color:#d8bd7a;font-size:10px;letter-spacing:.17em;font-weight:900}
+  .game-catalog-eyebrow>span:last-child{color:#8090a4;letter-spacing:.08em}
+  .catalog-live-dot{width:7px;height:7px;border-radius:50%;background:#59d6ac;box-shadow:0 0 10px rgba(89,214,172,.7)}
+  .game-catalog-head h1{margin:4px 0 0;color:var(--text);font-size:28px;line-height:1.12;letter-spacing:-.035em}
+  .game-catalog-head p{margin:6px 0 0;color:var(--muted);font-size:13px}
   .game-menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px}
   .game-menu[hidden]{display:none}
   .game-back{width:auto;min-height:38px;padding:9px 13px;margin:0 0 12px}
-  .game-tile{position:relative;display:block;overflow:hidden;width:100%;min-width:0;min-height:0;aspect-ratio:.79;
-    padding:0;border:7px solid #fff;border-radius:27px;background:#292437;color:#fff;text-align:left;
-    box-shadow:0 5px 14px rgba(103,70,65,.13);isolation:isolate;
-    transition:transform .16s,box-shadow .16s,border-color .16s}
-  .game-tile:active{transform:scale(.975);box-shadow:0 2px 7px rgba(103,70,65,.16)}
-  .game-tile:focus-visible{outline:3px solid #d34e80;outline-offset:3px}
-  .game-tile.active{border-color:#fff;box-shadow:0 0 0 2px #d34e80,0 5px 14px rgba(103,70,65,.13)}
-  .game-tile-art{position:absolute;inset:0;display:grid;place-items:center;padding:32px 4px 24px;border-radius:18px}
-  .game-tile-art svg{display:block;width:100%;height:100%;overflow:visible}
-  .game-tile-title{position:absolute;z-index:1;top:13px;left:13px;right:10px;
-    color:#ff6b99;font-size:clamp(13px,4.1vw,19px);line-height:1.04;font-weight:950;
-    letter-spacing:.025em;text-transform:uppercase;text-shadow:0 1px 1px rgba(0,0,0,.08)}
-  .game-tile-description{position:absolute;z-index:1;right:9px;bottom:8px;left:9px;display:block;
-    padding:5px 7px;border-radius:9px;background:rgba(16,20,34,.58);color:#fff;font-size:10px;
-    line-height:1.2;font-weight:700;backdrop-filter:blur(4px)}
-  .game-tile[data-game="roulette"] .game-tile-art{background:radial-gradient(circle at 53% 58%,#4c2745,#211d31 70%)}
-  .game-tile[data-game="dice"] .game-tile-art{background:linear-gradient(145deg,#fff2df,#ffc7bd)}
-  .game-tile[data-game="dice"] .game-tile-title{color:#d34e80}
-  .game-tile[data-game="ladder"] .game-tile-art{background:radial-gradient(circle at 50% 55%,#313c66,#151b2b 72%)}
-  .game-tile[data-game="ladder"] .game-tile-title{color:#ffd34f}
-  .game-tile[data-game="blackjack"] .game-tile-art{background:linear-gradient(145deg,#d9f4f1,#a6dce8)}
-  .game-tile[data-game="blackjack"] .game-tile-title{color:#138e9c}
-  .game-tile[data-game="blackjack"] .game-tile-description{background:rgba(20,94,106,.72)}
+  .game-tile{--game-accent:#e8c36c;position:relative;display:block;overflow:hidden;width:100%;min-width:0;min-height:0;
+    aspect-ratio:.83;padding:0;border:1px solid #2a3748;border-radius:23px;background:#151e29;color:#fff;text-align:left;
+    box-shadow:0 8px 22px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.035);isolation:isolate;
+    transition:transform .18s,border-color .18s,box-shadow .18s}
+  .game-tile::before{content:"";position:absolute;z-index:1;inset:0;pointer-events:none;
+    background:linear-gradient(180deg,rgba(8,12,20,0) 38%,rgba(8,12,20,.22) 57%,#111923 100%)}
+  .game-tile:active{transform:scale(.975);border-color:var(--game-accent)}
+  .game-tile:focus-visible{outline:2px solid var(--game-accent);outline-offset:3px}
+  .game-tile.active{border-color:var(--game-accent);box-shadow:0 0 0 1px var(--game-accent),0 8px 22px rgba(0,0,0,.2)}
+  .game-tile-art{position:absolute;inset:0;display:grid;place-items:center;padding:7px 7px 34px;border-radius:22px;
+    background:radial-gradient(ellipse at 50% 38%,rgba(79,105,137,.22),rgba(17,24,35,0) 68%)}
+  .game-tile-art svg{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 9px 13px rgba(0,0,0,.3))}
+  .game-tile-title{position:absolute;z-index:2;left:14px;right:46px;bottom:39px;color:#f3f5f8;
+    font-size:clamp(15px,4.4vw,19px);line-height:1.05;font-weight:850;letter-spacing:-.015em}
+  .game-tile-description{position:absolute;z-index:2;left:14px;right:40px;bottom:16px;display:block;padding:0;
+    background:none;color:#93a2b4;font-size:10.5px;line-height:1.2;font-weight:600}
+  .game-tile-arrow{position:absolute;z-index:2;right:12px;bottom:14px;display:grid;place-items:center;width:29px;height:29px;
+    border:1px solid rgba(255,255,255,.1);border-radius:50%;background:rgba(255,255,255,.06);color:var(--game-accent);
+    font-size:16px;font-weight:800;transition:transform .18s,background .18s}
+  .game-tile:active .game-tile-arrow{transform:translate(2px,-2px);background:rgba(255,255,255,.12)}
+  .game-tile[data-game="roulette"]{--game-accent:#edc96d;background:radial-gradient(ellipse at 50% 35%,#263848,#151c27 70%)}
+  .game-tile[data-game="dice"]{--game-accent:#f0aa68;background:radial-gradient(ellipse at 50% 35%,#3d3141,#171c29 72%)}
+  .game-tile[data-game="ladder"]{--game-accent:#b29aff;background:radial-gradient(ellipse at 50% 35%,#343252,#171c29 72%)}
+  .game-tile[data-game="blackjack"]{--game-accent:#77d4b3;background:radial-gradient(ellipse at 50% 35%,#25433f,#151e29 72%)}
   @media (max-width:360px){
     #screen-games.catalog-mode{margin:-12px -12px 0;padding:18px 12px 24px}
     .game-menu{gap:9px}
-    .game-tile{border-width:5px;border-radius:23px}
-    .game-tile-art{border-radius:17px}
-    .game-tile-title{top:11px;left:10px;right:8px;font-size:13px}
-    .game-tile-description{font-size:9px;padding:4px 5px}
+    .game-tile{aspect-ratio:.85;border-radius:20px}
+    .game-tile-art{border-radius:19px;padding-bottom:30px}
+    .game-tile-title{left:11px;bottom:36px;font-size:14px}
+    .game-tile-description{left:11px;bottom:14px;font-size:9px}
+    .game-tile-arrow{right:9px;bottom:10px;width:26px;height:26px}
     .bets-main-tabs .seg{gap:3px;padding:9px 3px;font-size:11.5px}
     .bets-main-count{min-width:17px;padding:1px 4px;font-size:10px}
   }
