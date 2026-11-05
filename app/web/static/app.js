@@ -78,7 +78,9 @@
   const minBet = () => Math.max(1, Number((state.limits && state.limits.min_bet) || 10));
   const jackpot = () => Number((state.bonus && state.bonus.wheel && state.bonus.wheel.jackpot) || 0);
   // кнопка не должна предлагать действие, которое сервер всё равно отклонит
-  const canBet = () => Boolean(state.user) && balance() >= minBet();
+  // ставить можно и с пустым балансом, если есть живой фрибет
+  const freebetOf = () => (state.tickets || []).find((item) => item.kind === "single") || null;
+  const canBet = () => Boolean(state.user) && (balance() >= minBet() || Boolean(freebetOf()));
 
   // метка тапа: одинаковый токен в повторном запросе = одна и та же ставка
   function newToken() {
@@ -1175,6 +1177,23 @@
     }
   }
 
+  // «· ещё 5 ч 12 мин» — чтобы фрибет не сгорел незаметно
+  function ticketLeft(ticket) {
+    if (!ticket || !ticket.expires_at) return "";
+    const left = Number(ticket.expires_at) - Math.floor(Date.now() / 1000);
+    if (left <= 0) return " · истёк";
+    return ` · ещё ${waitText(left)}`;
+  }
+
+  // Обновляем остаток срока прямо в профиле, пока приложение открыто.
+  window.setInterval(() => {
+    document.querySelectorAll(".ticket-time[data-expires]").forEach((node) => {
+      const expires = Number(node.dataset.expires || 0);
+      const left = expires - Math.floor(Date.now() / 1000);
+      node.textContent = left <= 0 ? " · истёк" : ` · ещё ${waitText(left)}`;
+    });
+  }, 60_000);
+
   function dayLabel(ts) {
     const d = new Date(ts * 1000);
     const now = new Date();
@@ -1363,15 +1382,23 @@
     kv("Экспрессов в игре", String(state.expresses.length));
     host.append(card);
 
-    // билеты с колеса: видно, что они есть и на что их тратить
+    // билеты и фрибеты: видно, что они есть, на что их тратить и когда сгорят
     const tickets = state.tickets || [];
-    if (tickets.length) {
-      const row = el("div", "tickets-row");
-      row.append(document.createTextNode("🎫 Билет в экспресс: "));
-      row.append(el("b", null, tickets.map((item) => money(item.amount)).join(" · ")));
-      row.append(document.createTextNode(" — оплати им экспресс"));
+    tickets.forEach((ticket) => {
+      const single = ticket.kind === "single";
+      const row = el("div", "tickets-row" + (single ? " freebet" : ""));
+      row.append(document.createTextNode(
+        single ? "🎟 Фрибет: " : "🎫 Билет в экспресс: "));
+      row.append(el("b", null, money(ticket.amount)));
+      row.append(document.createTextNode(
+        single ? " — поставь на любой ординар" : " — оплати им экспресс"));
+      if (single && ticket.expires_at) {
+        const timer = el("span", "ticket-time", ticketLeft(ticket));
+        timer.dataset.expires = String(ticket.expires_at);
+        row.append(timer);
+      }
       host.append(row);
-    }
+    });
 
     // серия дней: она же умножает ежедневный бонус — пусть игрок это видит
     const daily = (state.bonus && state.bonus.daily) || null;
@@ -1649,25 +1676,61 @@
       sheet.append(el("div", "sub",
         `${match.short_tournament} · ${team} · кэф ${oddsText(odd)} · ${timeText(match.start_time)}`));
 
-      const picker = stakePicker(sheet, { odds: odd, cap: balance() });
+      // фрибет за возвращение: ставим его на любой ординар
+      const freebet = freebetOf();
+      let betByTicket = false;
+      let ticketBtn = null;
+      if (freebet) {
+        ticketBtn = el("button", "btn ghost ticketbtn",
+          `🎟 Поставить фрибетом · ${money(freebet.amount)}${ticketLeft(freebet)}`);
+        ticketBtn.type = "button";
+        ticketBtn.addEventListener("click", () => {
+          if (freebet.expires_at && Number(freebet.expires_at) <= Math.floor(Date.now() / 1000)) {
+            toast("Срок действия фрибета истёк", "bad");
+            refreshState();
+            return;
+          }
+          betByTicket = !betByTicket;
+          ticketBtn.classList.toggle("on", betByTicket);
+          ticketBtn.textContent = betByTicket
+            ? `✓ Ставка фрибетом · ${money(freebet.amount)}`
+            : `🎟 Поставить фрибетом · ${money(freebet.amount)}${ticketLeft(freebet)}`;
+          if (betByTicket) picker.set(freebet.amount);
+          else picker.set(Math.min(Number(freebet.amount), balance()));
+          picker.paint();
+          haptic("light");
+        });
+        sheet.append(ticketBtn);
+      }
+
+      // с фрибетом потолок — его номинал, даже если на балансе пусто
+      const cap = Math.max(balance(), freebet ? Number(freebet.amount) : 0);
+      const picker = stakePicker(sheet, { odds: odd, cap });
 
       const place = el("button", "btn", "Поставить");
       place.type = "button";
       place.addEventListener("click", async () => {
         const amount = picker.value();
-        if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
-        if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
+        if (betByTicket) {
+          // сумма зафиксирована номиналом фрибета — монеты не проверяем
+        } else {
+          if (amount < state.limits.min_bet) { toast(`Минимум ${money(state.limits.min_bet)}`, "bad"); return; }
+          if (amount > balance()) { toast("Не хватает монет", "bad"); return; }
+        }
         place.disabled = true;
         place.textContent = "Отправляю…";
         try {
-          const data = await api("/api/bet", {
-            method: "POST",
-            body: Object.assign({}, body, { amount, token }),
-          });
+          const payload = Object.assign({}, body, { amount, token });
+          if (betByTicket && freebet) payload.ticket_id = freebet.id;
+          const data = await api("/api/bet", { method: "POST", body: payload });
           setBalance(data.balance);
+          if (betByTicket && freebet) {
+            state.tickets = (state.tickets || []).filter((item) => item.id !== freebet.id);
+          }
           closeSheet();
           haptic("ok");
-          toast(`Ставка принята · кэф ${oddsText(data.odds)} · выигрыш ${money(data.potential)}`, "ok");
+          toast(`Ставка принята · кэф ${oddsText(data.odds)} · выигрыш ${money(data.potential)}` +
+            (betByTicket ? " · по фрибету" : ""), "ok");
           refreshState();
           loadBets();
         } catch (err) {
@@ -1681,17 +1744,18 @@
       // сумма вне лимитов → кнопка гаснет, Enter в поле сразу ставит
       picker.on({
         change: (amount, valid) => {
-          place.disabled = ticketOn ? false : !valid;
-          // билет фиксированного номинала: поменял сумму — платим монетами
-          if (ticketOn && amount !== ticket.amount) {
-            ticketOn = false;
+          // фрибет фиксированного номинала: поменял сумму — платим монетами
+          if (betByTicket && freebet && amount !== Number(freebet.amount)) {
+            betByTicket = false;
             if (ticketBtn) {
               ticketBtn.classList.remove("on");
-              ticketBtn.textContent = `🎫 Оплатить билетом · ${money(ticket.amount)}`;
+              ticketBtn.textContent =
+                `🎟 Поставить фрибетом · ${money(freebet.amount)}${ticketLeft(freebet)}`;
             }
           }
+          place.disabled = betByTicket ? false : (!valid || amount > balance());
         },
-        submit: () => { if (ticketOn || picker.ok()) place.click(); },
+        submit: () => { if (betByTicket || picker.ok()) place.click(); },
       });
       sheet.append(place);
 
@@ -1736,7 +1800,12 @@
 
   function openExpressSheet() {
     if (state.cart.length < 2) { toast("Нужно минимум 2 исхода", "bad"); return; }
-    if (!canBet()) { haptic("bad"); openNoCoinsSheet(minBet()); return; }
+    const expressTicket = (state.tickets || []).some(
+      (item) => item.kind === "express" || !item.kind
+    );
+    if (balance() < minBet() && !expressTicket) {
+      haptic("bad"); openNoCoinsSheet(minBet()); return;
+    }
     const token = newToken();
     const total = cartOdds();
 
@@ -1745,7 +1814,9 @@
       sheet.append(el("div", "sub", `итоговый кэф ${oddsText(total)}`));
 
       // билет с колеса: ставка за счёт заведения, монеты со счёта не уходят
-      const ticket = (state.tickets || [])[0] || null;
+      const ticket = (state.tickets || []).find(
+        (item) => item.kind === "express" || !item.kind
+      ) || null;
       let ticketOn = false;
       let ticketBtn = null;
       if (ticket) {
@@ -1805,8 +1876,18 @@
       });
 
       picker.on({
-        change: (amount, valid) => { place.disabled = !valid; },
-        submit: () => { if (picker.ok()) place.click(); },
+        change: (amount, valid) => {
+          // билет фиксированного номинала: поменял сумму — платим монетами
+          if (ticketOn && ticket && amount !== Number(ticket.amount)) {
+            ticketOn = false;
+            if (ticketBtn) {
+              ticketBtn.classList.remove("on");
+              ticketBtn.textContent = `🎫 Оплатить билетом · ${money(ticket.amount)}`;
+            }
+          }
+          place.disabled = ticketOn ? false : !valid;
+        },
+        submit: () => { if (ticketOn || picker.ok()) place.click(); },
       });
       sheet.append(place);
 

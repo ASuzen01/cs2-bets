@@ -35,7 +35,7 @@ from app.handlers import setup_handlers
 from app.handlers.errors import last_errors
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
-from app.services import matchnotify, reminders
+from app.services import matchnotify, reminders, winback
 from app.services.backup import BackupService
 from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.manual_result import apply_manual_results
@@ -163,6 +163,8 @@ async def on_startup(
     reminders.attach(bot, db).start()
     # «твой матч начинается» — по открытым ставкам, один раз на матч
     matchnotify.attach(bot, db).start()
+    # возврат игроков: три дня тишины → фрибет на 24 часа
+    winback.attach(bot, db).start()
     if backup is not None:
         backup.start()
 
@@ -196,6 +198,8 @@ async def on_shutdown(
         await reminders.REMINDER.stop()
     if matchnotify.NOTIFIER is not None:
         await matchnotify.NOTIFIER.stop()
+    if winback.WINBACK is not None:
+        await winback.WINBACK.stop()
     if backup is not None:
         await backup.stop()
     await syncer.stop()
@@ -292,6 +296,7 @@ def build_web_app(
             "keepalive": KEEPALIVE.stats,
             "reminders": reminders.stats(),
             "match_notify": matchnotify.stats(),
+            "winback": winback.stats(),
             # встал ли вебхук: видно, если Telegram не принял адрес
             "webhook": dict(WEBHOOK_STATE),
         }

@@ -264,9 +264,14 @@ async def api_state(request: web.Request) -> web.Response:
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
             "bonus": await _bonus_payload(db, user_id),
-            # билеты с колеса: ими можно оплатить экспресс
+            # билет колеса или фрибет возврата — каждый с подходящим типом ставки
             "tickets": [
-                {"id": int(row["id"]), "amount": int(row["amount"])}
+                {
+                    "id": int(row["id"]),
+                    "amount": int(row["amount"]),
+                    "kind": str(row["kind"] or "express"),
+                    "expires_at": int(row["expires_at"]) if row["expires_at"] else None,
+                }
                 for row in await db.tickets(user_id)
             ],
             "casino": await _casino_payload(db, user_id),
@@ -397,6 +402,8 @@ async def api_bet(request: web.Request) -> web.Response:
     amount = _as_int(body.get("amount"))
     market = str(body.get("market") or "match")
     map_id = _as_int(body.get("map_id"))
+    # фрибет: им оплачивают ординар — сумма должна совпасть с номиналом
+    ticket_id = _as_int(body.get("ticket_id")) or None
 
     if amount <= 0:
         return _bad("Сумма должна быть положительной")
@@ -408,7 +415,8 @@ async def api_bet(request: web.Request) -> web.Response:
     hockey = hockey_side(side)
     if hockey is not None:      # рынок хоккея: основное время, победа в матче, тотал
         balance, odds = await db.place_hockey_bet(
-            match_id, int(user["user_id"]), None, hockey[0], hockey[1], amount
+            match_id, int(user["user_id"]), None, hockey[0], hockey[1], amount,
+            ticket_id=ticket_id,
         )
         match = await db.get_match(match_id)
         return web.json_response(
@@ -428,7 +436,8 @@ async def api_bet(request: web.Request) -> web.Response:
     parsed = parse_side(side)
     if parsed is not None:      # рынок футбола: тотал, фора, точный счёт…
         balance, odds = await db.place_football_bet(
-            match_id, int(user["user_id"]), None, parsed[0], parsed[1], amount
+            match_id, int(user["user_id"]), None, parsed[0], parsed[1], amount,
+            ticket_id=ticket_id,
         )
         match = await db.get_match(match_id)
         return web.json_response(
@@ -458,12 +467,13 @@ async def api_bet(request: web.Request) -> web.Response:
         if card is not None and match_id and int(card["match_id"]) != match_id:
             return _bad("Эта карта — из другого матча")
         balance, odds = await db.place_map_bet(
-            map_id, int(user["user_id"]), None, side, amount
+            map_id, int(user["user_id"]), None, side, amount, ticket_id=ticket_id
         )
         match = await db.get_match(int(card["match_id"])) if card is not None else None
     else:
         balance, odds = await db.place_bet(
-            match_id, int(user["user_id"]), None, side, amount, token=body.get("token")
+            match_id, int(user["user_id"]), None, side, amount,
+            token=body.get("token"), ticket_id=ticket_id,
         )
         match = await db.get_match(match_id)
     fresh = await _after_action(db, int(user["user_id"]))

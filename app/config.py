@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     max_bet: int = 5000           # потолок одной ставки/экспресса (казино ограничено отдельно)
     channel_id: int = 0               # 0 — посты «купон дня» остаются в личке админа
     reminders_enabled: bool = True
-    match_notify_enabled: bool = True     # «через 20 минут твой матч» по открытым ставкам   # напоминание о серии дней, если бонус не забран
+    match_notify_enabled: bool = True     # «через 20 минут твой матч» по открытым ставкам
+    winback_enabled: bool = True          # фрибет 300 тем, кто не заходил 3 дня
+    winback_freebet: int = 300            # номинал фрибета за возвращение
+    winback_interval_minutes: int = 60    # как часто искать пропавших
     reminders_interval_minutes: int = 30
     cashout_rate: float = 0.95     # продажа ставки до старта: сколько отдаём обратно
     referral_bonus: int = 300      # пригласившему — когда друг сделал первый шаг

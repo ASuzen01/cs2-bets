@@ -57,7 +57,9 @@ async def test_ticket_appears_in_state(client: TestClient, db: Database) -> None
 
     body = await (await client.get("/api/state")).json()
 
-    assert body["tickets"] == [{"id": 1, "amount": 100}]
+    assert body["tickets"] == [
+        {"id": 1, "amount": 100, "kind": "express", "expires_at": None}
+    ]
     assert body["bonus"]["wheel"]["ticket"] == 100
 
 
@@ -185,4 +187,5 @@ async def test_wheel_ticket_prize_wires_to_profile(client: TestClient, db: Datab
     assert body["balance"] == 1000                  # баланс не изменился
 
     state = await (await client.get("/api/state")).json()
-    assert state["tickets"] == [{"id": 1, "amount": 100}]
+    assert [item["amount"] for item in state["tickets"]] == [100]
+    assert state["tickets"][0]["kind"] == "express"

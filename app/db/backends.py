@@ -223,9 +223,12 @@ CREATE TABLE IF NOT EXISTS tickets (
     user_id    INTEGER NOT NULL,
     amount     INTEGER NOT NULL,
     source     TEXT    NOT NULL DEFAULT 'wheel',
+    kind       TEXT    NOT NULL DEFAULT 'express',
     created_at INTEGER NOT NULL,
+    expires_at INTEGER,
     used_at    INTEGER,
-    express_id INTEGER
+    express_id INTEGER,
+    bet_id     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
 

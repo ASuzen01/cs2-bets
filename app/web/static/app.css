@@ -751,3 +751,12 @@
   color: #8ff0b3;
 }
 .tickets-row b { font-variant-numeric: tabular-nums; }
+.tickets-row.freebet {
+  color: #ffe08a;
+  background: rgba(255, 215, 94, .08);
+  border: 1px dashed #5a4a1c;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.ticket-time { color: #ffcf65; font-size: 12px; white-space: nowrap; }
