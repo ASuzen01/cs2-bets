@@ -87,6 +87,15 @@ async def test_dump_roundtrip_restores_everything(db, tmp_path) -> None:
         await fresh.close()
 
 
+async def test_restore_accepts_pre_crash_game_backup(db) -> None:
+    data = await db.dump_rows()
+    data.pop("crash_games")
+
+    counts = await db.restore_rows(data)
+
+    assert counts["crash_games"] == 0
+
+
 async def test_restore_replaces_current_data(db, tmp_path) -> None:
     blob, _ = await make_dump(db)
     await db.upsert_user(3, "third", "Третий")

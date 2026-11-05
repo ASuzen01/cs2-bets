@@ -59,6 +59,11 @@
     ladder: null,             // последняя партия в «Лесенку»
     ladderStake: 10,
     ladderBusy: false,
+    crash: null,               // активный/последний полёт «Самолётика» с сервера
+    crashStake: 50,
+    crashBusy: false,
+    crashPolling: false,
+    crashTicker: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over" },
     casinoStake: { roulette: 50, dice: 50 },
@@ -3130,6 +3135,7 @@
       state.casino = data.casino || state.casino;
       state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
+      state.crash = data.crash || null;
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
         setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
@@ -3147,7 +3153,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -3633,9 +3639,9 @@
       who.append(document.createTextNode(row.label));
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
-          : row.game === "blackjack" ? "блэкджек" : "кости"));
+          : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
-        : row.game === "ladder" || row.game === "blackjack" ? row.outcome : "сумма " + row.outcome;
+        : row.game === "ladder" || row.game === "blackjack" || row.game === "crash" ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
       const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
       line.append(who, tag, res);
@@ -3663,6 +3669,196 @@
     }
     return box;
   }
+
+  function crashReadout() {
+    const game = state.crash;
+    if (!game || game.status !== "flying") return 1;
+    return Math.floor(Math.exp(0.16 * Math.max(0, Date.now() / 1000 - Number(game.started_at))) * 100) / 100;
+  }
+
+  function updateCrashFlight() {
+    const game = state.crash;
+    const display = $("#crashMultiplier");
+    if (!game || game.status !== "flying" || !display) return;
+    const value = crashReadout();
+    display.textContent = `×${value.toFixed(2)}`;
+    const plane = $("#crashPlane");
+    if (plane) {
+      const progress = Math.min(1, Math.log(Math.max(1, value)) / Math.log(25));
+      plane.style.left = `${8 + progress * 77}%`;
+      plane.style.bottom = `${12 + progress * 62}%`;
+    }
+    const payout = $("#crashPotential");
+    if (payout) payout.textContent = money(Math.floor(Number(game.stake) * value));
+  }
+
+  async function crashRequest(action) {
+    if (state.crashBusy) return;
+    state.crashBusy = true;
+    renderCrash($("#games"));
+    try {
+      let data;
+      if (action === "start") {
+        data = await api("/api/crash/start", {
+          method: "POST", body: { amount: Number(state.crashStake || 10) },
+        });
+      } else {
+        data = await api("/api/crash/cashout", {
+          method: "POST", body: { game_id: Number(state.crash && state.crash.id) },
+        });
+      }
+      state.crash = data.game || null;
+      if (data.balance !== undefined) setBalance(data.balance);
+      if (action === "cashout") {
+        if (state.crash && state.crash.status === "cashed") {
+          toast(`Забрано ${money(state.crash.payout)} · ×${Number(state.crash.cashout_multiplier).toFixed(2)}`, "ok");
+          haptic("ok");
+        } else {
+          toast(`Самолётик улетел на ×${Number(state.crash && state.crash.crash_multiplier || 1).toFixed(2)} · ставка потеряна`, "bad");
+          haptic("bad");
+        }
+      } else {
+        haptic("light");
+      }
+      renderCrash($("#games"));
+      if (state.crash && state.crash.status !== "flying") refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      state.crashBusy = false;
+      renderCrash($("#games"));
+    }
+  }
+
+  function renderCrash(host) {
+    if (!host) return;
+    if (state.crashTicker) { clearInterval(state.crashTicker); state.crashTicker = null; }
+    host.textContent = "";
+    host.append(gameBackButton());
+    const game = state.crash;
+    const flying = Boolean(game && game.status === "flying");
+    const card = el("section", "crash-card" + (flying ? " in-flight" : ""));
+    card.append(el("div", "crash-kicker", "КАССА · ИГРА НА ВЫЛЕТ"));
+    card.append(el("h2", "crash-title", "Самолётик"));
+    card.append(el("p", "crash-copy", "Ракетка набирает высоту вместе с множителем. Забери выплату до того, как самолёт улетит."));
+
+    const stage = el("div", "crash-stage" + (flying ? " live" : "") + (game && game.status === "crashed" ? " crashed" : ""));
+    const sky = el("div", "crash-stars");
+    stage.append(sky);
+    const flightPath = el("div", "crash-path");
+    stage.append(flightPath);
+    if (flying) {
+      const multiplier = el("div", "crash-multiplier", `×${crashReadout().toFixed(2)}`);
+      multiplier.id = "crashMultiplier";
+      stage.append(multiplier);
+      const plane = el("div", "crash-plane", "✈");
+      plane.id = "crashPlane";
+      stage.append(plane);
+      const timer = el("div", "crash-stage-caption", "ПОЛЁТ ИДЁТ · РЕШЕНИЕ ЗА ТОБОЙ");
+      stage.append(timer);
+    } else if (game && game.status === "crashed") {
+      stage.append(el("div", "crash-settled-label", "УЛЕТЕЛ"));
+      stage.append(el("div", "crash-result-x", `×${Number(game.crash_multiplier).toFixed(2)}`));
+      stage.append(el("div", "crash-stage-caption", "СЛЕДУЮЩИЙ ВЗЛЁТ УЖЕ БЛИЗКО"));
+    } else if (game && game.status === "cashed") {
+      stage.append(el("div", "crash-settled-label safe", "ЗАБРАНО"));
+      stage.append(el("div", "crash-result-x", `×${Number(game.cashout_multiplier).toFixed(2)}`));
+      stage.append(el("div", "crash-stage-caption", `ВЫПЛАТА ${money(game.payout)}`));
+    } else {
+      stage.append(el("div", "crash-idle-mark", "✈"));
+      stage.append(el("div", "crash-idle-title", "ГОТОВ К ВЗЛЁТУ"));
+      stage.append(el("div", "crash-stage-caption", "ЗАБИРАЙ В СВОЙ МОМЕНТ"));
+    }
+    card.append(stage);
+
+    if (flying) {
+      const info = el("div", "crash-flight-meta");
+      const left = el("div");
+      left.append(el("span", null, "Твоя ставка"), el("b", null, money(game.stake)));
+      const right = el("div");
+      right.append(el("span", null, "Забрать сейчас"));
+      const potential = el("b", null, money(Math.floor(Number(game.stake) * crashReadout())));
+      potential.id = "crashPotential";
+      right.append(potential);
+      info.append(left, right);
+      card.append(info);
+      const cash = el("button", "btn crash-cashout", `ЗАБРАТЬ · ${money(Math.floor(Number(game.stake) * crashReadout()))}`);
+      cash.dataset.crashAction = "cashout";
+      cash.id = "crashCashout";
+      cash.disabled = state.crashBusy;
+      card.append(cash);
+      if (state.crashTicker) clearInterval(state.crashTicker);
+      state.crashTicker = window.setInterval(() => {
+        if (!$("#crashMultiplier") || !state.crash || state.crash.status !== "flying") {
+          clearInterval(state.crashTicker); state.crashTicker = null; return;
+        }
+        updateCrashFlight();
+        const button = $("#crashCashout");
+        const value = crashReadout();
+        if (button && !state.crashBusy) button.textContent = `ЗАБРАТЬ · ${money(Math.floor(Number(state.crash.stake) * value))}`;
+      }, 60);
+      card.append(el("div", "crash-foot", "Нажатие фиксирует текущий множитель на сервере. Если самолёт улетит первым — ставка сгорит."));
+    } else {
+      if (game && game.status === "crashed") {
+        card.append(el("div", "crash-message lost", `Полёт завершился на ×${Number(game.crash_multiplier).toFixed(2)}. Ставка ${money(game.stake)} потеряна.`));
+      } else if (game && game.status === "cashed") {
+        card.append(el("div", "crash-message won", `Выплата ${money(game.payout)} зачислена · чистый результат ${moneySigned(game.payout - game.stake)}.`));
+      }
+      const amount = Number(state.crashStake || 50);
+      const stakes = el("div", "crash-stakes");
+      stakes.append(el("span", null, "Ставка"));
+      [10, 50, 100, 500].forEach((value) => {
+        const chip = el("button", "crash-chip" + (value === amount ? " active" : ""), String(value));
+        chip.type = "button";
+        chip.dataset.crashStake = String(value);
+        chip.disabled = state.crashBusy || balance() < value;
+        stakes.append(chip);
+      });
+      card.append(stakes);
+      const input = el("input", "crash-stake-input");
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = "10";
+      input.max = "5000";
+      input.value = String(amount);
+      input.dataset.crashInput = "true";
+      input.setAttribute("aria-label", "Ставка в самолётике");
+      input.disabled = state.crashBusy;
+      card.append(input);
+      const start = el("button", "btn crash-start", `ВЗЛЁТ · ${money(amount)}`);
+      start.dataset.crashAction = "start";
+      start.disabled = state.crashBusy || amount < 10 || amount > 5000 || amount > balance();
+      card.append(start);
+      card.append(el("div", "crash-economy", "Целевой RTP 95,5 % · ставка 10–5 000 монет. Выплата включает ставку; округление монет вниз может немного снизить фактический RTP на малых ставках."));
+      card.append(el("div", "crash-foot", "Каждый полёт независим. История не предсказывает следующий вылет."));
+    }
+    host.append(card);
+  }
+
+  window.setInterval(async () => {
+    if (!state.user || state.tab !== "games" || state.game !== "crash" || !state.crash ||
+        state.crash.status !== "flying" || state.crashBusy || state.crashPolling) return;
+    state.crashPolling = true;
+    const oldStatus = state.crash.status;
+    try {
+      const data = await api("/api/crash/state");
+      state.crash = data.game || null;
+      if (data.balance !== undefined && Number(data.balance) !== Number(state.user.balance)) setBalance(data.balance);
+      if (state.crash && state.crash.status === "flying") updateCrashFlight();
+      else if (oldStatus === "flying") {
+        renderCrash($("#games"));
+        if (state.crash && state.crash.status === "crashed") {
+          toast(`Самолётик улетел на ×${Number(state.crash.crash_multiplier).toFixed(2)}`, "bad");
+          haptic("bad");
+        }
+        refreshState({ silent: true });
+      }
+    } catch (err) {
+      // Потеря сети не меняет исход: сервер хранит ставку и точку вылета.
+    } finally {
+      state.crashPolling = false;
+    }
+  }, 700);
 
   function ladderDoorCount(count) {
     const value = Math.abs(Number(count)) % 100;
@@ -4061,6 +4257,10 @@
       host.prepend(gameBackButton());
       return;
     }
+    if (state.game === "crash") {
+      renderCrash(host);
+      return;
+    }
     if (!state.casino) {
       host.textContent = "";
       host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
@@ -4321,7 +4521,7 @@
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");
@@ -4343,7 +4543,7 @@
       const game = state.game;
 
       if (node.dataset.backToGames !== undefined) {
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
           toast("Дождись конца хода", "bad");
           return;
         }
@@ -4353,6 +4553,15 @@
         return;
       }
 
+      if (node.dataset.crashAction) {
+        crashRequest(node.dataset.crashAction);
+        return;
+      }
+      if (node.dataset.crashStake) {
+        state.crashStake = Number(node.dataset.crashStake);
+        renderCrash(host);
+        return;
+      }
       if (node.dataset.ladderStake) {
         state.ladderStake = Number(node.dataset.ladderStake);
         renderLadder(host);
@@ -4393,6 +4602,20 @@
         haptic("light");
         syncStakeUI(game);
       }
+    });
+    host.addEventListener("input", (event) => {
+      const input = event.target.closest("[data-crash-input]");
+      if (!input) return;
+      const parsed = Number.parseInt(input.value, 10);
+      state.crashStake = Number.isFinite(parsed) ? parsed : 0;
+      const start = $(".crash-start");
+      if (start) {
+        start.textContent = `ВЗЛЁТ · ${money(Math.max(0, state.crashStake))}`;
+        start.disabled = state.crashBusy || state.crashStake < 10 || state.crashStake > 5000 || state.crashStake > balance();
+      }
+      document.querySelectorAll(".crash-chip").forEach((chip) => {
+        chip.classList.toggle("active", Number(chip.dataset.crashStake) === state.crashStake);
+      });
     });
   }
 

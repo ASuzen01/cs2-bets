@@ -79,6 +79,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "casino_bets",
     "ladder_games",
     "blackjack_games",
+    "crash_games",
     "quests",
     "quest_chain",
     "achievements",
@@ -112,6 +113,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("casino_bets", "user_id"),
     ("ladder_games", "user_id"),
     ("blackjack_games", "user_id"),
+    ("crash_games", "user_id"),
     ("achievements", "user_id"),
     ("quest_chain", "user_id"),
     ("referrals", "invited_id"),
@@ -505,6 +507,11 @@ class Database:
         if unknown:
             raise BackupError(f"В дампе незнакомые таблицы: {', '.join(sorted(unknown))}")
         missing = set(BACKUP_TABLES) - set(data)
+        # Backups made before the crash game existed have no crash_games table;
+        # restore them as an empty table, while keeping every older omission strict.
+        if missing == {"crash_games"}:
+            data = {**data, "crash_games": []}
+            missing = set()
         if missing:
             raise BackupError(
                 "Дамп неполный — отсутствуют таблицы " + ", ".join(sorted(missing))
@@ -1766,6 +1773,160 @@ class Database:
                 now,
             ),
         )
+
+    async def crash_state(self, user_id: int, *, now: float | None = None) -> dict[str, Any] | None:
+        """Return latest flight; automatically settle it if its hidden crash point passed."""
+        from app.services.crash import multiplier_at
+
+        moment = float(time.time() if now is None else now)
+        game = await self._fetchone(
+            "SELECT * FROM crash_games WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
+        )
+        if game is None:
+            return None
+        if str(game["status"]) == "flying":
+            current = multiplier_at(float(game["started_at"]), moment)
+            if current < float(game["crash_multiplier"]):
+                return self._crash_payload(game, current=current, balance=await self.get_balance(user_id))
+            # Only lock the database on settlement, not for every live multiplier poll.
+            async with self.transaction() as conn:
+                async with conn.execute(
+                    "SELECT * FROM crash_games WHERE id = ? AND user_id = ?", (game["id"], user_id)
+                ) as cur:
+                    game = await cur.fetchone()
+                if game is not None and str(game["status"]) == "flying":
+                    await self._settle_crash_loss(conn, game, int(moment))
+                async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (int(game["id"]),)) as cur:
+                    game = await cur.fetchone()
+                    assert game is not None
+        return self._crash_payload(game, balance=await self.get_balance(user_id))
+
+    async def start_crash(
+        self, user_id: int, stake: int, crash_multiplier: float, *, now: float | None = None
+    ) -> dict[str, Any]:
+        """Debit stake and commit a private crash point in one transaction."""
+        from app.services.crash import MAX_STAKE, MIN_STAKE, multiplier_at
+
+        if not MIN_STAKE <= int(stake) <= MAX_STAKE:
+            raise InvalidBet(f"Ставка в «Самолётике» — от {MIN_STAKE} до {MAX_STAKE} 🪙")
+        if not 1.0 <= float(crash_multiplier) <= 1_000_000.0:
+            raise InvalidBet("Некорректная точка вылета")
+        moment = float(time.time() if now is None else now)
+        timestamp = int(moment)
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM crash_games WHERE user_id = ? AND status = 'flying' ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ) as cur:
+                existing = await cur.fetchone()
+            if existing is not None:
+                current = multiplier_at(float(existing["started_at"]), moment)
+                if current >= float(existing["crash_multiplier"]):
+                    await self._settle_crash_loss(conn, existing, timestamp)
+                else:
+                    return self._crash_payload(existing, current=current, balance=await self._balance_in(conn, user_id))
+
+            debit = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (stake, user_id, stake),
+            )
+            if debit.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+            await self._ledger(conn, user_id, -stake, "ставка · Самолётик", timestamp)
+            await self._bump_quest(conn, user_id, "casino", timestamp)
+            inserted = await conn.execute(
+                """INSERT INTO crash_games
+                    (user_id, stake, crash_multiplier, started_at, status, payout, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'flying', 0, ?, ?) RETURNING id""",
+                (user_id, stake, float(crash_multiplier), moment, timestamp, timestamp),
+            )
+            created = await inserted.fetchone()
+            game_id = int(created["id"]) if created else int(inserted.lastrowid or 0)
+            async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (game_id,)) as cur:
+                game = await cur.fetchone()
+                assert game is not None
+            return self._crash_payload(game, current=1.0, balance=await self._balance_in(conn, user_id))
+
+    async def cashout_crash(
+        self, user_id: int, game_id: int, *, now: float | None = None
+    ) -> dict[str, Any]:
+        """Cash out at current multiplier, or settle loss if the flight already ended."""
+        from app.services.crash import multiplier_at
+        from app.services.crash import payout as crash_payout
+
+        moment = float(time.time() if now is None else now)
+        timestamp = int(moment)
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM crash_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            ) as cur:
+                game = await cur.fetchone()
+            if game is None:
+                raise InvalidBet("Партия «Самолётик» не найдена")
+            if str(game["status"]) != "flying":
+                return self._crash_payload(game, balance=await self._balance_in(conn, user_id))
+            current = multiplier_at(float(game["started_at"]), moment)
+            if current >= float(game["crash_multiplier"]):
+                await self._settle_crash_loss(conn, game, timestamp)
+            else:
+                payout = crash_payout(int(game["stake"]), current)
+                await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+                await self._ledger(conn, user_id, payout, f"выигрыш · Самолётик · ×{current:.2f}", timestamp)
+                await conn.execute(
+                    "UPDATE crash_games SET status = 'cashed', cashout_multiplier = ?, payout = ?, updated_at = ? WHERE id = ?",
+                    (current, payout, timestamp, game_id),
+                )
+                await self._record_crash_history(conn, game, current, payout, timestamp, won=True)
+            async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (game_id,)) as cur:
+                updated = await cur.fetchone()
+                assert updated is not None
+            return self._crash_payload(updated, balance=await self._balance_in(conn, user_id))
+
+    async def _settle_crash_loss(self, conn: Any, game: Any, now: int) -> None:
+        """Idempotent settlement of an active flight that passed its crash point."""
+        if str(game["status"]) != "flying":
+            return
+        crash_multiplier = float(game["crash_multiplier"])
+        await conn.execute(
+            "UPDATE crash_games SET status = 'crashed', payout = 0, updated_at = ? WHERE id = ?",
+            (now, int(game["id"])),
+        )
+        await self._record_crash_history(conn, game, crash_multiplier, 0, now, won=False)
+
+    async def _record_crash_history(
+        self, conn: Any, game: Any, multiplier: float, payout: int, now: int, *, won: bool
+    ) -> None:
+        label = f"Самолётик · {'забрано' if won else 'вылет'} ×{multiplier:.2f}"
+        await conn.execute(
+            """INSERT INTO casino_bets
+                (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+                VALUES (?, 'crash', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(game["user_id"]), "cashout" if won else "crash", label,
+                int(game["stake"]), float(multiplier), f"×{multiplier:.2f}",
+                1 if won else 0, int(payout), now,
+            ),
+        )
+
+    @staticmethod
+    def _crash_payload(game: Any, *, current: float | None = None, balance: int | None = None) -> dict[str, Any]:
+        status = str(game["status"])
+        payload: dict[str, Any] = {
+            "id": int(game["id"]),
+            "stake": int(game["stake"]),
+            "status": status,
+            "started_at": float(game["started_at"]),
+            "cashout_multiplier": float(game["cashout_multiplier"]) if game["cashout_multiplier"] is not None else None,
+            "payout": int(game["payout"]),
+        }
+        if status == "flying":
+            payload["current_multiplier"] = float(current if current is not None else 1.0)
+        else:
+            # Reveal the committed result only after the flight has settled.
+            payload["crash_multiplier"] = float(game["crash_multiplier"])
+        if balance is not None:
+            payload["balance"] = int(balance)
+        return payload
 
     async def casino_history(self, user_id: int, limit: int = 20) -> list[Any]:
         """Последние раунды игрока — для ленты «недавние ставки»."""

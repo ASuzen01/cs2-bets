@@ -144,7 +144,7 @@
 
   <section class="screen catalog-mode" id="screen-games">
     <div class="game-catalog-head">
-      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 4 ИГРЫ</span></div>
+      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 5 ИГР</span></div>
       <h1>Игровой зал</h1>
       <p>Выбери игру и начинай раунд</p>
     </div>
@@ -274,6 +274,31 @@
         </span>
         <b class="game-tile-title">Блэкджек</b>
         <small class="game-tile-description">Классическая игра 21</small>
+        <span class="game-tile-arrow" aria-hidden="true">↗</span>
+      </button>
+      <button class="game-tile" type="button" data-game="crash" aria-pressed="false">
+        <span class="game-tile-art art-crash" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <defs>
+              <linearGradient id="crash-sky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#213d3a"/><stop offset="1" stop-color="#171d26"/>
+              </linearGradient>
+              <linearGradient id="crash-wing" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f0d995"/><stop offset="1" stop-color="#a37e3e"/>
+              </linearGradient>
+            </defs>
+            <rect x="20" y="24" width="180" height="148" rx="24" fill="url(#crash-sky)" stroke="#796b49" stroke-width="2"/>
+            <path d="M39 143h30l18-16 22 3 18-28 22-4 17-29 24-18" fill="none" stroke="#58b99a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
+            <circle cx="166" cy="69" r="24" fill="#e8cf92" opacity=".08"/>
+            <g transform="translate(147 48) rotate(-20)">
+              <path d="M0 12 42 0 29 16 39 23 34 27 23 21 15 37 10 38 12 20 0 16z" fill="url(#crash-wing)" stroke="#f7e8bd" stroke-width="1" stroke-linejoin="round"/>
+            </g>
+            <text x="110" y="155" text-anchor="middle" fill="#e2d4b1" font-family="Georgia,serif" font-size="13" letter-spacing="4">TAKE FLIGHT</text>
+            <circle cx="45" cy="48" r="2" fill="#e8cf92"/><circle cx="82" cy="68" r="1.5" fill="#e8cf92" opacity=".7"/><circle cx="60" cy="101" r="1.5" fill="#e8cf92" opacity=".5"/>
+          </svg>
+        </span>
+        <b class="game-tile-title">Самолётик</b>
+        <small class="game-tile-description">Забери до вылета · ракетка</small>
         <span class="game-tile-arrow" aria-hidden="true">↗</span>
       </button>
     </div>

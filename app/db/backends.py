@@ -202,6 +202,23 @@ CREATE INDEX IF NOT EXISTS idx_blackjack_user ON blackjack_games(user_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_blackjack_one_active ON blackjack_games(user_id)
     WHERE status IN ('insurance', 'playing');
 
+-- crash game «Самолётик»: скрытая точка вылета хранится только на сервере
+CREATE TABLE IF NOT EXISTS crash_games (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    stake            INTEGER NOT NULL,
+    crash_multiplier REAL NOT NULL,
+    started_at       REAL NOT NULL,
+    cashout_multiplier REAL,
+    status           TEXT NOT NULL,
+    payout           INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crash_user ON crash_games(user_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_one_active ON crash_games(user_id)
+    WHERE status = 'flying';
+
 -- задания дня: прогресс и награда, по строке на игрока в сутки
 CREATE TABLE IF NOT EXISTS quests (
     user_id    INTEGER NOT NULL,

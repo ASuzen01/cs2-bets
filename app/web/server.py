@@ -24,6 +24,7 @@ from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
 from app.services import achievements, games
 from app.services import blackjack as blackjack_game
+from app.services import crash as crash_game
 from app.services import ladder as ladder_game
 from app.services.bonus import (
     TEASE_PRIZE,
@@ -107,6 +108,9 @@ def register_routes(
     app.router.add_post("/api/ladder/pick", api_ladder_pick)
     app.router.add_post("/api/ladder/continue", api_ladder_continue)
     app.router.add_post("/api/ladder/cashout", api_ladder_cashout)
+    app.router.add_post("/api/crash/start", api_crash_start)
+    app.router.add_get("/api/crash/state", api_crash_state)
+    app.router.add_post("/api/crash/cashout", api_crash_cashout)
     return app
 
 
@@ -295,6 +299,7 @@ async def api_state(request: web.Request) -> web.Response:
             "casino": await _casino_payload(db, user_id),
             "blackjack": await db.blackjack_state(user_id),
             "ladder": await db.ladder_state(user_id),
+            "crash": await db.crash_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_bet": settings.max_bet,
@@ -1116,6 +1121,46 @@ async def api_ladder_cashout(request: web.Request) -> web.Response:
     game_id = _as_int((await _json_body(request)).get("game_id"))
     try:
         result = await db.cashout_ladder(user_id, game_id)
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_crash_start(request: web.Request) -> web.Response:
+    """Списывает ставку и начинает полёт с заранее зафиксированным исходом."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    amount = _as_int((await _json_body(request)).get("amount"))
+    try:
+        stake = crash_game.validate_stake(amount)
+        result = await db.start_crash(user_id, stake, crash_game.crash_point())
+    except ValueError as exc:
+        return _bad(str(exc))
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_crash_state(request: web.Request) -> web.Response:
+    """Синхронизирует полёт/автоматически фиксирует проигрыш после вылета."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game = await db.crash_state(user_id)
+    return web.json_response({"ok": True, "game": game, "balance": await db.get_balance(user_id)})
+
+
+async def api_crash_cashout(request: web.Request) -> web.Response:
+    """Кассация на серверном множителе — клиентский таймер исход не определяет."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game_id = _as_int((await _json_body(request)).get("game_id"))
+    if game_id <= 0:
+        return _bad("Партия «Самолётик» не найдена")
+    try:
+        result = await db.cashout_crash(user_id, game_id)
     except InvalidBet as exc:
         return _bad(str(exc))
     return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
