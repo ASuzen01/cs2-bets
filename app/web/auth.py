@@ -75,6 +75,39 @@ async def json_error_middleware(request: web.Request, handler):
         return web.json_response({"ok": False, "error": f"Внутренняя ошибка: {exc}"}, status=500)
 
 
-MIDDLEWARES = [json_error_middleware, auth_middleware]
+# Мельче этого ответы не сжимаем: накладные расходы больше выигрыша.
+COMPRESS_MIN_BYTES = 1024
 
-__all__ = ["DB_KEY", "MIDDLEWARES", "USER_KEY", "auth_middleware", "json_error_middleware", "resolve_user"]
+
+@web.middleware
+async def gzip_middleware(request: web.Request, handler):
+    """Сжимает большие JSON-ответы: линия с росписью — сотни килобайт.
+
+    Мини-приложение открывается с телефона, и без сжатия `/api/state` с 60+ рынками
+    на каждый футбольный матч весит около мегабайта. gzip срезает это в разы,
+    а несжатым остаётся всё мелкое — заголовки кэша и тело вебхука не раздуваем.
+    """
+    response = await handler(request)
+    if (
+        isinstance(response, web.Response)
+        and response.body is not None
+        and len(response.body) > COMPRESS_MIN_BYTES
+        and "Content-Encoding" not in response.headers
+        and request.headers.get("Accept-Encoding", "").find("gzip") >= 0
+    ):
+        response.enable_compression()
+    return response
+
+
+MIDDLEWARES = [json_error_middleware, auth_middleware, gzip_middleware]
+
+__all__ = [
+    "COMPRESS_MIN_BYTES",
+    "DB_KEY",
+    "MIDDLEWARES",
+    "USER_KEY",
+    "auth_middleware",
+    "gzip_middleware",
+    "json_error_middleware",
+    "resolve_user",
+]

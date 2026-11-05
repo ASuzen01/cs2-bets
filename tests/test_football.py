@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.config import settings
 from app.db import Database
 from app.services.football import (
     FootballMatch,
@@ -51,6 +52,44 @@ PACKET = {
 
 INCLUDE = ["лига чемпионов"]
 EXCLUDE = ["азии", "женщ"]
+
+
+def test_default_line_covers_top_leagues_and_national_teams() -> None:
+    """В линии по умолчанию: еврокубки, топ-5, Беларусь, РПЛ и турниры сборных."""
+    from app.services.football import _is_football
+
+    include, exclude = settings.football_include_list, settings.football_exclude_list
+
+    def kept(name: str) -> bool:
+        return _is_football(name, include, exclude)
+
+    for name in (
+        "Лига Чемпионов УЕФА. Общий этап",
+        "Англия. Премьер-Лига. Сезон 26/27",
+        "Испания. Примера дивизион. Сезон 26/27",
+        "Италия. Серия А. Сезон 26/27",
+        "Германия. Бундеслига. Сезон 26/27",
+        "Франция. Лига 1. Сезон 26/27",
+        "Беларусь. Высшая лига",
+        "Россия. Премьер-Лига. Сезон 26/27",
+        "Лига наций УЕФА. Дивизион А. Групповой этап",
+        "Чемпионат Европы. Отборочный турнир",
+        "ЧМ 2028. Отборочные матчи. Групповой этап",
+    ):
+        assert kept(name), name
+
+    for name in (
+        "Германия. Бундеслига 2",
+        "Италия. Серия В",
+        "Англия. Чемпионшип",
+        "Испания. Сегунда",
+        "Англия. Премьер-Лига. Лучший бомбардир",
+        "Англия. Премьер-Лига. Итоги турнира",
+        "Франция. Женщины. Дивизион 1",
+        "Бразилия. До 19 лет. Кубок Атлантико",
+        "Сборная России. Товарищеские матчи",
+    ):
+        assert not kept(name), name
 
 
 def test_parse_skips_events_without_team_names() -> None:

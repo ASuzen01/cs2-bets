@@ -40,6 +40,8 @@ INDEX_PATH = WEB_DIR / "index.html"
 STATIC_DIR = WEB_DIR / "static"
 
 BOOTSTRAP_MARKER = "<!-- BOOTSTRAP -->"
+# Мельче этого ответы не сжимаем: накладные расходы больше выигрыша.
+COMPRESS_MIN_BYTES = 1024
 ALLOWED_STATIC = re.compile(r"^[a-z0-9_-]+\.(css|js|png|svg|ico|webp)$")
 
 
@@ -155,7 +157,7 @@ async def index(request: web.Request) -> web.Response:
         boot["matches"] = await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2"))
         boot["live"] = await _line_with_maps(db, await db.live_matches(limit=40))
         boot["football"] = await _line_with_maps(
-            db, await db.open_matches(limit=120, sport="football")
+            db, await db.open_matches(limit=200, sport="football")
         )
 
     return web.Response(text=render_index(boot), content_type="text/html")
@@ -183,7 +185,7 @@ async def api_state(request: web.Request) -> web.Response:
             "matches": await _line_with_maps(db, await db.open_matches(limit=60, sport="cs2")),
             "live": await _line_with_maps(db, await db.live_matches(limit=40)),
             "football": await _line_with_maps(
-                db, await db.open_matches(limit=120, sport="football")
+                db, await db.open_matches(limit=200, sport="football")
             ),
             "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
             "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
