@@ -136,6 +136,12 @@ CREATE TABLE IF NOT EXISTS backup_log (
     kind       TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS app_meta (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ledger (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,

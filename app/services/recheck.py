@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from typing import Any
@@ -59,6 +61,7 @@ async def recheck_recent(
         "maps_repaired": 0,
         "maps_settled": 0,
         "unmatched": 0,
+        "errors": 0,
     }
 
     try:
@@ -86,6 +89,7 @@ async def recheck_recent(
                 if line:
                     report["cs2"].append(line)
         except Exception:
+            report["errors"] += 1
             log.exception("Перепроверка матча #%s упала", row["id"])
 
     if results is None:
@@ -238,6 +242,8 @@ def report_text(report: dict[str, Any]) -> str:
     lines = [f"<b>Перепроверка за {report['hours']} ч</b>"]
     lines.append(f"Проверено матчей: {report['checked']}")
     corrected = len(report["football"]) + len(report["cs2"])
+    if report.get("errors"):
+        lines.append(f"Сбоев при проверке: {report['errors']} (подробности в логах)")
     if report.get("unmatched"):
         lines.append(
             f"Не нашлось в фиде результатов: {report['unmatched']} "
@@ -266,4 +272,145 @@ async def notify_admins(bot: Bot, db: Database, text: str) -> None:
         await send_user(bot, db, int(admin_id), text)
 
 
-__all__ = ["LAST_REPORT", "notify_admins", "recheck_recent", "report_text"]
+class RecheckService:
+    """Перепроверка расчётов по расписанию.
+
+    Правила уведомлений (чтобы админам не приходил одинаковый «всё ок» каждый час):
+
+    * нашли расхождение — пересчитали матч или карту — пишем сразу, каждая проверка;
+    * проверка упала — тоже пишем сразу;
+    * всё чисто — одна сводка в сутки (`RECHECK_OK_DIGEST_HOURS`), отметка о ней
+      лежит в базе, поэтому перезапуски сервиса её не сбрасывают.
+    """
+
+    META_KEY = "recheck_ok_notified_at"
+
+    def __init__(
+        self,
+        bot: Bot | None,
+        db: Database,
+        *,
+        hours: int | None = None,
+        interval_minutes: int | None = None,
+        digest_hours: int | None = None,
+        notifier: Any = None,
+        runner: Any = None,
+    ) -> None:
+        self.bot = bot
+        self.db = db
+        self.hours = int(hours if hours is not None else settings.recheck_hours)
+        self.interval = max(1, int(
+            interval_minutes if interval_minutes is not None else settings.recheck_interval_minutes
+        ))
+        self.digest_hours = int(
+            digest_hours if digest_hours is not None else settings.recheck_ok_digest_hours
+        )
+        self._notifier = notifier
+        self.runner = runner or recheck_recent     # подменяется в тестах
+        self._task: asyncio.Task[None] | None = None
+        self.runs = 0
+        self.last_at: int = 0
+        self.last_problems = False
+        self.last_error: str | None = None
+        self.last_notified_at: int = 0
+
+    # ------------------------------------------------------------ lifecycle
+    @property
+    def stats(self) -> dict[str, Any]:
+        return {
+            "runs": self.runs,
+            "interval_minutes": self.interval,
+            "hours": self.hours,
+            "digest_hours": self.digest_hours,
+            "last_at": self.last_at or None,
+            "last_problems": self.last_problems,
+            "last_notified_at": self.last_notified_at or None,
+            "last_error": self.last_error,
+        }
+
+    @property
+    def enabled(self) -> bool:
+        return self.interval > 0
+
+    def start(self) -> None:
+        if not self.enabled:
+            log.info("Перепроверка по расписанию выключена (RECHECK_INTERVAL_MINUTES=0)")
+            return
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run(), name="recheck")
+            log.info("Перепроверка по расписанию: раз в %s мин", self.interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.run_once()
+            except Exception:
+                self.last_error = "проверка упала"
+                log.exception("Плановая перепроверка не удалась")
+            await asyncio.sleep(self.interval * 60)
+
+    # ---------------------------------------------------------------- работа
+    async def run_once(self) -> dict[str, Any]:
+        """Одна проверка: считаем, уведомляем по правилам, возвращаем отчёт."""
+        report = await self.runner(self.db, self.bot, hours=self.hours)
+        self.runs += 1
+        self.last_at = int(time.time())
+        self.last_error = None
+        self.last_problems = has_problems(report)
+        await self._notify(report)
+        return report
+
+    async def _notify(self, report: dict[str, Any]) -> None:
+        """Расхождения — сразу; «всё ок» — не чаще раза в `digest_hours` часов."""
+        now = int(time.time())
+        if has_problems(report):
+            await self._send(report, digest=False)
+            return
+
+        last_ok = await self.db.get_meta_int(self.META_KEY)
+        if last_ok and now - last_ok < self.digest_hours * 3600:
+            log.info("Перепроверка чистая, но сводку уже отправляли — молчим")
+            return
+        await self._send(report, digest=True)
+        await self.db.set_meta(self.META_KEY, str(now))
+
+    async def _send(self, report: dict[str, Any], *, digest: bool) -> None:
+        text = report_text(report)
+        if digest:
+            text += (
+                f"\n\nПроверки идут каждые {self.interval} мин — это ежедневная сводка, "
+                "при расхождениях напишем сразу."
+            )
+        if self._notifier is not None:
+            await self._notifier(text)
+        elif self.bot is not None:
+            await notify_admins(self.bot, self.db, text)
+        self.last_notified_at = int(time.time())
+
+
+def has_problems(report: dict[str, Any]) -> bool:
+    """Есть ли в отчёте что-то, о чём надо написать сразу."""
+    return bool(
+        report.get("football")
+        or report.get("cs2")
+        or report.get("maps_settled")
+        or report.get("maps_repaired")
+        or report.get("errors")
+    )
+
+
+__all__ = [
+    "LAST_REPORT",
+    "RecheckService",
+    "has_problems",
+    "notify_admins",
+    "recheck_recent",
+    "report_text",
+]

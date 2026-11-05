@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
 
+    # --- Перепроверка расчётов по расписанию ---
+    recheck_hours: int = 48              # окно перепроверки: за сколько часов сверяем
+    recheck_interval_minutes: int = 60   # как часто перепроверять (0 — только при старте)
+    recheck_ok_digest_hours: int = 24    # «всё ок» — одной сводкой в сутки
+
     # --- Не даём бесплатному инстансу Render заснуть ---
     keepalive_enabled: bool = True
     keepalive_interval: int = 600   # секунд между пингами (Render спит после 15 мин тишины)

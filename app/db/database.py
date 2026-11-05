@@ -819,6 +819,30 @@ class Database:
     async def get_map(self, map_id: int) -> Any | None:
         return await self._fetchone("SELECT * FROM match_maps WHERE id = ?", (map_id,))
 
+    # ------------------------------------------------------- служебные значения
+    async def get_meta(self, key: str) -> str | None:
+        """Служебное значение приложения (переживает перезапуск)."""
+        row = await self._fetchone("SELECT value FROM app_meta WHERE key = ?", (key,))
+        return str(row["value"]) if row is not None else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = excluded.updated_at
+            """,
+            (key, str(value), int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_meta_int(self, key: str, default: int = 0) -> int:
+        raw = await self.get_meta(key)
+        try:
+            return int(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            return default
+
     async def set_map_score(self, map_id: int, score_a: int | None, score_b: int | None) -> None:
         """Счёт раундов карты (из внешнего фида): нужен для расчёта и для карточки."""
         await self.conn.execute(

@@ -36,15 +36,13 @@ from app.handlers.errors import last_errors
 from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
+from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.manual_result import apply_manual_results
 from app.services.maps import repair_refunded_maps
 from app.services.recheck import (
     LAST_REPORT,
-    notify_admins,
-    recheck_recent,
-    report_text,
+    RecheckService,
 )
-from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -84,7 +82,10 @@ def create_bot() -> Bot:
 
 
 def create_dispatcher(
-    db: Database, syncer: MatchSyncer, backup: BackupService | None = None
+    db: Database,
+    syncer: MatchSyncer,
+    backup: BackupService | None = None,
+    recheck: RecheckService | None = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=build_storage())
 
@@ -93,6 +94,8 @@ def create_dispatcher(
     dp["syncer"] = syncer
     if backup is not None:
         dp["backup"] = backup
+    if recheck is not None:
+        dp["recheck"] = recheck
 
     dp.update.outer_middleware(UserSyncMiddleware(db))
     dp.message.outer_middleware(
@@ -117,6 +120,7 @@ async def on_startup(
     syncer: MatchSyncer,
     allowed_updates: list[str],
     backup: BackupService | None = None,
+    recheck: RecheckService | None = None,
 ) -> None:
     await db.connect()
 
@@ -140,12 +144,14 @@ async def on_startup(
     except Exception:
         log.exception("Не смог применить ручные результаты")
 
-    # перепроверка расчётов за последние двое суток: футбол — по фиду, CS2 — по картам
-    try:
-        report = await recheck_recent(db, bot, hours=48)
-        await notify_admins(bot, db, report_text(report))
-    except Exception:
-        log.exception("Перепроверка расчётов не удалась")
+    # перепроверка расчётов: сразу при старте, дальше — раз в час.
+    # «всё ок» приходит одной сводкой в сутки, расхождения — сразу.
+    if recheck is not None:
+        try:
+            await recheck.run_once()
+        except Exception:
+            log.exception("Перепроверка расчётов не удалась")
+        recheck.start()
 
     syncer.start()
     # сервис на бесплатном Render засыпает после 15 минут тишины — пингуем себя
@@ -170,9 +176,15 @@ async def on_startup(
 
 
 async def on_shutdown(
-    bot: Bot, db: Database, syncer: MatchSyncer, backup: BackupService | None = None
+    bot: Bot,
+    db: Database,
+    syncer: MatchSyncer,
+    backup: BackupService | None = None,
+    recheck: RecheckService | None = None,
 ) -> None:
     log.info("Остановка бота")
+    if recheck is not None:
+        await recheck.stop()
     await KEEPALIVE.stop()
     if backup is not None:
         await backup.stop()
@@ -218,7 +230,11 @@ async def run_polling(bot: Bot, dp: Dispatcher) -> None:
 
 
 def run_webhook(
-    bot: Bot, dp: Dispatcher, db: Database | None = None, syncer: MatchSyncer | None = None
+    bot: Bot,
+    dp: Dispatcher,
+    db: Database | None = None,
+    syncer: MatchSyncer | None = None,
+    recheck: RecheckService | None = None,
 ) -> None:
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
     from aiohttp import web
@@ -250,8 +266,9 @@ def run_webhook(
                 "last_error": syncer.last_error if syncer else None,
                 "stats": syncer.last_stats if syncer else None,
             },
-            # как прошла перепроверка расчётов при старте
+            # последняя перепроверка расчётов и её расписание
             "recheck": dict(LAST_REPORT) if LAST_REPORT else None,
+            "recheck_loop": recheck.stats if recheck is not None else None,
             # держим сервис проснувшимся: когда был последний успешный пинг
             "keepalive": KEEPALIVE.stats,
         }
@@ -348,10 +365,11 @@ def main() -> None:
     db = Database(settings.db_file, start_balance=settings.start_balance, url=settings.database_url, schema=settings.database_schema)
     syncer = MatchSyncer(bot, db)
     backup = BackupService(bot, db)
-    dp = create_dispatcher(db, syncer, backup)
+    recheck = RecheckService(bot, db)
+    dp = create_dispatcher(db, syncer, backup, recheck)
 
     if settings.run_mode == "webhook":
-        run_webhook(bot, dp, db, syncer)
+        run_webhook(bot, dp, db, syncer, recheck)
     else:
         asyncio.run(run_polling(bot, dp))
 

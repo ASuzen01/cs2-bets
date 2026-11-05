@@ -35,6 +35,11 @@ services:
       - key: DATABASE_URL
         sync: false
       # мини-приложение живёт в этом же сервисе (см. run_webhook) — один адрес и одна база
+      # перепроверка расчётов раз в час; «всё ок» — сводкой раз в сутки
+      - key: RECHECK_INTERVAL_MINUTES
+        value: "60"
+      - key: RECHECK_OK_DIGEST_HOURS
+        value: "24"
       # сервис пингует себя, чтобы Render не засыпал (адрес берётся из RENDER_EXTERNAL_URL)
       - key: KEEPALIVE_ENABLED
         value: "1"
