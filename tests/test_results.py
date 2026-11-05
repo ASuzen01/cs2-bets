@@ -197,3 +197,16 @@ def test_football_result_is_hashable_dataclass() -> None:
         start_ts=0,
     )
     assert result.score_text == "2:3" and result.finished
+
+
+def test_russian_names_match_english_feed_via_translit() -> None:
+    """Русские названия Fonbet (`АЕК Афины`) находим в английском фиде."""
+    from app.services.results import name_score, pair_matches, translit
+
+    assert translit("АЕК Афины") == "aek afiny"
+    assert name_score("Реал Мадрид", "Real Madrid") == 1.0
+    assert name_score("АЕК Афины", "AEK Athens") >= 0.5
+    assert pair_matches("АЕК Афины", "Реал Мадрид", "AEK Athens", "Real Madrid")
+    # однофамильцы из другой пары не проходят
+    assert not pair_matches("Реал Сосьедад", "Барселона", "Real Madrid", "Barcelona")
+    assert not pair_matches("АЕК Афины", "Реал Мадрид", "AEK Athens U19", "Real Madrid U19")

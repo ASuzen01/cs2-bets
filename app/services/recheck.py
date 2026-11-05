@@ -54,6 +54,7 @@ async def recheck_recent(
         "cs2": [],
         "maps_repaired": 0,
         "maps_settled": 0,
+        "unmatched": 0,
     }
 
     try:
@@ -70,7 +71,9 @@ async def recheck_recent(
         report["checked"] += 1
         try:
             if str(row["sport"]) == "football":
-                line = await _recheck_football(db, bot, client, row)
+                line, matched = await _recheck_football(db, bot, client, row)
+                if matched is False:
+                    report["unmatched"] += 1
                 if line:
                     report["football"].append(line)
             else:
@@ -95,8 +98,11 @@ async def recheck_recent(
 
 async def _recheck_football(
     db: Database, bot: Bot | None, client: ResultsClient, row: Any
-) -> str | None:
-    """Сверяет футбольный матч с фидом результатов."""
+) -> tuple[str | None, bool | None]:
+    """Сверяет футбольный матч с фидом результатов.
+
+    Возвращает (строка отчёта, найден ли результат в фиде).
+    """
     found: FootballResult | None = await client.find(
         str(row["team_a"]),
         str(row["team_b"]),
@@ -105,33 +111,33 @@ async def _recheck_football(
         english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
     )
     if found is None:
-        return None
+        return None, False
     if found.start_ts and abs(found.start_ts - int(row["start_time"])) > 6 * 3600:
         # нашли однофамильцев (дубль, юноши, другая дата) — так не рискуем
         log.warning(
             "Перепроверка: результат «%s — %s» не похож на матч #%s (время старта)",
             found.home, found.away, row["id"],
         )
-        return None
+        return None, False
 
     title = f"{row['team_a']} — {row['team_b']}"
     status = str(row["status"])
 
     if found.void:
         if status == "cancelled":
-            return None
+            return None, True
         result = await db.cancel_football_match(int(row["id"]), reason=f"статус {found.status}")
         if bot is not None:
             await notify_bettors(bot, db, result, void=True)
-        return f"{title}: не состоялся ({found.status}) — ставки возвращены"
+        return f"{title}: не состоялся ({found.status}) — ставки возвращены", True
 
     if not found.finished:
-        return None
+        return None, True
 
     true_score = (found.score_home, found.score_away)
     stored = (row["score_a"], row["score_b"])
     if status == "finished" and stored == true_score:
-        return None
+        return None, True
 
     if status in ("finished", "cancelled"):
         result = await db.resettle_football(int(row["id"]), *true_score, source="recheck")
@@ -143,7 +149,8 @@ async def _recheck_football(
     was = f"{stored[0]}:{stored[1]}" if stored[0] is not None else "без счёта"
     return (
         f"{title}: было {was} ({status}), по факту {found.score_text} — "
-        f"пересчитано, выплачено {result['paid']}"
+        f"пересчитано, выплачено {result['paid']}",
+        True,
     )
 
 
@@ -202,6 +209,11 @@ def report_text(report: dict[str, Any]) -> str:
     lines = [f"<b>Перепроверка за {report['hours']} ч</b>"]
     lines.append(f"Проверено матчей: {report['checked']}")
     corrected = len(report["football"]) + len(report["cs2"])
+    if report.get("unmatched"):
+        lines.append(
+            f"Не нашлось в фиде результатов: {report['unmatched']} "
+            "(такие матчи не трогаем)"
+        )
     if not corrected and not report["maps_settled"] and not report["maps_repaired"]:
         lines.append("Расхождения не найдены — всё посчитано верно ✅")
         return "\n".join(lines)

@@ -47,6 +47,9 @@ FINAL_STATUSES = {"FT", "AET", "AP", "PEN", "AW"}
 # Матч не состоялся (перенесён, отменён, прерван) — ставки возвращаются.
 VOID_STATUSES = {"POSTP.", "CANC.", "ABAND.", "ABD.", "POSTP", "CANC", "ABAND"}
 
+# Матч ищем только рядом по времени: иначе можно поймать однофамильцев из другого дня.
+PAIR_MAX_DELTA_SECONDS = 3 * 3600.0
+
 # Слова, которые не помогают отличить одну команду от другой.
 STOP_TOKENS = {
     "fc", "cf", "sc", "fk", "afc", "ac", "as", "ss", "ssc", "us", "ud", "cd",
@@ -95,6 +98,45 @@ def _norm(name: str) -> str:
     text = re.sub(r"[^a-z0-9]+", " ", text)
     tokens = [token for token in text.split() if token and token not in STOP_TOKENS]
     return " ".join(tokens)
+
+
+# Кириллица → латиница: русские названия Fonbet сравниваем с английским фидом.
+TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "iu", "я": "ia",
+}
+
+
+def translit(name: str) -> str:
+    """«АЕК Афины» → «aek afiny»: чтобы сравнивать с английскими названиями."""
+    return "".join(TRANSLIT.get(char, char) for char in str(name or "").lower())
+
+
+def name_score(left: str, right: str) -> float:
+    """Насколько названия похожи: 1.0 — одно и то же, 0.5 — совпал один токен."""
+    if same_team(left, right):
+        return 1.0
+    left_tokens = set(_norm(translit(left)).split())
+    right_tokens = set(_norm(right).split())
+    if not left_tokens or not right_tokens:
+        return 0.0
+    common = left_tokens & right_tokens
+    return 2 * len(common) / (len(left_tokens) + len(right_tokens))
+
+
+def pair_matches(
+    name_a: str, name_b: str, home: str, away: str, *, min_weak: float = 0.5, min_strong: float = 0.9
+) -> bool:
+    """Оба названия похожи, причём одно из них — уверенно (защита от однофамильцев)."""
+    direct = (name_score(name_a, home), name_score(name_b, away))
+    reverse = (name_score(name_a, away), name_score(name_b, home))
+    for first, second in (direct, reverse):
+        if min(first, second) >= min_weak and max(first, second) >= min_strong:
+            return True
+    return False
 
 
 def same_team(left: str, right: str, *, threshold: float = 0.82) -> bool:
@@ -168,7 +210,7 @@ class ResultsClient:
         names_b = [name for name in (english_b, team_b) if name]
         moment = datetime.fromtimestamp(start_ts) if start_ts else datetime.now()
         best: FootballResult | None = None
-        best_delta = 48 * 3600.0
+        best_delta = PAIR_MAX_DELTA_SECONDS
 
         for shift in (-1, 0, 1):
             day = (moment + timedelta(days=shift)).date()
@@ -180,9 +222,7 @@ class ResultsClient:
             for result in results:
                 for name_a in names_a:
                     for name_b in names_b:
-                        direct = same_team(name_a, result.home) and same_team(name_b, result.away)
-                        reverse = same_team(name_a, result.away) and same_team(name_b, result.home)
-                        if not (direct or reverse):
+                        if not pair_matches(name_a, name_b, result.home, result.away):
                             continue
                         delta = abs(float(result.start_ts) - float(start_ts or result.start_ts))
                         if delta < best_delta:
@@ -259,9 +299,14 @@ def _team_name(raw: Any) -> str:
 __all__ = [
     "DIFF_TOKENS",
     "FINAL_STATUSES",
+    "PAIR_MAX_DELTA_SECONDS",
+    "TRANSLIT",
     "VOID_STATUSES",
     "FootballResult",
     "ResultsClient",
+    "name_score",
+    "pair_matches",
     "parse_results",
     "same_team",
+    "translit",
 ]
