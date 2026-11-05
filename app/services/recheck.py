@@ -348,13 +348,15 @@ class RecheckService:
             self._task = None
 
     async def _run(self) -> None:
+        # первую проверку делает on_startup (run_once), поэтому здесь сразу спим:
+        # иначе на старте расчёт сверялся бы дважды подряд
         while True:
+            await asyncio.sleep(self.interval * 60)
             try:
                 await self.run_once()
             except Exception:
                 self.last_error = "проверка упала"
                 log.exception("Плановая перепроверка не удалась")
-            await asyncio.sleep(self.interval * 60)
 
     # ---------------------------------------------------------------- работа
     async def run_once(self) -> dict[str, Any]:

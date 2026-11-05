@@ -229,13 +229,18 @@ async def run_polling(bot: Bot, dp: Dispatcher) -> None:
     )
 
 
-def run_webhook(
+def build_web_app(
     bot: Bot,
     dp: Dispatcher,
     db: Database | None = None,
     syncer: MatchSyncer | None = None,
     recheck: RecheckService | None = None,
-) -> None:
+):
+    """Собирает aiohttp-приложение: вебхук Telegram, мини-приложение, /health и /ping.
+
+    Отдельная функция (а не всё внутри `run_webhook`), чтобы приложение можно было
+    поднять в тестах и убедиться, что маршруты зарегистрированы и отвечают.
+    """
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
     from aiohttp import web
 
@@ -325,6 +330,19 @@ def run_webhook(
         log.info("Мини-приложение доступно по адресу %s/", settings.webhook_base_url or "/")
 
     setup_application(app, dp, bot=bot)
+    return app
+
+
+def run_webhook(
+    bot: Bot,
+    dp: Dispatcher,
+    db: Database | None = None,
+    syncer: MatchSyncer | None = None,
+    recheck: RecheckService | None = None,
+) -> None:
+    from aiohttp import web
+
+    app = build_web_app(bot, dp, db, syncer, recheck)
     log.info("HTTP-сервер: %s:%s%s", settings.host, settings.port, settings.webhook_path)
     web.run_app(app, host=settings.host, port=settings.port, print=None)
 
