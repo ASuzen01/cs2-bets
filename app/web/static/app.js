@@ -28,7 +28,7 @@
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
-    limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250 },
+    limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250, ladder_max_bet: 50 },
     cart: readCart(),
     betsFilter: "all",
     tickets: [],       // билеты в экспресс с колеса
@@ -52,6 +52,9 @@
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
     // ---------------------------------------------------------------- игры
     casino: null,             // роспись игр, сводка и история (из /api/state)
+    ladder: null,             // последняя партия в «Лесенку»
+    ladderStake: 10,
+    ladderBusy: false,
     game: "roulette",         // какая игра открыта
     casinoPick: { roulette: "red", dice: "over" },
     casinoStake: { roulette: 50, dice: 50 },
@@ -583,7 +586,7 @@
   function teamName(match, side) {
     if (side === "a") return match.team_a;
     if (side === "b") return match.team_b;
-    if (side === "x") return "Ничья";
+    if (side === "x") return match && match.sport === "hockey" ? "Ничья (осн. время)" : "Ничья";
     return side;
   }
 
@@ -617,7 +620,7 @@
   function labelForSide(match, side) {
     if (side === "a") return match.team_a + (match.sport === "hockey" ? " (осн. время)" : "");
     if (side === "b") return match.team_b + (match.sport === "hockey" ? " (осн. время)" : "");
-    if (side === "x") return "Ничья";
+    if (side === "x") return match && match.sport === "hockey" ? "Ничья (осн. время)" : "Ничья";
     const market = marketOfSide(match, side);
     return market ? market.label : String(side);
   }
@@ -3106,6 +3109,7 @@
       state.achievements = data.achievements || state.achievements;
       state.tickets = Array.isArray(data.tickets) ? data.tickets : (state.tickets || []);
       state.casino = data.casino || state.casino;
+      state.ladder = data.ladder || null;
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
         setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
@@ -3602,8 +3606,9 @@
       const line = el("div", "row " + (row.win ? "win" : "lose"));
       const who = el("div", "who");
       who.append(document.createTextNode(row.label));
-      who.append(el("i", null, row.game === "roulette" ? "рулетка" : "кости"));
-      const tag = el("span", "tag", row.game === "roulette" ? "№ " + row.outcome : "сумма " + row.outcome);
+      who.append(el("i", null, row.game === "roulette" ? "рулетка" : row.game === "ladder" ? "лесенка" : "кости"));
+      const tagText = row.game === "roulette" ? "№ " + row.outcome : row.game === "ladder" ? row.outcome : "сумма " + row.outcome;
+      const tag = el("span", "tag", tagText);
       const res = el("div", "res", row.win ? "+" + money(row.payout - row.amount) : "−" + money(row.amount));
       line.append(who, tag, res);
       host.append(line);
@@ -3631,6 +3636,135 @@
     return box;
   }
 
+  function ladderMultiplier(roundNo) {
+    let factorial = 1;
+    for (let n = 2; n <= roundNo + 1; n += 1) factorial *= n;
+    return 0.955 * factorial;
+  }
+
+  async function ladderRequest(action, payload) {
+    state.ladderBusy = true;
+    renderLadder($("#games"));
+    try {
+      const data = await api(`/api/ladder/${action}`, { method: "POST", body: payload });
+      state.ladder = data.game;
+      if (state.user && data.balance !== undefined) setBalance(data.balance);
+      haptic(data.game.status === "lost" ? "bad" : "ok");
+      renderLadder($("#games"));
+      if (data.game.status === "lost") toast("Промах — ставка проиграна", "bad");
+      else if (data.game.status === "complete") toast(`Полный проход! Выплата ${money(data.game.payout)}`, "ok");
+      else if (data.game.status === "cashed") toast(`Выплата ${money(data.game.payout)} зачислена`, "ok");
+      refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      state.ladderBusy = false;
+      renderLadder($("#games"));
+    }
+  }
+
+  function renderLadder(host) {
+    if (!host) return;
+    host.textContent = "";
+    const game = state.ladder;
+    const card = el("section", "ladder-card");
+    card.append(el("div", "ladder-kicker", "РИСКНИ — ИЛИ ЗАБЕРИ СВОЁ"));
+    card.append(el("h2", "ladder-title", "Лесенка"));
+    card.append(el("p", "ladder-copy", "Найди приз за закрытым окном. Каждый этаж — новый выбор и больше окон."));
+
+    const active = game && ["choosing", "won"].includes(game.status);
+    if (active) {
+      const round = Number(game.round);
+      const windows = Number(game.windows);
+      const payout = Number(game.payout || Math.round(Number(game.stake) * ladderMultiplier(round)));
+      const progress = el("div", "ladder-progress");
+      for (let n = 1; n <= 8; n += 1) {
+        const step = el("span", n < round ? "done" : n === round ? "current" : "", String(n));
+        progress.append(step);
+      }
+      card.append(progress);
+      const bar = el("div", "ladder-floorhead");
+      bar.append(el("b", null, `Этаж ${round} из 8`));
+      bar.append(el("span", null, `${windows} окна · выплата ${money(payout)}`));
+      card.append(bar);
+
+      const doors = el("div", "ladder-doors");
+      for (let i = 0; i < windows; i += 1) {
+        const door = el("button", "ladder-door");
+        door.type = "button";
+        door.dataset.ladderWindow = String(i);
+        door.disabled = game.status !== "choosing" || state.ladderBusy;
+        door.append(el("span", "ladder-door-icon", "▧"), el("b", null, `Окно ${i + 1}`));
+        if (game.status === "won" && Number(game.picked_index) === i) {
+          door.classList.add("prize");
+          door.append(el("small", null, "ПРИЗ"));
+        } else if (game.status === "lost" && Number(game.revealed_index) === i) {
+          door.classList.add("prize");
+          door.append(el("small", null, "ПРИЗ"));
+        }
+        if (game.status === "lost" && Number(game.picked_index) === i) {
+          door.classList.add("miss");
+          door.append(el("small", null, "ВАШ ВЫБОР"));
+        }
+        doors.append(door);
+      }
+      card.append(doors);
+
+      if (game.status === "choosing") {
+        card.append(el("div", "ladder-note", "Выбери одно окно. Положение приза определяется сервером."));
+      } else if (round < 8) {
+        card.append(el("div", "ladder-success", "Нашёл приз! Забирай выплату или поднимайся выше."));
+        const actions = el("div", "ladder-actions");
+        const cash = el("button", "btn ladder-cash", `Забрать ${money(payout)}`);
+        cash.type = "button";
+        cash.dataset.ladderAction = "cashout";
+        cash.disabled = state.ladderBusy;
+        const next = el("button", "btn ladder-next", `Дальше · ${windows + 1} окон`);
+        next.type = "button";
+        next.dataset.ladderAction = "continue";
+        next.disabled = state.ladderBusy;
+        actions.append(cash, next);
+        card.append(actions);
+      }
+    } else {
+      if (game && game.status === "lost") {
+        card.append(el("div", "ladder-result lost", `Не повезло на этаже ${game.round}. Ставка ${money(game.stake)} потеряна.`));
+        const doors = el("div", "ladder-doors final");
+        for (let i = 0; i < Number(game.windows); i += 1) {
+          const door = el("div", "ladder-door revealed" + (i === Number(game.revealed_index) ? " prize" : "") + (i === Number(game.picked_index) ? " miss" : ""));
+          door.append(el("span", "ladder-door-icon", i === Number(game.revealed_index) ? "✦" : "▧"), el("b", null, `Окно ${i + 1}`));
+          if (i === Number(game.revealed_index)) door.append(el("small", null, "ПРИЗ"));
+          doors.append(door);
+        }
+        card.append(doors);
+      } else if (game && ["cashed", "complete"].includes(game.status)) {
+        card.append(el("div", "ladder-result won", game.status === "complete" ? `Восемь этажей пройдены! Выплата ${money(game.payout)} зачислена.` : `Выплата ${money(game.payout)} зачислена после ${game.round} этажа.`));
+      }
+      const limits = state.limits || {};
+      const maxStake = Number(limits.ladder_max_bet || 50);
+      const minStake = 10;
+      const picker = el("div", "ladder-stakes");
+      picker.append(el("span", null, "Ставка"));
+      [10, 25, maxStake].filter((value, index, list) => value >= minStake && list.indexOf(value) === index).forEach((value) => {
+        const chip = el("button", "ladder-stake" + (Number(state.ladderStake) === value ? " active" : ""), money(value));
+        chip.type = "button";
+        chip.dataset.ladderStake = String(value);
+        chip.disabled = state.ladderBusy || balance() < value;
+        picker.append(chip);
+      });
+      card.append(picker);
+      const start = el("button", "btn ladder-start", game && game.status === "lost" ? "Ещё раз" : "Начать · 10 🪙");
+      start.type = "button";
+      start.dataset.ladderAction = "start";
+      start.disabled = state.ladderBusy || balance() < Number(state.ladderStake || minStake);
+      start.textContent = `Начать · ${money(Number(state.ladderStake || minStake))}`;
+      card.append(start);
+      card.append(el("div", "ladder-note", `RTP 95,5 % · ставка ${minStake}–${maxStake} 🪙 · максимальная выплата при ставке ${maxStake} — ${money(Math.round(maxStake * ladderMultiplier(8)))}`));
+    }
+    card.append(el("div", "ladder-foot", "Выплата включает ставку. Ошибка на любом этаже завершает игру без выплаты."));
+    host.append(card);
+  }
+
   function renderGames() {
     const host = $("#games");
     if (!host) return;
@@ -3642,6 +3776,10 @@
     if (!state.user) {
       host.textContent = "";
       host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
+      return;
+    }
+    if (state.game === "ladder") {
+      renderLadder(host);
       return;
     }
     if (!state.casino) {
@@ -3898,7 +4036,7 @@
     document.querySelectorAll("#gameSwitch .seg").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy) {
+        if (state.casinoBusy || state.ladderBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");
@@ -3918,6 +4056,22 @@
       const node = event.target.closest("button");
       if (!node || node.disabled) return;
       const game = state.game;
+
+      if (node.dataset.ladderStake) {
+        state.ladderStake = Number(node.dataset.ladderStake);
+        renderLadder(host);
+        return;
+      }
+      if (node.dataset.ladderWindow !== undefined && state.ladder) {
+        ladderRequest("pick", { game_id: state.ladder.id, window_index: Number(node.dataset.ladderWindow) });
+        return;
+      }
+      if (node.dataset.ladderAction) {
+        if (node.dataset.ladderAction === "start") ladderRequest("start", { amount: Number(state.ladderStake || 10) });
+        else if (node.dataset.ladderAction === "continue" && state.ladder) ladderRequest("continue", { game_id: state.ladder.id });
+        else if (node.dataset.ladderAction === "cashout" && state.ladder) ladderRequest("cashout", { game_id: state.ladder.id });
+        return;
+      }
 
       if (node.id === "playBtn") { playCasinoRound(); return; }
 

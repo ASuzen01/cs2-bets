@@ -777,3 +777,55 @@
   overflow: visible;
 }
 .currency-unit { white-space: nowrap; }
+
+/* «Лесенка» — отдельный компактный экран с крупными интерактивными окнами. */
+.ladder-card {
+  margin: 12px 0 22px;
+  padding: 18px 16px 15px;
+  overflow: hidden;
+  border: 1px solid #29435a;
+  border-radius: 20px;
+  background: radial-gradient(ellipse at 50% -20%, rgba(40, 115, 141, .26), transparent 62%), #101b28;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .2);
+}
+.ladder-kicker { color: #6bd0c0; font-size: 10px; font-weight: 900; letter-spacing: .16em; }
+.ladder-title { margin: 5px 0 3px; font-size: 25px; letter-spacing: -.03em; }
+.ladder-copy { margin: 0 0 16px; color: #9db0c1; font-size: 12px; line-height: 1.45; }
+.ladder-progress { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin: 2px 0 16px; }
+.ladder-progress span { display: grid; place-items: center; height: 23px; border-radius: 7px; color: #74899c; background: #1a2836; font-size: 10px; font-weight: 800; }
+.ladder-progress span.done { color: #93f3c0; background: #174331; }
+.ladder-progress span.current { color: #132326; background: #74e2ca; box-shadow: 0 0 14px rgba(116, 226, 202, .26); }
+.ladder-floorhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.ladder-floorhead b { font-size: 14px; }
+.ladder-floorhead span { color: #f1d181; font-size: 11px; font-weight: 700; text-align: right; }
+.ladder-doors { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ladder-door { position: relative; display: flex; min-height: 82px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px 4px; border: 1px solid #3c5367; border-radius: 13px; color: #d9e8f3; background: linear-gradient(145deg, #24384b, #172535); cursor: pointer; transition: transform .12s, border-color .12s, background .12s; }
+.ladder-door:not(:disabled):active { transform: translateY(2px) scale(.98); }
+.ladder-door:disabled { cursor: default; opacity: 1; }
+.ladder-door-icon { color: #83a9bd; font-size: 25px; line-height: 1; }
+.ladder-door b { font-size: 11px; }
+.ladder-door small { color: #76f0b0; font-size: 8px; font-weight: 900; letter-spacing: .1em; }
+.ladder-door.prize { border-color: #5fbd91; background: linear-gradient(145deg, #1b513e, #16362f); }
+.ladder-door.prize .ladder-door-icon { color: #9affc8; }
+.ladder-door.miss { border-color: #d47470; background: linear-gradient(145deg, #512c36, #302432); }
+.ladder-door.miss small { color: #ffb2a5; }
+.ladder-note { margin: 12px 0 0; color: #92a7b8; font-size: 11px; line-height: 1.45; text-align: center; }
+.ladder-success, .ladder-result { margin: 12px 0; padding: 11px 12px; border: 1px solid #2b7050; border-radius: 12px; color: #a5f2c2; background: rgba(31, 133, 82, .13); font-size: 12px; font-weight: 700; text-align: center; }
+.ladder-result.lost { border-color: #70424a; color: #ffb7ae; background: rgba(132, 49, 55, .16); }
+.ladder-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.ladder-actions .btn, .ladder-start { min-height: 46px; border-radius: 12px; font-size: 12px; font-weight: 800; }
+.ladder-cash { border: 1px solid #31885d; color: #b4ffce; background: #174832; }
+.ladder-next { border: 1px solid #9a752e; color: #ffe59b; background: #4a3b1f; }
+.ladder-stakes { display: flex; align-items: center; gap: 7px; margin-top: 16px; }
+.ladder-stakes > span { margin-right: auto; color: #a4b5c5; font-size: 12px; }
+.ladder-stake { min-height: 34px; padding: 0 11px; border: 1px solid #36495a; border-radius: 10px; color: #c2d1df; background: #1a2937; font-size: 11px; font-weight: 800; }
+.ladder-stake.active { border-color: #64c9b5; color: #a5f4df; background: rgba(54, 156, 137, .18); }
+.ladder-stake:disabled { opacity: .45; }
+.ladder-start { width: 100%; margin-top: 10px; border: 1px solid #348b74; color: #102620; background: linear-gradient(110deg, #79e4bf, #60c9c0); }
+.ladder-start:disabled, .ladder-actions button:disabled { opacity: .48; }
+.ladder-foot { margin-top: 13px; color: #718698; font-size: 10px; line-height: 1.45; text-align: center; }
+@media (max-width: 380px) {
+  .ladder-card { padding: 15px 12px 13px; }
+  .ladder-door { min-height: 74px; }
+  .ladder-actions { grid-template-columns: 1fr; }
+}

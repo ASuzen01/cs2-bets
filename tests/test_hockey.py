@@ -647,3 +647,26 @@ class FootballStub:
 
     def __init__(self, event_id: int) -> None:
         self.event_id = 900000 + event_id
+
+
+async def test_hockey_regulation_draw_can_be_bet_and_settles(db: Database) -> None:
+    """X в хоккее — ничья за три периода, даже если затем есть победитель в ОТ."""
+    row, _ = await db.upsert_match(
+        fonbet_id=88001,
+        tournament="КХЛ",
+        team_a="Авангард",
+        team_b="ЦСКА",
+        start_time=int(time.time()) + 3600,
+        odds_a=2.95,
+        odds_x=4.2,
+        odds_b=2.1,
+        sport="hockey",
+    )
+    balance, odds = await db.place_bet(int(row["id"]), 1, None, "x", 100)
+    assert balance == 900
+    assert odds == 4.2
+
+    result = await db.settle_hockey(int(row["id"]), 2, 2, 3, 2)
+    assert result["paid"] == 420
+    assert result["winners"] == 1
+    assert await db.get_balance(1) == 1320

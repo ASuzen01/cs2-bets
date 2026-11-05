@@ -169,6 +169,23 @@ CREATE TABLE IF NOT EXISTS casino_bets (
 );
 CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
 
+-- активная партия «Лесенки»: скрытое окно хранится только на сервере
+CREATE TABLE IF NOT EXISTS ladder_games (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL,
+    stake        INTEGER NOT NULL,
+    round        INTEGER NOT NULL,
+    prize_index  INTEGER NOT NULL,
+    picked_index INTEGER,
+    status       TEXT NOT NULL,
+    payout       INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ladder_user ON ladder_games(user_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ladder_one_active ON ladder_games(user_id)
+    WHERE status IN ('choosing', 'won');
+
 -- задания дня: прогресс и награда, по строке на игрока в сутки
 CREATE TABLE IF NOT EXISTS quests (
     user_id    INTEGER NOT NULL,

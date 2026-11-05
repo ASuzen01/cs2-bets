@@ -22,6 +22,7 @@ from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
 from app.services import achievements, games
+from app.services import ladder as ladder_game
 from app.services.bonus import (
     TEASE_PRIZE,
     TEASE_TAPS,
@@ -98,6 +99,10 @@ def register_routes(
     app.router.add_get("/api/bets", api_bets)
     app.router.add_get("/api/casino", api_casino_state)
     app.router.add_post("/api/casino/play", api_casino_play)
+    app.router.add_post("/api/ladder/start", api_ladder_start)
+    app.router.add_post("/api/ladder/pick", api_ladder_pick)
+    app.router.add_post("/api/ladder/continue", api_ladder_continue)
+    app.router.add_post("/api/ladder/cashout", api_ladder_cashout)
     return app
 
 
@@ -275,9 +280,11 @@ async def api_state(request: web.Request) -> web.Response:
                 for row in await db.tickets(user_id)
             ],
             "casino": await _casino_payload(db, user_id),
+            "ladder": await db.ladder_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_bet": settings.max_bet,
+                "ladder_max_bet": settings.ladder_max_bet,
                 "max_legs": settings.max_express_legs,
                 "max_odds": settings.max_express_odds,
                 "daily_bonus": settings.daily_bonus,
@@ -987,6 +994,76 @@ async def api_casino_play(request: web.Request) -> web.Response:
 
     await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
     return web.json_response({"ok": True, "round": round_id, "balance": balance, **result})
+
+
+async def api_ladder_start(request: web.Request) -> web.Response:
+    """Начинает «Лесенку»: ставку и призовое окно фиксирует сервер."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    amount = _as_int((await _json_body(request)).get("amount"))
+    try:
+        stake = ladder_game.validate_stake(amount, settings.ladder_max_bet)
+    except ValueError as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    try:
+        game = await db.start_ladder(
+            user_id, stake, ladder_game.choose_window(ladder_game.window_count(1)),
+            settings.ladder_max_bet,
+        )
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_ladder_pick(request: web.Request) -> web.Response:
+    """Выбирает закрытое окно и только после выбора раскрывает результат."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    window_index = _as_int(body.get("window_index"))
+    game = await db.ladder_state(user_id)
+    if game is None or int(game["id"]) != game_id:
+        return _bad("Активная партия не найдена")
+    try:
+        current_payout = ladder_game.payout(int(game["stake"]), int(game["round"]))
+        result = await db.pick_ladder(user_id, game_id, window_index, current_payout)
+    except (ValueError, InvalidBet) as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_ladder_continue(request: web.Request) -> web.Response:
+    """Продолжает после найденного приза: добавляет окно и прячет новый приз."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game_id = _as_int((await _json_body(request)).get("game_id"))
+    game = await db.ladder_state(user_id)
+    if game is None or int(game["id"]) != game_id:
+        return _bad("Активная партия не найдена")
+    windows = int(game["round"]) + 2
+    try:
+        result = await db.continue_ladder(
+            user_id, game_id, ladder_game.choose_window(windows)
+        )
+    except (ValueError, InvalidBet) as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_ladder_cashout(request: web.Request) -> web.Response:
+    """Забирает доступную выплату, найденную на текущем этаже."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game_id = _as_int((await _json_body(request)).get("game_id"))
+    try:
+        result = await db.cashout_ladder(user_id, game_id)
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
 
 
 __all__ = ["DB_KEY", "STATIC_DIR", "USER_KEY", "build_app", "register_routes", "render_index"]

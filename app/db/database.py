@@ -76,6 +76,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "wheel_spins",
     "tease_claims",
     "casino_bets",
+    "ladder_games",
     "quests",
     "quest_chain",
     "achievements",
@@ -104,6 +105,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("wheel_spins", "user_id"),
     ("tease_claims", "user_id"),
     ("casino_bets", "user_id"),
+    ("ladder_games", "user_id"),
     ("achievements", "user_id"),
     ("quest_chain", "user_id"),
     ("referrals", "invited_id"),
@@ -1288,6 +1290,244 @@ class Database:
             await self._remember_token(conn, user_id, "casino", tap, round_id)
             return await self._balance_in(conn, user_id), round_id
 
+    async def ladder_state(self, user_id: int) -> dict[str, Any] | None:
+        """Последняя партия: текущее окно никогда не раскрываем до выбора игрока."""
+        row = await self._fetchone(
+            "SELECT * FROM ladder_games WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
+        )
+        if row is None:
+            return None
+        status = str(row["status"])
+        round_no = int(row["round"])
+        revealed = None
+        if status in {"won", "lost", "cashed", "complete"}:
+            revealed = (
+                int(row["picked_index"])
+                if status in {"won", "cashed", "complete"} and row["picked_index"] is not None
+                else int(row["prize_index"])
+            )
+        return {
+            "id": int(row["id"]),
+            "stake": int(row["stake"]),
+            "round": round_no,
+            "windows": round_no + 1,
+            "status": status,
+            "picked_index": int(row["picked_index"]) if row["picked_index"] is not None else None,
+            "revealed_index": revealed,
+            "payout": int(row["payout"]),
+            "updated_at": int(row["updated_at"]),
+        }
+
+    async def start_ladder(
+        self, user_id: int, stake: int, prize_index: int, max_stake: int = 50
+    ) -> dict[str, Any]:
+        """Списывает ставку и создаёт партию; активную партию нельзя задвоить."""
+        from app.services.ladder import MAX_ROUNDS, MIN_STAKE
+
+        if not MIN_STAKE <= stake <= max_stake:
+            raise InvalidBet(f"Ставка в «Лесенке» — от {MIN_STAKE} до {max_stake} 🪙")
+        if not 0 <= prize_index < 2:
+            raise InvalidBet("Неверный игровой раунд")
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE user_id = ? "
+                "AND status IN ('choosing', 'won') ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ) as cur:
+                existing = await cur.fetchone()
+            if existing is not None:
+                return self._ladder_payload(existing, balance=await self._balance_in(conn, user_id))
+            debit = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (stake, user_id, stake),
+            )
+            if debit.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+            await self._ledger(conn, user_id, -stake, "ставка · Лесенка · старт", now)
+            created = await conn.execute(
+                """
+                INSERT INTO ladder_games
+                    (user_id, stake, round, prize_index, status, payout, created_at, updated_at)
+                VALUES (?, ?, 1, ?, 'choosing', 0, ?, ?) RETURNING id
+                """,
+                (user_id, stake, prize_index, now, now),
+            )
+            row = await created.fetchone()
+            game_id = int(row["id"]) if row else int(created.lastrowid or 0)
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ?", (game_id,)
+            ) as cur:
+                game = await cur.fetchone()
+            assert game is not None
+            balance = await self._balance_in(conn, user_id)
+        return {**self._ladder_payload(game), "balance": balance, "max_rounds": MAX_ROUNDS}
+
+    async def pick_ladder(
+        self, user_id: int, game_id: int, picked_index: int, payout: int
+    ) -> dict[str, Any]:
+        """Выбирает окно. Промах завершает игру; успех открывает cashout или продолжение."""
+        from app.services.ladder import MAX_ROUNDS
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            ) as cur:
+                game = await cur.fetchone()
+            if game is None:
+                raise InvalidBet("Партия «Лесенка» не найдена")
+            if str(game["status"]) != "choosing":
+                # Повторный тап безопасен: отдаём уже вычисленный результат без выплаты.
+                return self._ladder_payload(game, balance=await self._balance_in(conn, user_id))
+            round_no = int(game["round"])
+            windows = round_no + 1
+            if not 0 <= picked_index < windows:
+                raise InvalidBet("Выбери одно из закрытых окон")
+            correct = picked_index == int(game["prize_index"])
+            status = "won" if correct else "lost"
+            final = correct and round_no == MAX_ROUNDS
+            if final:
+                status = "complete"
+            await conn.execute(
+                "UPDATE ladder_games SET picked_index = ?, status = ?, payout = ?, updated_at = ? WHERE id = ?",
+                (picked_index, status, payout if correct else 0, now, game_id),
+            )
+            if not correct:
+                await self._record_ladder_history(conn, game, round_no, 0, False, "промах", now)
+            elif final:
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
+                )
+                await self._ledger(
+                    conn, user_id, payout, f"выигрыш · Лесенка · этаж {round_no}", now
+                )
+                await self._record_ladder_history(conn, game, round_no, payout, True, "полный проход", now)
+                await self._bump_quest(conn, user_id, "casino", now)
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ?", (game_id,)
+            ) as cur:
+                updated = await cur.fetchone()
+            assert updated is not None
+            balance = await self._balance_in(conn, user_id)
+        return {
+            **self._ladder_payload(updated, balance=balance),
+            "correct": correct,
+            "revealed_index": int(game["prize_index"]),
+            "final": final,
+        }
+
+    async def continue_ladder(
+        self, user_id: int, game_id: int, prize_index: int
+    ) -> dict[str, Any]:
+        """Переходит на следующий этаж и прячет новый приз среди добавившихся окон."""
+        from app.services.ladder import MAX_ROUNDS
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            ) as cur:
+                game = await cur.fetchone()
+            if game is None or str(game["status"]) != "won":
+                raise InvalidBet("Сначала нужно найти приз на текущем этаже")
+            round_no = int(game["round"]) + 1
+            if round_no > MAX_ROUNDS or not 0 <= prize_index < round_no + 1:
+                raise InvalidBet("Лесенка уже закончилась")
+            await conn.execute(
+                "UPDATE ladder_games SET round = ?, prize_index = ?, picked_index = NULL, "
+                "status = 'choosing', payout = 0, updated_at = ? WHERE id = ?",
+                (round_no, prize_index, now, game_id),
+            )
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ?", (game_id,)
+            ) as cur:
+                updated = await cur.fetchone()
+            assert updated is not None
+            balance = await self._balance_in(conn, user_id)
+        return self._ladder_payload(updated, balance=balance)
+
+    async def cashout_ladder(self, user_id: int, game_id: int) -> dict[str, Any]:
+        """Забирает выплату после найденного приза — ровно один раз."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            ) as cur:
+                game = await cur.fetchone()
+            if game is None or str(game["status"]) != "won":
+                raise InvalidBet("Сначала найди приз, чтобы забрать выплату")
+            payout = int(game["payout"])
+            round_no = int(game["round"])
+            await conn.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
+            )
+            await self._ledger(
+                conn, user_id, payout, f"выигрыш · Лесенка · этаж {round_no}", now
+            )
+            await conn.execute(
+                "UPDATE ladder_games SET status = 'cashed', updated_at = ? WHERE id = ?",
+                (now, game_id),
+            )
+            await self._record_ladder_history(
+                conn, game, round_no, payout, True, f"забрано на этаже {round_no}", now
+            )
+            await self._bump_quest(conn, user_id, "casino", now)
+            async with conn.execute(
+                "SELECT * FROM ladder_games WHERE id = ?", (game_id,)
+            ) as cur:
+                updated = await cur.fetchone()
+            assert updated is not None
+            balance = await self._balance_in(conn, user_id)
+        return self._ladder_payload(updated, balance=balance)
+
+    @staticmethod
+    def _ladder_payload(game: Any, balance: int | None = None) -> dict[str, Any]:
+        status = str(game["status"])
+        payload = {
+            "id": int(game["id"]),
+            "stake": int(game["stake"]),
+            "round": int(game["round"]),
+            "windows": int(game["round"]) + 1,
+            "status": status,
+            "picked_index": int(game["picked_index"]) if game["picked_index"] is not None else None,
+            "payout": int(game["payout"]),
+            # скрываем случайное положение, пока раунд не сделан
+            "revealed_index": (
+                int(game["picked_index"])
+                if status in {"won", "cashed", "complete"} and game["picked_index"] is not None
+                else int(game["prize_index"]) if status == "lost" else None
+            ),
+        }
+        if balance is not None:
+            payload["balance"] = balance
+        return payload
+
+    async def _record_ladder_history(
+        self, conn: Any, game: Any, round_no: int, payout: int, won: bool, outcome: str, now: int
+    ) -> None:
+        stake = int(game["stake"])
+        from app.services.ladder import multiplier
+
+        await conn.execute(
+            """
+            INSERT INTO casino_bets
+                (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+            VALUES (?, 'ladder', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(game["user_id"]),
+                f"floor:{round_no}",
+                f"Лесенка · этаж {round_no}/8 · {outcome}",
+                stake,
+                multiplier(round_no),
+                outcome,
+                1 if won else 0,
+                payout,
+                now,
+            ),
+        )
+
     async def casino_history(self, user_id: int, limit: int = 20) -> list[Any]:
         """Последние раунды игрока — для ленты «недавние ставки»."""
         return await self._fetchall(
@@ -2089,8 +2329,8 @@ class Database:
                 match = await cur.fetchone()
             if match is None:
                 raise MatchNotFound("Матч не найден")
-            if side == "x" and str(match["sport"]) != "football":
-                raise InvalidBet("Ничья бывает только в футболе")
+            if side == "x" and str(match["sport"]) not in {"football", "hockey"}:
+                raise InvalidBet("Ничья доступна только в футболе или в основное время хоккея")
             refusal = self._betting_refusal(match, now)
             if refusal:
                 raise MatchNotOpen(refusal)
@@ -2589,7 +2829,7 @@ class Database:
     async def express_items(self, express_id: int) -> list[Any]:
         return await self._fetchall(
             """
-            SELECT i.*, m.team_a, m.team_b, m.status AS match_status, m.winner AS match_winner
+            SELECT i.*, m.team_a, m.team_b, m.sport, m.status AS match_status, m.winner AS match_winner
             FROM express_items i JOIN matches m ON m.id = i.match_id
             WHERE i.express_id = ? ORDER BY i.id
             """,

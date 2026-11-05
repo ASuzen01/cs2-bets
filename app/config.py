@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     backup_max_mb: int = 25          # предел размера файла, который примем на восстановление
     min_bet: int = 10
     max_bet: int = 5000           # потолок одной ставки/экспресса (казино ограничено отдельно)
+    ladder_max_bet: int = 50      # «Лесенка»: отдельный лимит из-за очень большого верхнего множителя
     channel_id: int = 0               # 0 — посты «купон дня» остаются в личке админа
     reminders_enabled: bool = True
     match_notify_enabled: bool = True     # «через 20 минут твой матч» по открытым ставкам

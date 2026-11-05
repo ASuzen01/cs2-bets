@@ -79,8 +79,8 @@ async def test_leg_odds_for_football_and_hockey(db: Database) -> None:
     assert odds(fb, "a") == 2.0
     assert odds(fb, "x") == 3.4
     assert odds(fb, "b") == 3.6
-    # ничьей в хоккее на уровне матча нет: X бывает только в основном времени
-    assert odds(hk, "x") is None
+    # в хоккее X — отдельный исход основного времени
+    assert odds(hk, "x") == pytest.approx(4.2)
     assert odds(hk, "a") == 2.95
     # рынки хоккея считаются моделью — кэф должен быть настоящим числом
     assert odds(hk, "h:reg:x") == 4.2
@@ -405,3 +405,46 @@ async def test_history_shows_legs_of_football_hockey_express(client: TestClient,
     assert express["payout"] == body["potential"]
     assert [leg["team"] for leg in express["legs"]] == ["Ничья", "Авангард (с ОТ)"]
     assert all(leg["result"] == "won" for leg in express["legs"])
+
+
+async def test_hockey_regulation_draw_side_is_supported_in_express(db: Database) -> None:
+    """X в хоккее — ничья за три периода, даже если победитель в ОТ."""
+    from app.services.legs import label as leg_label
+    from app.services.legs import odds as leg_odds
+    from app.services.legs import outcome as leg_outcome
+
+    hk = await hockey_match(db)
+    row = await db.get_match(int(hk["id"]))
+    assert leg_odds(row, "x") == pytest.approx(4.2)
+    assert leg_label(row, "x") == "Ничья (осн. время)"
+
+    match = dict(row)
+    match.update({"reg_a": 2, "reg_b": 2})
+    assert leg_outcome(match, "x", "b") == "won"  # гости выиграли уже в овертайме
+
+    fb = await football_match(db)
+    express_id, _, _ = await db.place_express(
+        USER["id"], None, 100,
+        [
+            {"match_id": int(fb["id"]), "side": "b"},
+            {"match_id": int(hk["id"]), "side": "x"},
+        ],
+    )
+    await db.settle_football(int(fb["id"]), 0, 1, source="admin")
+    await db.settle_hockey(int(hk["id"]), 2, 2, 3, 2, source="admin")
+    legs = {str(leg["side"]): leg for leg in await db.express_items(express_id)}
+    assert str(legs["x"]["result"]) == "won"
+    assert (await db.get_express(express_id))["status"] == "won"
+
+
+async def test_live_hockey_regulation_draw_api_accepts_x(client, db: Database, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "live_betting", True)
+    hk = await hockey_match(db)
+    await db.set_status(int(hk["id"]), "live")
+    response = await client.post(
+        "/api/bet", json={"match_id": int(hk["id"]), "side": "x", "amount": 100}
+    )
+    data = await response.json()
+    assert response.status == 200, data
+    assert data["odds"] == 4.2
+    assert await db.get_balance(USER["id"]) == 9900

@@ -2,7 +2,7 @@
 
 Один и тот же код живёт в одиночной ставке и в экспрессе:
 
-* `a` / `x` / `b` — исход матча (ничья бывает только в футболе);
+* `a` / `x` / `b` — исход матча; X в хоккее — ничья в основное время;
 * `f:<рынок>:<параметр>` — рынок футбола (`f:total:over:2.5`, `f:btts:yes`…);
 * `h:<рынок>:<параметр>` — рынок хоккея (`h:final:1`, `h:total:over:5.5`…).
 
@@ -43,8 +43,8 @@ def odds(row: Any, side: str) -> float | None:
     """Текущий кэф исхода: колонки матча для 1X2, роспись — для рынков."""
     sport = str(row["sport"])
     if not is_market_side(side):
-        if side == "x" and sport != "football":
-            return None                     # ничьей нет ни в CS2, ни в хоккее
+        if side == "x" and sport not in {"football", "hockey"}:
+            return None                     # ничьей нет в CS2 и других матчах без X
         column = {"a": "odds_a", "x": "odds_x", "b": "odds_b"}.get(str(side))
         if column is None:
             return None
@@ -66,7 +66,7 @@ def label(row: Any, side: str) -> str:
         if side == "b":
             return team_b
         if side == "x":
-            return "Ничья"
+            return "Ничья (осн. время)" if _sport(row) == "hockey" else "Ничья"
         return str(side)
 
     parsed_football = football.parse_side(side)
@@ -113,7 +113,20 @@ def outcome(row: Any, side: str, winner: str | None) -> str:
             )
         )
 
+    if _sport(row) == "hockey" and str(side) == "x":
+        # В хоккее X означает ничью за 60 минут, хотя победитель матча — команда.
+        reg_a = _int(row, "reg_a", _score_a(row))
+        reg_b = _int(row, "reg_b", _score_b(row))
+        return "won" if reg_a == reg_b else "lost"
+
     return "won" if str(side) == winner else "lost"
+
+
+def _sport(row: Any) -> str:
+    try:
+        return str(row["sport"])
+    except (KeyError, IndexError, TypeError):
+        return ""
 
 
 def _result(outcome: str) -> str:
