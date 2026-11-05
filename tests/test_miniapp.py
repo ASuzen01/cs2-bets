@@ -263,3 +263,84 @@ def test_payload_survives_match_without_odds() -> None:
     payload = match_payload(row)
     assert payload["odds_a"] is None and payload["odds_b"] is None
     assert payload["status"] == "live"
+
+
+# ------------------------------------------------- регрессии из дебага (задача 50)
+async def test_garbage_amount_is_400_not_500(client: TestClient, match) -> None:
+    """«abc» вместо суммы — понятная ошибка, а не 500 с трейсбеком."""
+    response = await client.post(
+        "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": "abc"}
+    )
+    payload = await response.json()
+
+    assert response.status == 400
+    assert payload["ok"] is False
+    assert "Сумма" in payload["error"]
+
+
+async def test_garbage_express_amount_is_400(client: TestClient, match) -> None:
+    response = await client.post(
+        "/api/express",
+        json={
+            "amount": "abc",
+            "legs": [
+                {"match_id": int(match["id"]), "side": "a"},
+                {"match_id": int(match["id"]) + 1, "side": "b"},
+            ],
+        },
+    )
+    assert response.status == 400
+
+
+async def test_map_bet_from_foreign_match_rejected(
+    client: TestClient, match, db: Database
+) -> None:
+    """Карту нельзя подшить к чужому матчу: иначе в истории ставка висит не там."""
+    other, _ = await db.upsert_match(
+        fonbet_id=556,
+        tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
+        team_a="Vitality",
+        team_b="Spirit",
+        start_time=int(time.time()) + 3600,
+        odds_a=1.9,
+        odds_b=1.9,
+    )
+    card, _ = await db.upsert_map(
+        match_id=int(other["id"]), fonbet_id=90_556, map_number=1, odds_a=1.9, odds_b=1.9
+    )
+
+    response = await client.post(
+        "/api/bet",
+        json={
+            "match_id": int(match["id"]),
+            "market": "map",
+            "map_id": int(card["id"]),
+            "side": "a",
+            "amount": 100,
+        },
+    )
+
+    assert response.status == 400
+    assert "другого матча" in (await response.json())["error"]
+
+
+async def test_active_bets_include_football(client: TestClient, match, db: Database) -> None:
+    """«Ставок в игре» на главном экране считает и футбольные ставки."""
+    football, _ = await db.upsert_match(
+        fonbet_id=557,
+        tournament="Лига Чемпионов УЕФА. Общий этап",
+        team_a="Лейпциг",
+        team_b="Манчестер Сити",
+        start_time=int(time.time()) + 3600,
+        odds_a=5.3,
+        odds_x=4.9,
+        odds_b=1.53,
+        sport="football",
+    )
+    await db.place_bet(int(match["id"]), USER["id"], None, "a", 100)
+    await db.place_football_bet(int(football["id"]), USER["id"], None, "total", "over:2.5", 100)
+
+    payload = await (await client.get("/api/state")).json()
+    assert len(payload["bets"]) == 2
+    # и исход CS2, и рынок футбола подписаны по-человечески
+    assert {b["label"] for b in payload["bets"]} == {"Aurora", "ТБ 2.5"}

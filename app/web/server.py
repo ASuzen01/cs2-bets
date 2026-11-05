@@ -243,16 +243,24 @@ def _bad(message: str, status: int = 400) -> web.Response:
     return web.json_response({"ok": False, "error": message}, status=status)
 
 
+def _as_int(value: Any) -> int:
+    """Терпимый int: «abc» из запроса — это 0, а не 500 на весь экран."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 async def api_bet(request: web.Request) -> web.Response:
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
     body = await _json_body(request)
 
-    match_id = int(body.get("match_id") or 0)
+    match_id = _as_int(body.get("match_id"))
     side = str(body.get("side") or "")
-    amount = int(body.get("amount") or 0)
+    amount = _as_int(body.get("amount"))
     market = str(body.get("market") or "match")
-    map_id = int(body.get("map_id") or 0)
+    map_id = _as_int(body.get("map_id"))
 
     parsed = parse_side(side)
     if parsed is not None:      # рынок футбола: тотал, фора, точный счёт…
@@ -282,10 +290,12 @@ async def api_bet(request: web.Request) -> web.Response:
     if market == "map":
         if not map_id:
             return _bad("Не выбрана карта")
+        card = await db.get_map(map_id)
+        if card is not None and match_id and int(card["match_id"]) != match_id:
+            return _bad("Эта карта — из другого матча")
         balance, odds = await db.place_map_bet(
             map_id, int(user["user_id"]), None, side, amount
         )
-        card = await db.get_map(map_id)
         match = await db.get_match(int(card["match_id"])) if card is not None else None
     else:
         balance, odds = await db.place_bet(match_id, int(user["user_id"]), None, side, amount)
@@ -309,10 +319,10 @@ async def api_express(request: web.Request) -> web.Response:
     user = request[USER_KEY]
     body = await _json_body(request)
 
-    amount = int(body.get("amount") or 0)
+    amount = _as_int(body.get("amount"))
     raw_legs = body.get("legs") or []
     legs = [
-        {"match_id": int(leg.get("match_id") or 0), "side": str(leg.get("side") or "")}
+        {"match_id": _as_int(leg.get("match_id")), "side": str(leg.get("side") or "")}
         for leg in raw_legs
         if isinstance(leg, dict)
     ]

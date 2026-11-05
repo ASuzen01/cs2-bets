@@ -65,12 +65,16 @@
   .card .top{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:11.5px;margin-bottom:7px}
   .card .top .tour{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .teams{display:flex;flex-direction:column;gap:7px}
-  .team{display:flex;gap:8px}
-  .odd{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  .team{display:flex;gap:8px;min-width:0}
+  .odd{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;
+    text-align:left;
     background:var(--card2);border:1px solid #26374a;border-radius:12px;padding:10px 12px;
     transition:transform .08s ease,background .15s}
   .odd:active{transform:scale(.985);background:#27384c}
-  .odd .name{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* span по умолчанию инлайновый, а инлайну overflow/ellipsis не указ: без block
+     длинное название команды растягивало кнопку и вылезало за карточку */
+  .odd .name{display:block;flex:1;min-width:0;font-weight:600;font-size:14px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .odd .val{font-variant-numeric:tabular-nums;font-weight:800;color:#8ecbff;
     border-radius:8px;padding:1px 5px;margin-right:-5px;transition:color .3s,background .3s}
   /* мягкая вспышка при движении линии: зелёная — кэф вырос, красная — упал */
@@ -93,12 +97,22 @@
     color:var(--muted);font-weight:700;margin:2px 0 6px}
   .maps{margin-top:10px;padding-top:10px;border-top:1px solid #22303f;
     display:flex;flex-direction:column;gap:6px}
-  .maprow{display:flex;align-items:center;gap:6px}
-  .maplabel{flex:0 0 92px;font-size:11.5px;color:var(--muted);white-space:nowrap;
+  .maprow{display:flex;align-items:center;gap:6px;min-width:0}
+  .maplabel{flex:0 0 auto;max-width:52%;font-size:11.5px;color:var(--muted);white-space:nowrap;
     display:flex;align-items:center}
-  .odd.small{flex:1;padding:7px 9px;border-radius:10px;gap:5px}
+  .maplabel .lbl-short{display:none}
+  .odd.small{flex:1 1 0;min-width:0;padding:7px 8px;border-radius:10px;gap:5px}
   .odd.small .name{font-size:12px;font-weight:600}
-  .odd.small .val{font-size:12.5px}
+  .odd.small .val{font-size:12px}
+  /* узкие телефоны (360 и уже): «К1» вместо «Карта 1» — названия команд важнее */
+  @media (max-width:380px){
+    .maplabel{font-size:11px}
+    .maplabel .lbl-full{display:none}
+    .maplabel .lbl-short{display:inline}
+    .odd.small{padding:7px 7px;gap:4px}
+    .odd.small .name{font-size:11.5px}
+    .card{padding:11px 11px}
+  }
 
   .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:999px;
     background:var(--card2);border:1px solid #26374a;font-size:12.5px;color:var(--accent)}
@@ -111,6 +125,9 @@
   .rank{width:26px;text-align:center;font-weight:800;color:var(--muted)}
   .rowcard .grow{flex:1;min-width:0}
   .rowcard .grow b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* в экспрессе название ноги можно переносить: там список, а не сетка кэфов */
+  .rowcard.leg .grow b{white-space:normal;overflow:hidden;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
   .rowcard .grow span{font-size:11.5px;color:var(--muted)}
   /* корзина экспресса: кэф исхода и подсветка, если линия сдвинулась */
   .rowcard .val{font-variant-numeric:tabular-nums;font-weight:800;font-size:14px;color:#8ecbff;
@@ -301,7 +318,7 @@
   .fb-score.live{color:#ff8f8f;border-color:#5a2b2b;background:#2a1a1c}
 
   .fb-odds{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-  .fb-odds .odd{flex-direction:column;align-items:center;gap:2px;padding:8px 4px}
+  .fb-odds .odd{flex-direction:column;align-items:center;gap:2px;padding:8px 4px;text-align:center}
   .fb-odds .odd .name{font-size:11px;color:var(--muted);font-weight:600;
     max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fb-odds .odd .val{font-size:15px;margin:0}

@@ -30,11 +30,28 @@ def fmt_time(ts: int) -> str:
     """02.11 21:00 — по времени сервера."""
     return datetime.fromtimestamp(ts).strftime("%d.%m %H:%M")
 
+def _bo_part(parts: list[str]) -> str | None:
+    """Формат серии из названия турнира: «Bo3», «Bo5» — игроку это важно."""
+    for part in parts:
+        text = part.strip()
+        if len(text) in (3, 4) and text[:2].lower() == "bo" and text[2:].isdigit():
+            return text
+    return None
+
+
 def short_tournament(name: str) -> str:
     """'Counter-Strike. IEM Пекин. Групповой этап. Bo3' -> 'IEM Пекин · Bo3'."""
     parts = [part.strip() for part in name.split(".") if part.strip()]
     parts = [part for part in parts if part.lower() not in ("counter-strike", "cs2")]
-    return " · ".join(parts[:2]) if parts else name
+    if not parts:
+        return name
+    keep = [parts[0]]
+    bo = _bo_part(parts)
+    if bo and bo.lower() != parts[0].lower():
+        keep.append(bo)          # «IEM Пекин · Bo3»: сколько карт в серии
+    elif len(parts) > 1:
+        keep.append(parts[1])
+    return " · ".join(keep)
 
 START = """🍀 <b>Добрая лудка</b>
 
@@ -74,10 +91,21 @@ def rules_text() -> str:
         f"Минимальная ставка: {money(settings.min_bet)}."
     )
 
+def _sport_of(match: Mapping[str, Any]) -> str:
+    """Вид спорта строки матча: у старых строк колонки может не быть."""
+    try:
+        return str(match["sport"] or "")
+    except (KeyError, IndexError):
+        return ""
+
+
 def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
     team_a = escape(str(match["team_a"]))
     team_b = escape(str(match["team_b"]))
     status = str(match["status"])
+    football = _sport_of(match) == "football"
+    icon = "⚽️" if football else "🎮"
+    score_label = "Счёт" if football else "Счёт по картам"
 
     live_open = settings.live_betting
     head = {
@@ -89,7 +117,7 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
     }.get(status, status)
 
     lines = [
-        f"🎮 <b>{escape(short_tournament(str(match['tournament'])))}</b> · матч #{match['id']} · {head}",
+        f"{icon} <b>{escape(short_tournament(str(match['tournament'])))}</b> · матч #{match['id']} · {head}",
         "",
         f"🔵 <b>{team_a}</b> — кэф <b>{odds(match['odds_a'])}</b>",
         f"🟠 <b>{team_b}</b> — кэф <b>{odds(match['odds_b'])}</b>",
@@ -98,7 +126,7 @@ def match_card(match: Mapping[str, Any], *, with_bets: bool = True) -> str:
 
     score = score_text(match)
     if score and status in ("live", "awaiting"):
-        lines.append(f"📊 Счёт по картам: <b>{score}</b>")
+        lines.append(f"📊 {score_label}: <b>{score}</b>")
 
     if status == "finished" and match["winner"]:
         winner = team_a if match["winner"] == "a" else team_b
@@ -157,6 +185,7 @@ def bet_result(
     balance: int,
     score: str | None = None,
     market_label: str | None = None,
+    void_note: str | None = None,
 ) -> str:
     """Персональное сообщение игроку по его одиночной ставке.
 
@@ -168,10 +197,16 @@ def bet_result(
     stake_line = f"Ставка {money(amount)} на <b>{escape(str(picked))}</b> · кэф {odds_value:.2f}"
 
     if void:
+        # возврат бывает разным: матч отменили или карту в серии так и не играли
+        note = void_note or (
+            "Карту не играли, ставка возвращена."
+            if market_label
+            else "Матч отменён, ставка не считается."
+        )
         return (
             "⚪️ <b>Ставка возвращена.</b>\n"
             f"{head}\n"
-            "Матч отменён, ставка не считается.\n"
+            f"{note}\n"
             f"Возврат <b>{money(payout)}</b> · баланс <b>{money(balance)}</b>"
         )
 

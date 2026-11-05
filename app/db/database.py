@@ -76,6 +76,28 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+async def _match_of_card(conn: Any, card: Any) -> Any:
+    """Строка матча для текста леджера, когда на руках только карта."""
+    async with conn.execute(
+        "SELECT team_a, team_b FROM matches WHERE id = ?", (int(card["match_id"]),)
+    ) as cur:
+        return await cur.fetchone()
+
+
+def match_tag(match: Any) -> str:
+    """Человеческая метка матча для леджера: «Арсенал — Челси» вместо «матч #5».
+
+    Леджер — единственное место, где игрок видит движения денег, и внутренний id
+    матча там ничего не значит. Имя команды в истории полезнее.
+    """
+    if match is None:
+        return "матч"
+    team_a, team_b = match["team_a"], match["team_b"]
+    if team_a and team_b:
+        return f"{team_a} — {team_b}"
+    return "матч"
+
+
 class BettingError(Exception):
     """Игровая ошибка, текст можно показывать пользователю."""
 
@@ -920,7 +942,7 @@ class Database:
                 (int(match["id"]), user_id, chat_id, side, amount, float(odds), map_id, now),
             )
             await self._ledger(
-                conn, user_id, -amount, f"ставка · карта {int(card['map_number'])}", now
+                conn, user_id, -amount, f"ставка · карта {int(card['map_number'])} · {match_tag(match)}", now
             )
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)
@@ -982,7 +1004,7 @@ class Database:
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
                 )
                 await self._ledger(
-                    conn, user_id, total, f"выплата · карта {int(card['map_number'])}"
+                    conn, user_id, total, f"выплата · карта {int(card['map_number'])} · {match_tag(match)}"
                 )
 
             await conn.execute(
@@ -1056,7 +1078,7 @@ class Database:
                 """,
                 (match_id, user_id, chat_id, side, amount, float(odds), now),
             )
-            await self._ledger(conn, user_id, -amount, f"ставка · матч #{match_id}", now)
+            await self._ledger(conn, user_id, -amount, f"ставка · {match_tag(match)}", now)
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)
             ) as cur2:
@@ -1115,7 +1137,7 @@ class Database:
                 """,
                 (match_id, user_id, chat_id, side_code(key, param), amount, odds, now),
             )
-            await self._ledger(conn, user_id, -amount, f"ставка · {market['label']} · матч #{match_id}", now)
+            await self._ledger(conn, user_id, -amount, f"ставка · {market['label']} · {match_tag(match)}", now)
             async with conn.execute(
                 "SELECT balance FROM users WHERE user_id = ?", (user_id,)
             ) as cur2:
@@ -1193,7 +1215,7 @@ class Database:
                 await conn.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
                 )
-                await self._ledger(conn, user_id, total, f"выплата · матч #{match_id}")
+                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
 
             await conn.execute(
                 """
@@ -1427,7 +1449,8 @@ class Database:
             JOIN matches m ON m.id = b.match_id
             LEFT JOIN match_maps mm ON mm.id = b.map_id
             WHERE b.user_id = ? AND (
-                (b.market = 'match' AND m.status IN ('open', 'live', 'awaiting'))
+                -- ставка на исход матча: и CS2, и футбол (у футбола свой market)
+                (b.market IN ('match', 'football') AND m.status IN ('open', 'live', 'awaiting'))
                 OR (b.market = 'map' AND mm.status IN ('open', 'live', 'awaiting'))
             )
             ORDER BY m.start_time
@@ -1538,7 +1561,7 @@ class Database:
                 await conn.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
                 )
-                await self._ledger(conn, user_id, total, f"выплата · матч #{match_id}")
+                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
 
             await conn.execute(
                 """
@@ -1588,6 +1611,8 @@ class Database:
             raise BettingError("По счёту победителя карты не видно")
 
         async with self.transaction() as conn:
+            match = await _match_of_card(conn, card)
+
             async with conn.execute(
                 "SELECT * FROM bets WHERE map_id = ? AND market = 'map'", (map_id,)
             ) as cur:
@@ -1612,7 +1637,7 @@ class Database:
                     conn,
                     int(bet["user_id"]),
                     -payout,
-                    f"откат возврата · карта {int(card['map_number'])}",
+                    f"откат возврата · карта {int(card['map_number'])} · {match_tag(match)}",
                 )
                 await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
 
@@ -1635,6 +1660,8 @@ class Database:
                 raise MatchNotFound("Карта не найдена")
             if str(card["status"]) in ("finished", "cancelled"):
                 raise MatchAlreadySettled("Карта уже рассчитана")
+
+            match = await _match_of_card(conn, card)
 
             async with conn.execute(
                 "SELECT * FROM bets WHERE map_id = ? AND market = 'map'", (map_id,)
@@ -1666,7 +1693,7 @@ class Database:
                 )
                 await self._ledger(
                     conn, int(bet["user_id"]), amount,
-                    f"возврат · карта {int(card['map_number'])}",
+                    f"возврат · карта {int(card['map_number'])} · {match_tag(match)}",
                 )
 
             await conn.execute(
@@ -1723,7 +1750,7 @@ class Database:
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                     (amount, int(bet["user_id"])),
                 )
-                await self._ledger(conn, int(bet["user_id"]), amount, f"возврат · матч #{match_id}")
+                await self._ledger(conn, int(bet["user_id"]), amount, f"возврат · {match_tag(match)}")
 
             await conn.execute(
                 "UPDATE matches SET status = 'cancelled', finished_at = ? WHERE id = ?",
@@ -1777,7 +1804,7 @@ class Database:
                     (max(0, balance - payout), int(bet["user_id"])),
                 )
                 await self._ledger(
-                    conn, int(bet["user_id"]), -payout, f"сторно расчёта · матч #{match_id}"
+                    conn, int(bet["user_id"]), -payout, f"сторно расчёта · {match_tag(match)}"
                 )
                 await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
 
@@ -1833,7 +1860,7 @@ class Database:
                     (amount, int(bet["user_id"])),
                 )
                 await self._ledger(
-                    conn, int(bet["user_id"]), amount, f"возврат · матч #{match_id} ({reason})"
+                    conn, int(bet["user_id"]), amount, f"возврат · {match_tag(match)} ({reason})"
                 )
 
             await conn.execute(
@@ -1920,7 +1947,7 @@ class Database:
                     (max(0, balance - payout), int(bet["user_id"])),
                 )
                 await self._ledger(
-                    conn, int(bet["user_id"]), -payout, f"откат возврата · матч #{match_id}"
+                    conn, int(bet["user_id"]), -payout, f"откат возврата · {match_tag(match)}"
                 )
                 await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
 

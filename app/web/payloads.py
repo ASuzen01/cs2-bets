@@ -6,11 +6,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from app.db import Database
 from app.services.football import market_label, markets_of, parse_side
+
+# вторая часть названия иногда не лига, а стадия: «Премьер-Лига. 12-й тур»
+_ROUND_PART = re.compile(r"^(\d|тур\b|сезон|этап|раунд|плей-офф|финал|групп|общий)", re.IGNORECASE)
 
 _CUPS = (
     ("лига чемпионов", "ЛЧ"),
@@ -32,7 +36,16 @@ def short_tournament(name: str, limit: int = 42) -> str:
             stage = parts[1] if len(parts) > 1 else ""
             return f"{short} · {stage}"[:limit] if stage else short
     if len(parts) > 1:
-        return parts[1][:limit]
+        base = parts[1]
+        if _ROUND_PART.match(base) and not _ROUND_PART.match(parts[0]):
+            base = parts[0]      # «Премьер-Лига. 12-й тур» → показываем лигу, а не тур
+        bo = next(
+            (part for part in parts
+             if len(part) in (3, 4) and part[:2].lower() == "bo" and part[2:].isdigit()),
+            "",
+        )
+        # формат серии (Bo3/Bo5) показываем рядом с турниром: от него зависит, сколько карт
+        return f"{base} · {bo}"[:limit] if bo else base[:limit]
     return name[:limit]
 
 

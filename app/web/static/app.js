@@ -296,7 +296,13 @@
       const box = el("div", "maps");
       maps.forEach((card_market) => {
         const row = el("div", "maprow");
-        const label = el("span", "maplabel", `Карта ${card_market.number}`);
+        // На узком экране «Карта 1» съедает место у названий команд — там показываем «К1»,
+        // выбор варианта делает CSS (медиазапрос), рендер одинаковый.
+        const label = el("span", "maplabel");
+        label.append(
+          el("span", "lbl-full", `Карта ${card_market.number}`),
+          el("span", "lbl-short", `К${card_market.number}`),
+        );
         if (card_market.score) label.append(el("span", "mapscore", card_market.score));
         // карта живёт своей жизнью: серия может ждать результат, а карта — идти
         const mapOpen = card_market.status === "open" || card_market.status === "live";
@@ -687,7 +693,7 @@
 
     const card = el("div", "card");
     state.cart.forEach((leg, index) => {
-      const row = el("div", "rowcard" + (leg.missing ? " missing" : ""));
+      const row = el("div", "rowcard leg" + (leg.missing ? " missing" : ""));
       row.style.margin = "0 0 8px";
       const num = el("div", "rank", String(index + 1));
       const grow = el("div", "grow");
@@ -730,7 +736,9 @@
     const total = cartOdds();
     const summary = el("div", "summary");
     summary.innerHTML = "";
-    summary.append(el("div", null, `Исходов: <b>${state.cart.length}</b> · итоговый кэф: <b>${oddsText(total)}</b>`));
+    // только числа — innerHTML безопасен, а текстовая нода показала бы теги как есть
+    summary.innerHTML =
+      `Исходов: <b>${state.cart.length}</b> · итоговый кэф: <b>${oddsText(total)}</b>`;
 
     card.append(summary);
 
@@ -806,7 +814,8 @@
       row.style.padding = "10px 0";
       row.style.background = "transparent";
       const grow = el("div", "grow");
-      grow.append(el("b", null, item.reason));
+      // в базе причина записана строчными («ставка · …»), а строку истории хочется с заглавной
+      grow.append(el("b", null, item.reason.charAt(0).toUpperCase() + item.reason.slice(1)));
       const d = new Date(item.at * 1000);
       grow.append(el("span", null, d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })));
       row.append(grow);
@@ -1238,7 +1247,7 @@
         y: ly.toFixed(2),
         "text-anchor": "middle",
         "dominant-baseline": "middle",
-        "font-size": "9",
+        "font-size": "10",
         "font-weight": "800",
         fill: slot.tier > 0 ? "#20190a" : slot.tier < 0 ? "#5f7183" : "#eaf3fb",
       });
