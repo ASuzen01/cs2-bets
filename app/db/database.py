@@ -1505,6 +1505,68 @@ class Database:
             "expresses": expresses,
         }
 
+    async def refunded_maps_with_score(self) -> list[Any]:
+        """Карты, которые вернули как «не сыгранные», хотя счёт раундов у них есть."""
+        return await self._fetchall(
+            "SELECT * FROM match_maps WHERE status = 'cancelled' "
+            "AND score_a IS NOT NULL AND score_b IS NOT NULL ORDER BY id"
+        )
+
+    async def recount_map(self, map_id: int, winner: str | None = None) -> dict[str, Any]:
+        """Возвращённую карту пересчитываем по факту: откат возвратов + выплаты.
+
+        `winner` необязателен: если не задан, победитель берётся из счёта раундов.
+        """
+        from app.services.cs2_rules import map_winner
+
+        card = await self.get_map(map_id)
+        if card is None:
+            raise MatchNotFound("Карта не найдена")
+        if str(card["status"]) != "cancelled":
+            raise BettingError("Пересчитать можно только возвращённую карту")
+        winner = winner or map_winner(card["score_a"], card["score_b"])
+        if winner not in ("a", "b"):
+            raise BettingError("По счёту победителя карты не видно")
+
+        async with self.transaction() as conn:
+            async with conn.execute(
+                "SELECT * FROM bets WHERE map_id = ? AND market = 'map'", (map_id,)
+            ) as cur:
+                bets = list(await cur.fetchall())
+
+            reversed_total = 0
+            for bet in bets:
+                payout = int(bet["payout"] or 0)
+                if not payout:
+                    continue
+                reversed_total += payout
+                async with conn.execute(
+                    "SELECT balance FROM users WHERE user_id = ?", (int(bet["user_id"]),)
+                ) as cur:
+                    user = await cur.fetchone()
+                balance = int(user["balance"]) if user else 0
+                await conn.execute(
+                    "UPDATE users SET balance = ? WHERE user_id = ?",
+                    (max(0, balance - payout), int(bet["user_id"])),
+                )
+                await self._ledger(
+                    conn,
+                    int(bet["user_id"]),
+                    -payout,
+                    f"откат возврата · карта {int(card['map_number'])}",
+                )
+                await conn.execute("UPDATE bets SET payout = NULL WHERE id = ?", (int(bet["id"]),))
+
+            await conn.execute(
+                "UPDATE match_maps SET status = 'live', winner = NULL, finished_at = NULL "
+                "WHERE id = ?",
+                (map_id,),
+            )
+
+        result = await self.settle_map(map_id, winner, source="recount")
+        result["reversed"] = reversed_total
+        return result
+
     async def cancel_map(self, map_id: int, reason: str = "карта не игралась") -> dict[str, Any]:
         """Возврат ставок на карту, которую так и не сыграли (например, серия закончилась 2:0)."""
         async with self.transaction() as conn:

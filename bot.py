@@ -37,6 +37,7 @@ from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services.backup import BackupService
 from app.services.manual_result import apply_manual_results
+from app.services.maps import repair_refunded_maps
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
@@ -111,6 +112,18 @@ async def on_startup(
     backup: BackupService | None = None,
 ) -> None:
     await db.connect()
+
+    # карты, которые раньше вернули как «не сыгранные», хотя счёт раундов есть
+    try:
+        repaired = await repair_refunded_maps(db, bot)
+        if repaired["settled"]:
+            log.info(
+                "Пересчитал возвращённых карт: %s, выплачено %s",
+                repaired["settled"],
+                repaired["paid"],
+            )
+    except Exception:
+        log.exception("Не смог пересчитать возвращённые карты")
 
     # ручные результаты сыгранных матчей (Fonbet счёт после матча не отдаёт)
     try:

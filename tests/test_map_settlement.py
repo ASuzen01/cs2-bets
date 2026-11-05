@@ -174,3 +174,37 @@ async def test_sync_keeps_map_open_for_live_betting_when_feed_lost_it(db: Databa
     assert str((await db.get_map(int(card["id"])))["status"]) == "live"
     balance, _ = await db.place_map_bet(int(card["id"]), 1, None, "b", 50)
     assert balance == 950
+
+
+async def test_refunded_map_with_score_is_recounted(db: Database) -> None:
+    """Карту вернули как «не сыгранную», а счёт 13:9 есть — пересчитываем по факту."""
+    from app.services.maps import repair_refunded_maps
+
+    match = await _match(db)
+    card = await _map(db, int(match["id"]), score=(13, 9))
+    await db.place_map_bet(int(card["id"]), 1, None, "a", 100)
+    await db.cancel_map(int(card["id"]))                       # ошибочный возврат
+    assert await db.get_balance(1) == 1000
+
+    done = await repair_refunded_maps(db, None)
+
+    assert done["settled"] == 1 and done["paid"] == 170
+    settled = await db.get_map(int(card["id"]))
+    assert settled["status"] == "finished" and settled["winner"] == "a"
+    assert await db.get_balance(1) == 1070
+
+
+async def test_refunded_map_without_decided_score_is_left_alone(db: Database) -> None:
+    """Счёт 9:3 победителя не даёт — возврат не трогаем, карту добивает админ."""
+    from app.services.maps import repair_refunded_maps
+
+    match = await _match(db)
+    card = await _map(db, int(match["id"]), score=(9, 3))
+    await db.place_map_bet(int(card["id"]), 1, None, "a", 100)
+    await db.cancel_map(int(card["id"]))
+
+    done = await repair_refunded_maps(db, None)
+
+    assert done["settled"] == 0
+    assert str((await db.get_map(int(card["id"])))["status"]) == "cancelled"
+    assert await db.get_balance(1) == 1000

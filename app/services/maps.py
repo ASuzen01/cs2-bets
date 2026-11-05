@@ -54,6 +54,37 @@ async def settle_map_by_score(
     return result
 
 
+async def repair_refunded_maps(db: Database, bot: Bot | None = None) -> dict[str, int]:
+    """Возвращённые карты со счётом раундов пересчитываем по факту.
+
+    Нужно для карт, которые старый код вернул как «не сыгранные», хотя на них
+    играли раунды. Обработка идемпотентна: рассчитанная карта уже не `cancelled`.
+    """
+    done = {"settled": 0, "paid": 0}
+    for card in await db.refunded_maps_with_score():
+        if map_winner(card["score_a"], card["score_b"]) is None:
+            continue          # счёт есть, но победителя не видно — пусть решает админ
+        try:
+            result = await db.recount_map(int(card["id"]))
+        except Exception:
+            log.exception("Не смог пересчитать карту #%s", card["id"])
+            continue
+        done["settled"] += 1
+        done["paid"] += int(result["paid"])
+        if bot is not None:
+            await notify_map_bettors(
+                bot, db, result, score=map_score_text(card["score_a"], card["score_b"])
+            )
+        log.info(
+            "Карта #%s пересчитана по счёту %s: %s, откат возвратов %s",
+            card["id"],
+            map_score_text(card["score_a"], card["score_b"]),
+            result["team"],
+            result.get("reversed", 0),
+        )
+    return done
+
+
 async def open_maps_of_match(db: Database, match_id: int) -> list[Any]:
     return [
         card
@@ -106,5 +137,6 @@ __all__ = [
     "OPEN_MAP_STATUSES",
     "finish_maps_of_match",
     "open_maps_of_match",
+    "repair_refunded_maps",
     "settle_map_by_score",
 ]
