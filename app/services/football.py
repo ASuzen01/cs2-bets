@@ -43,6 +43,21 @@ KNOCKOUT_MARKERS = ("1/8", "1/4", "1/2", "1/16", "стыков", "плей-оф�
 # два матча в паре: один матч не решает, кто прошёл — рынок не предлагаем
 LEG_MARKERS = ("первые матчи", "вторые матчи", "ответные матчи", "1-е матчи", "2-е матчи")
 
+# Fonbet иногда отдаёт событие без названий команд — «Хозяева — Гости». Такое
+# событие нельзя ни показать, ни рассчитать: в фиде результатов его не найти.
+PLACEHOLDER_TEAMS = {
+    "хозяева",
+    "гости",
+    "хозяева поля",
+    "гости поля",
+    "команда 1",
+    "команда 2",
+    "team 1",
+    "team 2",
+    "home",
+    "away",
+}
+
 _TOTAL_LINES = (0.5, 1.5, 2.5, 3.5, 4.5)
 _HANDICAPS = (1.5, 0.5, -0.5, -1.5, -2.5)
 _TEAM_TOTALS = (0.5, 1.5, 2.5)
@@ -69,6 +84,11 @@ class FootballMatch:
     @property
     def has_result_odds(self) -> bool:
         return bool(self.odds_1 and self.odds_x and self.odds_2)
+
+
+def is_placeholder_team(name: str) -> bool:
+    """«Хозяева»/«Гости» вместо названий — событие ещё не распознано."""
+    return " ".join(str(name or "").lower().split()) in PLACEHOLDER_TEAMS
 
 
 def _is_football(tournament: str, include: Iterable[str], exclude: Iterable[str]) -> bool:
@@ -125,6 +145,8 @@ def parse_football(
         team_a, team_b = event.get("team1"), event.get("team2")
         if not team_a or not team_b:
             continue
+        if is_placeholder_team(team_a) or is_placeholder_team(team_b):
+            continue      # «Хозяева — Гости»: команды не распознаны
 
         odds: dict[int, float] = {}
         for factor in factors.get(event["id"], []):

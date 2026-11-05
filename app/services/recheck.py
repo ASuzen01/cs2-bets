@@ -22,7 +22,9 @@ from aiogram import Bot
 
 from app.config import settings
 from app.db.database import Database
+from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
+from app.services.cs2_settle import settle_from_feed
 from app.services.maps import finish_maps_of_match, repair_refunded_maps
 from app.services.notify import notify_bettors, send_user
 from app.services.results import FootballResult, ResultsClient
@@ -43,9 +45,11 @@ async def recheck_recent(
     results: ResultsClient | None = None,
     *,
     hours: int = 48,
+    cs2_results: Cs2ResultsClient | None = None,
 ) -> dict[str, Any]:
     """Сверяет расчёты последних `hours` часов с фактами. Возвращает отчёт."""
     client = results or ResultsClient()
+    cs2 = cs2_results or Cs2ResultsClient()
     since = int(time.time()) - hours * 3600
     report: dict[str, Any] = {
         "hours": hours,
@@ -77,7 +81,7 @@ async def recheck_recent(
                 if line:
                     report["football"].append(line)
             else:
-                line, maps_done = await _recheck_cs2(db, bot, row)
+                line, maps_done = await _recheck_cs2(db, bot, row, cs2)
                 report["maps_settled"] += maps_done
                 if line:
                     report["cs2"].append(line)
@@ -86,6 +90,8 @@ async def recheck_recent(
 
     if results is None:
         await client.close()
+    if cs2_results is None:
+        await cs2.close()
     LAST_REPORT.clear()
     LAST_REPORT.update(report)
     log.info(
@@ -154,8 +160,31 @@ async def _recheck_football(
     )
 
 
-async def _recheck_cs2(db: Database, bot: Bot | None, row: Any) -> tuple[str | None, int]:
-    """Сверяет CS2-серию со счётом по картам."""
+async def _recheck_cs2(
+    db: Database, bot: Bot | None, row: Any, cs2: Cs2ResultsClient | None = None
+) -> tuple[str | None, int]:
+    """Сверяет CS2-серию с фактами: внешний фид, затем счёт по картам.
+
+    Фид (bo3.gg) знает и победителя серии, и счёт каждой карты, поэтому он
+    первый источник: Fonbet после ухода события из линии счёт не отдаёт и серия
+    висела бы в «ждём результат» вечно.
+    """
+    if cs2 is not None:
+        try:
+            fed = await settle_from_feed(db, bot, row, cs2, source="recheck")
+        except Exception:
+            log.exception("Перепроверка: фид CS2 не закрыл матч #%s", row["id"])
+            fed = None
+        if fed is not None:
+            if not fed.get("settled") and not fed.get("maps_settled"):
+                return None, 0
+            title = f"{row['team_a']} — {row['team_b']}"
+            was = str(row["winner"] or row["status"])
+            return (
+                f"{title}: было «{was}», по фиду {fed['score']} — победил {fed['team']}, "
+                f"выплачено {fed['paid']}, карт рассчитано {fed['maps_settled']}"
+            ), int(fed["maps_settled"])
+
     cards = await db.match_maps(int(row["id"]))
     if not cards:
         return None, 0

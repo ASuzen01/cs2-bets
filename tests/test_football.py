@@ -10,6 +10,7 @@ from app.services.football import (
     build_markets,
     implied_probabilities,
     is_knockout,
+    is_placeholder_team,
     market_label,
     market_outcome,
     markets_of,
@@ -50,6 +51,33 @@ PACKET = {
 
 INCLUDE = ["лига чемпионов"]
 EXCLUDE = ["азии", "женщ"]
+
+
+def test_parse_skips_events_without_team_names() -> None:
+    """Fonbet отдаёт событие «Хозяева — Гости» — такое в линию не пускаем."""
+    packet = {
+        **PACKET,
+        "events": [
+            *PACKET["events"],
+            {
+                "id": 5,
+                "level": 1,
+                "sportId": 113724,
+                "team1": "Хозяева",
+                "team2": "Гости",
+                "startTime": 1_800_000_000,
+                "place": "line",
+            },
+        ],
+        "customFactors": [
+            *PACKET["customFactors"],
+            {"e": 5, "factors": [{"f": 921, "v": 3.9}, {"f": 922, "v": 12.5}, {"f": 923, "v": 1.35}]},
+        ],
+    }
+
+    assert [m.team_a for m in parse_football(packet, INCLUDE, EXCLUDE)] == ["Лейпциг", "Фейеноорд"]
+    assert is_placeholder_team(" Хозяева ") and is_placeholder_team("TEAM 2")
+    assert not is_placeholder_team("Реал Мадрид")
 
 
 def test_parse_takes_only_league_and_skips_subevents() -> None:

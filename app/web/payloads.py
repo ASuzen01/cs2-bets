@@ -224,7 +224,9 @@ async def bets_history(db: Database, user_id: int, *, singles_limit: int = 50, e
         item["match_status"] = match_status
 
         if match_status in ("open", "live", "awaiting"):
-            item["status"] = "live" if match_status == "live" else "open"
+            # «ждём результата» — матч сыгран, но исход ещё не подтверждён: нельзя
+            # показывать это как «ждёт старта», иначе выглядит, будто ставка зависла
+            item["status"] = {"live": "live", "awaiting": "awaiting"}.get(match_status, "open")
             open_items.append(item)
             continue
 

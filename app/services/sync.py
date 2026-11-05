@@ -14,7 +14,9 @@ from aiogram.exceptions import TelegramAPIError
 from app import keyboards, texts
 from app.config import settings
 from app.db import Database
+from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
+from app.services.cs2_settle import settle_from_feed
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, parse_football
 from app.services.maps import finish_maps_of_match, settle_map_by_score
@@ -30,6 +32,8 @@ log = logging.getLogger(__name__)
 # появляется снова (пять минут тишины).
 FOOTBALL_FINISH_MINUTES = 100
 FOOTBALL_GONE_QUIET_SECONDS = 300
+# Как часто переспрашивать фид результатов CS2 по одному и тому же матчу.
+CS2_FEED_RECHECK_SECONDS = 600
 # Как часто переспрашивать фид результатов по матчу, который уже ушёл из линии.
 FOOTBALL_RESULT_RETRY_SECONDS = 600
 # Как часто обновлять английские названия команд (для поиска результатов).
@@ -89,10 +93,13 @@ class MatchSyncer:
         db: Database,
         client: FonbetClient | None = None,
         results: ResultsClient | None = None,
+        cs2_results: Cs2ResultsClient | None = None,
     ) -> None:
         self.bot = bot
         self.db = db
         self.results = results or ResultsClient()
+        self.cs2_results = cs2_results or Cs2ResultsClient()
+        self._feed_checked: dict[int, int] = {}
         self._names_en_at = 0
         self.client = client or FonbetClient(
             settings.fonbet_base_url,
@@ -119,6 +126,7 @@ class MatchSyncer:
             self._task = None
         await self.client.close()
         await self.results.close()
+        await self.cs2_results.close()
 
     async def _run(self) -> None:
         while True:
@@ -555,6 +563,10 @@ class MatchSyncer:
                 continue
             if int(row["fonbet_id"]) in by_fonbet:
                 continue
+            # 1) факт из внешнего фида — он знает и серию, и счёт каждой карты
+            if await self._settle_cs2_from_feed(row, stats):
+                continue
+
             score_a, score_b = row["score_a"], row["score_b"]
             tournament = str(row["tournament"])
             last_seen = int(row["last_result_check"] or 0)
@@ -585,6 +597,29 @@ class MatchSyncer:
                     "CS2 #%s ушёл из линии без счёта — ждём результат вручную",
                     row["id"],
                 )
+
+    async def _settle_cs2_from_feed(self, row: Any, stats: dict[str, Any]) -> bool:
+        """Закрывает серию по результатам из фида (bo3.gg). True — матч посчитан."""
+        match_id = int(row["id"])
+        now = int(time.time())
+        if now - self._feed_checked.get(match_id, 0) < CS2_FEED_RECHECK_SECONDS:
+            return False
+        self._feed_checked[match_id] = now
+        try:
+            result = await settle_from_feed(
+                self.db, self.bot, row, self.cs2_results, source="fonbet"
+            )
+        except Exception:
+            log.exception("Фид CS2 не закрыл матч #%s", match_id)
+            return False
+        if result is None:
+            return False
+        if result.get("settled"):
+            stats["settled"] += 1
+            text = texts.settled_text(result, match_id, result.get("score"))
+            for chat_id in await self.db.chat_ids_with_bets(match_id):
+                await self._safe_send(chat_id, text)
+        return True
 
     async def _settle_and_announce(
         self, row: Any, winner: str, score: str | None, source: str

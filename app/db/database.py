@@ -815,6 +815,14 @@ class Database:
     async def get_map(self, map_id: int) -> Any | None:
         return await self._fetchone("SELECT * FROM match_maps WHERE id = ?", (map_id,))
 
+    async def set_map_score(self, map_id: int, score_a: int | None, score_b: int | None) -> None:
+        """Счёт раундов карты (из внешнего фида): нужен для расчёта и для карточки."""
+        await self.conn.execute(
+            "UPDATE match_maps SET score_a = ?, score_b = ? WHERE id = ?",
+            (score_a, score_b, map_id),
+        )
+        await self.conn.commit()
+
     async def set_map_status(self, map_id: int, status: str) -> None:
         await self.conn.execute(
             "UPDATE match_maps SET status = ? WHERE id = ?", (status, map_id)

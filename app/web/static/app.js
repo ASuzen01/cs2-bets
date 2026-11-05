@@ -1496,6 +1496,7 @@
     if (item.kind === "express") {
       if (item.status === "open") return ["live", "в игре"];
     }
+    if (item.status === "awaiting") return ["live", "ждём результата"];
     if (item.status === "open") return ["open", "ждёт старта"];
     if (item.status === "live") return ["live", "матч идёт"];
     if (item.result === "won") return ["won", "зашла"];
@@ -1539,7 +1540,7 @@
     meta.append(left);
 
     const right = el("span", null, "");
-    if (item.status === "open" || item.status === "live") {
+    if (item.status === "open" || item.status === "live" || item.status === "awaiting") {
       right.append(document.createTextNode("Возможная выплата "));
       right.append(el("b", null, money(item.potential)));
     } else {
