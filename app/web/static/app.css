@@ -832,3 +832,14 @@
   .ladder-door { min-height: 74px; }
   .ladder-actions { grid-template-columns: 1fr; }
 }
+
+/* Узкие пресеты рулетки и костей не должны раздвигать Telegram WebView. */
+.stake-block .stake-presets { min-width: 0; }
+.stake-block .stake-chip { min-width: 0; padding-left: 7px; padding-right: 7px; white-space: nowrap; }
+.summary-profit { margin-top: 4px; color: #9db0c1; font-size: 12px; font-weight: 700; }
+@media (max-width: 340px) {
+  .stake-block .stake-presets { gap: 4px; }
+  .stake-block .stake-chip { padding-left: 3px; padding-right: 3px; font-size: 11px; }
+  #betMeta { flex-wrap: wrap; }
+  #betMeta > span { min-width: 0; }
+}

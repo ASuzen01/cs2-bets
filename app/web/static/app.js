@@ -155,6 +155,16 @@
   const moneySolid = (n) => money(n).replace(/ /g, "\u00a0");
   // прибыль недели бывает отрицательной — показываем со знаком
   const moneySigned = (n) => (Number(n) > 0 ? "+" : "") + money(n);
+  // Python round() в API — half-to-even; повторяем это в браузере, чтобы
+  // возможная выплата в интерфейсе совпадала с фактической выплатой сервера.
+  function roundPayout(amount, odds) {
+    const value = Number(amount) * Number(odds);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    const lower = Math.floor(value);
+    const fraction = value - lower;
+    if (Math.abs(fraction - 0.5) < 1e-8) return lower % 2 === 0 ? lower : lower + 1;
+    return Math.round(value);
+  }
   // кэф может быть снят (идёт матч, Fonbet убрал рынок) — тогда прочерк, а не 0.00
   const oddsText = (n) => (n === null || n === undefined ? "—" : Number(n).toFixed(2));
   const balance = () => (state.user ? state.user.balance : 0);
@@ -1250,7 +1260,7 @@
         grow.append(el("b", null, `Экспресс #${express.id}`));
         grow.append(el("span", null, `${money(express.stake)} × ${oddsText(express.odds)}`));
         row.append(grow);
-        row.append(el("div", "money plus", money(express.potential)));
+        row.append(el("div", "money plus", `Возможная выплата ${money(express.potential)}`));
         host.append(row);
       });
     }
@@ -1752,11 +1762,17 @@
     function paint() {
       sumText.textContent = "";
       const line = el("div");
+      const payout = roundPayout(chosen || 0, odds);
+      const profit = typeof opts.profit === "function"
+        ? Number(opts.profit(chosen || 0, payout))
+        : payout - (chosen || 0);
       line.append(document.createTextNode("Ставка: "));
       line.append(el("b", null, chosen ? money(chosen) : "—"));
-      line.append(document.createTextNode(" · выигрыш: "));
-      line.append(el("span", "big", odds ? money(Math.round((chosen || 0) * odds)) : "—"));
+      line.append(document.createTextNode(" · возможная выплата: "));
+      line.append(el("span", "big", odds ? money(payout) : "—"));
       sumText.append(line);
+      sumText.append(el("div", "summary-profit",
+        "Чистая прибыль: " + (odds ? moneySigned(profit) : "—")));
       if (chosen && chosen < min) {
         sumText.append(el("div", "hint bad", `Минимум — ${money(min)}`));
       } else if (chosen > cap) {
@@ -1838,7 +1854,13 @@
 
       // с фрибетом потолок — его номинал, даже если на балансе пусто
       const cap = Math.max(balance(), freebet ? Number(freebet.amount) : 0);
-      const picker = stakePicker(sheet, { odds: odd, cap });
+      const picker = stakePicker(sheet, {
+        odds: odd,
+        cap,
+        profit: (amount, payout) => betByTicket && freebet && amount === Number(freebet.amount)
+          ? payout
+          : payout - amount,
+      });
 
       const place = el("button", "btn", "Поставить");
       place.type = "button";
@@ -1862,7 +1884,10 @@
           }
           closeSheet();
           haptic("ok");
-          toast(`Ставка принята · кэф ${oddsText(data.odds)} · выигрыш ${money(data.potential)}` +
+          const profitText = betByTicket
+            ? `выплата ${money(data.potential)} · чистая прибыль ${moneySigned(data.potential)}`
+            : `выплата ${money(data.potential)} · чистая прибыль ${moneySigned(data.potential - amount)}`;
+          toast(`Ставка принята · кэф ${oddsText(data.odds)} · ${profitText}` +
             (betByTicket ? " · по фрибету" : ""), "ok");
           refreshState();
           loadBets();
@@ -1968,7 +1993,13 @@
         sheet.append(ticketBtn);
       }
 
-      const picker = stakePicker(sheet, { odds: total, cap: balance() });
+      const picker = stakePicker(sheet, {
+        odds: total,
+        cap: Math.max(balance(), ticket ? Number(ticket.amount) : 0),
+        profit: (amount, payout) => ticketOn && ticket && amount === Number(ticket.amount)
+          ? payout
+          : payout - amount,
+      });
 
       const place = el("button", "btn", "Поставить экспресс");
       place.type = "button";
@@ -1994,7 +2025,10 @@
           saveCart();
           closeSheet();
           haptic("ok");
-          toast(`Экспресс #${data.express_id} принят · кэф ${oddsText(data.odds)}` +
+          const profitText = ticketOn
+            ? `выплата ${money(data.potential)} · чистая прибыль ${moneySigned(data.potential)}`
+            : `выплата ${money(data.potential)} · чистая прибыль ${moneySigned(data.potential - amount)}`;
+          toast(`Экспресс #${data.express_id} принят · кэф ${oddsText(data.odds)} · ${profitText}` +
             (ticketOn ? " · по билету" : ""), "ok");
           renderCartBar();
           refreshState();
@@ -3234,8 +3268,11 @@
       meta.textContent = "";
       meta.classList.toggle("warn", !stakeOk(game));
       meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
+      const payout = odds ? roundPayout(info.raw || 0, odds) : null;
       meta.append(el("span", null,
-        "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выигрыш " + money(Math.round((info.raw || 0) * odds))));
+        "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выплата " +
+        (payout === null ? "—" : money(payout)) + " · чистая прибыль " +
+        (payout === null ? "—" : moneySigned(payout - (info.raw || 0)))));
     }
 
     const play = $("#playBtn");
@@ -3497,7 +3534,8 @@
       label: option ? option.label : "—",
       odds,
       stake,
-      win: odds ? Math.round(stake * odds) : 0,
+      payout: odds ? roundPayout(stake, odds) : null,
+      profit: odds ? roundPayout(stake, odds) - stake : null,
     };
   }
 
@@ -3570,7 +3608,7 @@
     line1.append(el("span", null, "Выпало"));
     line1.append(el("span", "big", what));
     const line2 = el("div", "line2", result.win
-      ? `«${result.label}» зашла: +${money(result.payout)} (кэф ${Number(result.odds).toFixed(2)})`
+      ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
       : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
     box.append(line1, line2);
   }
@@ -3831,7 +3869,10 @@
     const meta = el("div", "bet-meta");
     meta.id = "betMeta";
     meta.append(el("span", null, "Ставка: " + money(info.stake)));
-    meta.append(el("span", null, "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выигрыш " + money(info.win)));
+    meta.append(el("span", null,
+      "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выплата " +
+      (info.payout === null ? "—" : money(info.payout)) + " · чистая прибыль " +
+      (info.profit === null ? "—" : moneySigned(info.profit))));
     host.append(meta);
 
     const play = el("button", "btn play");
@@ -4000,7 +4041,9 @@
         // результат некуда рисовать — говорим тостом, но именно про эту игру
         const name = game === "roulette" ? "Рулетка" : "Кости";
         toast(`${name} · ${outcomeText(data)} · ` +
-          (data.win ? `+${money(data.payout)}` : `−${money(amount)}`), data.win ? "ok" : "bad");
+          (data.win
+            ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - amount)}`
+            : `проигрыш ${money(amount)}`), data.win ? "ok" : "bad");
       }
       haptic(data.win ? "ok" : "bad");
 
@@ -4031,7 +4074,9 @@
         at: Math.floor(Date.now() / 1000),
       }].concat(state.casino.history || []).slice(0, 12);
 
-      if (data.win) toast(`Зашло: ${money(data.payout)}`, "ok");
+      if (data.win) {
+        toast(`Выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - amount)}`, "ok");
+      }
     } catch (err) {
       toast(err.message, "bad");
     } finally {
