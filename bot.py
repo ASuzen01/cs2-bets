@@ -265,6 +265,7 @@ def build_web_app(
             "sync_interval": settings.sync_interval,
             "live_betting": settings.live_betting,
             "football": settings.football_include,
+            "hockey": settings.hockey_include if settings.hockey_enabled else None,
             "backup_interval_hours": settings.backup_interval_hours,
             # последняя ошибка обработчика — чтобы чинить поломки без логов Render
             "last_error": last_errors(1),
@@ -287,14 +288,17 @@ def build_web_app(
                 payload["line"] = {
                     "cs2": len(await db.open_matches(limit=500, sport="cs2")),
                     "football": len(await db.open_matches(limit=500, sport="football")),
+                    "hockey": len(await db.open_matches(limit=500, sport="hockey")),
                     "live": len(await db.live_matches(limit=500)),
                 }
                 payload["matches"] = {
                     "football": await db.status_counts("football"),
+                    "hockey": await db.status_counts("hockey"),
                     "cs2": await db.status_counts("cs2"),
                 }
                 payload["started_open"] = {
                     "football": await db.started_open_count("football"),
+                    "hockey": await db.started_open_count("hockey"),
                     "cs2": await db.started_open_count("cs2"),
                 }
                 # пара матчей для разбора: что висит и с каким счётом
@@ -312,7 +316,7 @@ def build_web_app(
                             sport, ("live", "awaiting", "open")
                         )
                     ]
-                    for sport in ("football", "cs2")
+                    for sport in ("football", "hockey", "cs2")
                 }
                 last = await db.last_backup()
                 payload["last_backup_at"] = int(last["created_at"]) if last else None
