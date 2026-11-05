@@ -152,20 +152,32 @@
       <button class="game-tile" type="button" data-game="roulette" aria-pressed="false">
         <span class="game-tile-art art-roulette" aria-hidden="true">
           <svg viewBox="0 0 220 210">
-            <circle cx="110" cy="112" r="82" fill="#f4c64f"/>
-            <circle cx="110" cy="112" r="72" fill="#18202a" stroke="#f8df87" stroke-width="5"/>
-            <path d="M110 43a69 69 0 0 1 48 20l-48 49z" fill="#ec4774"/>
-            <path d="M158 63a69 69 0 0 1 20 49h-68z" fill="#20a884"/>
-            <path d="M178 112a69 69 0 0 1-20 49l-48-49z" fill="#ec4774"/>
-            <path d="M158 161a69 69 0 0 1-48 20v-69z" fill="#20a884"/>
-            <path d="M110 181a69 69 0 0 1-49-20l49-49z" fill="#ec4774"/>
-            <path d="M61 161a69 69 0 0 1-20-49h69z" fill="#20a884"/>
-            <path d="M41 112a69 69 0 0 1 20-49l49 49z" fill="#ec4774"/>
-            <path d="M61 63a69 69 0 0 1 49-20v69z" fill="#20a884"/>
-            <circle cx="110" cy="112" r="28" fill="#f8db78"/>
-            <circle cx="110" cy="112" r="17" fill="#273345"/>
-            <circle cx="61" cy="54" r="7" fill="#fff8df" stroke="#f4c64f" stroke-width="3"/>
-            <path d="m177 34 4 9 10 1-8 6 3 10-9-6-8 6 3-10-8-6 10-1z" fill="#ffdc4b"/>
+            <defs>
+              <radialGradient id="wheel-metal" cx="38%" cy="30%">
+                <stop offset="0" stop-color="#bda878"/><stop offset=".52" stop-color="#62583f"/><stop offset="1" stop-color="#252b32"/>
+              </radialGradient>
+              <radialGradient id="wheel-hub" cx="34%" cy="28%">
+                <stop offset="0" stop-color="#667583"/><stop offset="1" stop-color="#202832"/>
+              </radialGradient>
+            </defs>
+            <circle cx="110" cy="112" r="82" fill="#171c23" stroke="url(#wheel-metal)" stroke-width="7"/>
+            <circle cx="110" cy="112" r="72" fill="#151a20" stroke="#aa925b" stroke-width="2"/>
+            <path d="M110 43a69 69 0 0 1 48 20l-48 49z" fill="#762f37"/>
+            <path d="M158 63a69 69 0 0 1 20 49h-68z" fill="#1d5548"/>
+            <path d="M178 112a69 69 0 0 1-20 49l-48-49z" fill="#762f37"/>
+            <path d="M158 161a69 69 0 0 1-48 20v-69z" fill="#1d5548"/>
+            <path d="M110 181a69 69 0 0 1-49-20l49-49z" fill="#762f37"/>
+            <path d="M61 161a69 69 0 0 1-20-49h69z" fill="#1d5548"/>
+            <path d="M41 112a69 69 0 0 1 20-49l49 49z" fill="#762f37"/>
+            <path d="M61 63a69 69 0 0 1 49-20v69z" fill="#1d5548"/>
+            <circle cx="110" cy="112" r="69" fill="none" stroke="#c9ac6a" stroke-width="1.5"/>
+            <circle cx="110" cy="112" r="39" fill="#171c23" stroke="#9d8553" stroke-width="2"/>
+            <circle cx="110" cy="112" r="27" fill="url(#wheel-hub)" stroke="#867751" stroke-width="2"/>
+            <circle cx="110" cy="112" r="7" fill="#c5b17e"/>
+            <circle cx="62" cy="53" r="6" fill="#e5e1d7" stroke="#95835c" stroke-width="2"/>
+            <text x="110" y="52" text-anchor="middle" fill="#e7dfc8" font-size="9" font-family="Arial">0</text>
+            <text x="164" y="112" text-anchor="middle" fill="#e7dfc8" font-size="8" font-family="Arial">17</text>
+            <text x="110" y="173" text-anchor="middle" fill="#e7dfc8" font-size="8" font-family="Arial">32</text>
           </svg>
         </span>
         <b class="game-tile-title">Рулетка</b>
@@ -175,22 +187,31 @@
       <button class="game-tile" type="button" data-game="dice" aria-pressed="false">
         <span class="game-tile-art art-dice" aria-hidden="true">
           <svg viewBox="0 0 220 210">
-            <g transform="translate(26 48) rotate(-12 55 55)">
-              <path d="M18 28 66 7l47 24-48 23z" fill="#fff1be"/>
-              <path d="M18 28v58l47 28V54z" fill="#ffc44f"/>
-              <path d="M65 54v60l48-27V31z" fill="#ee8b49"/>
-              <circle cx="42" cy="44" r="6" fill="#56334d"/><circle cx="82" cy="36" r="6" fill="#56334d"/>
-              <circle cx="42" cy="73" r="6" fill="#56334d"/><circle cx="82" cy="78" r="6" fill="#56334d"/>
+            <defs>
+              <linearGradient id="dice-face" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f6f0e5"/><stop offset="1" stop-color="#bbb8b0"/>
+              </linearGradient>
+              <linearGradient id="dice-side" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#727d88"/><stop offset="1" stop-color="#343e49"/>
+              </linearGradient>
+            </defs>
+            <g transform="rotate(-13 95 105)" stroke="#aeb5b9" stroke-width="2">
+              <rect x="34" y="42" width="104" height="104" rx="19" fill="url(#dice-face)"/>
+              <circle cx="62" cy="70" r="5" fill="#313943" stroke="none"/>
+              <circle cx="110" cy="70" r="5" fill="#313943" stroke="none"/>
+              <circle cx="86" cy="94" r="5" fill="#313943" stroke="none"/>
+              <circle cx="62" cy="118" r="5" fill="#313943" stroke="none"/>
+              <circle cx="110" cy="118" r="5" fill="#313943" stroke="none"/>
             </g>
-            <g transform="translate(102 82) rotate(12 48 48)">
-              <path d="M15 22 57 4l44 22-44 22z" fill="#e3fff4"/>
-              <path d="M15 22v53l42 26V48z" fill="#3fc4a1"/>
-              <path d="M57 48v53l44-26V26z" fill="#198f7e"/>
-              <circle cx="37" cy="35" r="6" fill="#ffffff"/><circle cx="77" cy="31" r="6" fill="#ffffff"/>
-              <circle cx="37" cy="65" r="6" fill="#ffffff"/><circle cx="77" cy="73" r="6" fill="#ffffff"/>
+            <g transform="rotate(11 143 124)" stroke="#85909b" stroke-width="2">
+              <rect x="101" y="82" width="82" height="82" rx="16" fill="url(#dice-side)"/>
+              <circle cx="122" cy="103" r="5" fill="#e3d7b7" stroke="none"/>
+              <circle cx="162" cy="103" r="5" fill="#e3d7b7" stroke="none"/>
+              <circle cx="142" cy="123" r="5" fill="#e3d7b7" stroke="none"/>
+              <circle cx="122" cy="143" r="5" fill="#e3d7b7" stroke="none"/>
+              <circle cx="162" cy="143" r="5" fill="#e3d7b7" stroke="none"/>
             </g>
-            <path d="m42 29 4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#ec4774"/>
-            <circle cx="184" cy="53" r="5" fill="#f25782"/><circle cx="34" cy="164" r="4" fill="#ffbf42"/>
+            <path d="M28 158h162" stroke="#7e6f4f" stroke-width="2" opacity=".5"/>
           </svg>
         </span>
         <b class="game-tile-title">Кости</b>
@@ -200,14 +221,23 @@
       <button class="game-tile" type="button" data-game="ladder" aria-pressed="false">
         <span class="game-tile-art art-ladder" aria-hidden="true">
           <svg viewBox="0 0 220 210">
-            <path d="M25 171h170" stroke="#58618b" stroke-width="4" stroke-linecap="round"/>
-            <path d="M42 171V94q0-8 8-8h34q8 0 8 8v77" fill="#ec4774" stroke="#ff94aa" stroke-width="4"/>
-            <path d="M94 171V65q0-8 8-8h34q8 0 8 8v106" fill="#6379dc" stroke="#a4b6ff" stroke-width="4"/>
-            <path d="M146 171V39q0-8 8-8h25q8 0 8 8v132" fill="#24bfa2" stroke="#7ef2d4" stroke-width="4"/>
-            <circle cx="75" cy="132" r="4" fill="#ffe2a3"/><circle cx="127" cy="105" r="4" fill="#ffe2a3"/><circle cx="171" cy="82" r="4" fill="#ffe2a3"/>
-            <path d="M38 73h48M90 45h55M143 20h48" stroke="#242a44" stroke-width="5" stroke-linecap="round"/>
-            <path d="m39 43 4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#ffd646"/>
-            <path d="m178 110 3 6 7 1-5 5 1 7-6-4-6 4 2-7-6-5 7-1z" fill="#ff88b4"/>
+            <defs>
+              <linearGradient id="door-brass" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#d5c08c"/><stop offset=".45" stop-color="#76674d"/><stop offset="1" stop-color="#322f30"/>
+              </linearGradient>
+              <linearGradient id="door-light" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#d3c18e" stop-opacity=".34"/><stop offset="1" stop-color="#d3c18e" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path d="M22 180h176M31 188h158" stroke="#8d7957" stroke-width="2" opacity=".48"/>
+            <g stroke="url(#door-brass)" stroke-width="3">
+              <path d="M34 178V111q0-28 29-28t29 28v67z" fill="#181d27"/>
+              <path d="M86 178V83q0-36 35-36t35 36v95z" fill="#181d27"/>
+              <path d="M137 178V55q0-43 36-43t36 43v123z" fill="#181d27"/>
+            </g>
+            <path d="M45 178v-66q0-18 18-18t18 18v66zM97 178V83q0-25 24-25t24 25v95zM148 178V55q0-31 25-31t25 31v123z" fill="url(#door-light)" opacity=".8"/>
+            <path d="M58 178v-66q0-6 5-8M110 178V83q0-12 11-16M161 178V55q0-17 12-24" fill="none" stroke="#d2bf8a" stroke-width="1.5" opacity=".72"/>
+            <circle cx="75" cy="145" r="2.5" fill="#cdb77d"/><circle cx="138" cy="134" r="2.5" fill="#cdb77d"/><circle cx="188" cy="124" r="2.5" fill="#cdb77d"/>
           </svg>
         </span>
         <b class="game-tile-title">Лесенка</b>
@@ -217,17 +247,29 @@
       <button class="game-tile" type="button" data-game="blackjack" aria-pressed="false">
         <span class="game-tile-art art-blackjack" aria-hidden="true">
           <svg viewBox="0 0 220 210">
-            <g transform="translate(42 36) rotate(-12 58 78)">
-              <rect x="5" y="6" width="104" height="150" rx="14" fill="#fffaf0" stroke="#d9d5eb" stroke-width="4"/>
-              <text x="20" y="48" fill="#e94873" font-size="29" font-weight="900" font-family="Arial">A</text>
-              <text x="18" y="82" fill="#e94873" font-size="30" font-family="Arial">♥</text>
+            <defs>
+              <linearGradient id="card-back" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#344d4a"/><stop offset="1" stop-color="#172520"/>
+              </linearGradient>
+              <linearGradient id="card-face" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#f4f0e5"/><stop offset="1" stop-color="#c9c5bb"/>
+              </linearGradient>
+            </defs>
+            <g transform="rotate(-13 91 108)">
+              <rect x="35" y="35" width="105" height="145" rx="10" fill="url(#card-back)" stroke="#b49a5d" stroke-width="2"/>
+              <rect x="42" y="42" width="91" height="131" rx="6" fill="none" stroke="#b49a5d" stroke-width="1" opacity=".65"/>
+              <path d="m88 59 22 24-22 24-22-24zM88 107l22 24-22 24-22-24z" fill="none" stroke="#ad955c" stroke-width="1.3" opacity=".65"/>
+              <circle cx="88" cy="107" r="7" fill="#ad955c" opacity=".8"/>
             </g>
-            <g transform="translate(92 40) rotate(11 58 78)">
-              <rect x="5" y="6" width="104" height="150" rx="14" fill="#fffaf0" stroke="#d9d5eb" stroke-width="4"/>
-              <text x="20" y="48" fill="#22293b" font-size="29" font-weight="900" font-family="Arial">K</text>
-              <text x="18" y="82" fill="#22293b" font-size="30" font-family="Arial">♠</text>
+            <g transform="rotate(12 133 105)">
+              <rect x="86" y="30" width="93" height="145" rx="10" fill="url(#card-face)" stroke="#eee5cf" stroke-width="2"/>
+              <text x="99" y="57" fill="#26313b" font-size="22" font-weight="700" font-family="Georgia,serif">A</text>
+              <text x="99" y="79" fill="#26313b" font-size="17" font-family="Georgia,serif">♠</text>
+              <text x="133" y="132" text-anchor="middle" fill="#34414b" font-size="48" font-family="Georgia,serif">♠</text>
+              <path d="M98 91h68" stroke="#b59b5c" stroke-width="1" opacity=".75"/>
+              <text x="166" y="159" text-anchor="middle" fill="#26313b" font-size="18" font-weight="700" font-family="Georgia,serif">A</text>
             </g>
-            <path d="m187 38 4 9 10 1-8 6 3 10-9-6-8 6 3-10-8-6 10-1z" fill="#f5ba39"/>
+            <circle cx="178" cy="44" r="3" fill="#cfb471"/>
           </svg>
         </span>
         <b class="game-tile-title">Блэкджек</b>
