@@ -188,11 +188,7 @@
 
   // ------------------------------------------------------------------ рендер
   function renderHeader() {
-    // в шапке всегда бренд; имя игрока живёт в профиле (вкладка «Я»)
-    const dev = state.user && state.user.dev;
-    $("#userHint").textContent = dev
-      ? "локальный режим · виртуальные монеты"
-      : "ставки на CS2 · виртуальные монеты";
+    // в шапке только бренд: имя и режим живут в профиле (вкладка «Я»)
     $("#balancePill").textContent = state.user ? money(state.user.balance) : "— 🪙";
     renderBonusDots();
   }
@@ -1360,7 +1356,6 @@
     kv("Баланс", money(state.user.balance));
     kv("Ставок в игре", String(state.bets.length));
     kv("Экспрессов в игре", String(state.expresses.length));
-    kv("Минимальная ставка", money(state.limits.min_bet));
     host.append(card);
 
     // серия дней: она же умножает ежедневный бонус — пусть игрок это видит
