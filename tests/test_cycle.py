@@ -402,7 +402,10 @@ async def test_match_start_notification_skips_far_and_cashed(db: Database) -> No
         start_time=now + 300, odds_a=2.0, odds_b=2.0,
     )
     await db.place_bet(int(soon["id"]), USER["id"], None, "a", 100)
-    bet = [item for item in await db.user_bets_all(USER["id"]) if int(item["match_id"]) == int(soon["id"])][0]
+    bet = next(
+        item for item in await db.user_bets_all(USER["id"])
+        if int(item["match_id"]) == int(soon["id"])
+    )
     await db.cashout_bet(int(bet["id"]), USER["id"], 0.95)
 
     class FakeBot:
