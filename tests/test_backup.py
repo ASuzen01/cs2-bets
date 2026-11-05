@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 
 import pytest
 
 from app.db import Database
-from app.db.database import BackupError
-from app.services.backup import decode, encode, make_dump, restore
+from app.db.backends import SCHEMA_POSTGRES, SCHEMA_SQLITE
+from app.db.database import BACKUP_TABLES, BackupError
+from app.services.backup import decode, encode, make_dump, restore, summary
 
 
 async def _seed(db: Database) -> None:
@@ -25,13 +27,19 @@ async def _seed(db: Database) -> None:
         odds_b=2.25,
     )
     await db.set_status(int(row["id"]), "live")
-    await db.place_bet(int(row["id"]), 1, None, "a", 250)
+    await db.place_bet(int(row["id"]), 1, None, "a", 250, token="backup-bet")
     card, _ = await db.upsert_map(
         match_id=int(row["id"]), fonbet_id=9001, map_number=1, odds_a=1.7, odds_b=2.1
     )
     await db.place_map_bet(int(card["id"]), 2, None, "b", 100)
     await db.claim_wheel(1, 200, 24 * 3600)
     await db.claim_tease(1, 50, 24 * 3600)
+    await db.add_ticket(1, 100, kind="express")
+    await db.set_meta("last_sync_at", "1780000000")
+
+    from app.services import blackjack
+
+    await db.start_blackjack(1, 10, blackjack.new_game(10), token="backup-blackjack")
 
 
 @pytest.fixture
@@ -43,10 +51,26 @@ async def db(tmp_path):
     await database.close()
 
 
+def test_backup_manifest_covers_every_application_table() -> None:
+    pattern = r"CREATE TABLE IF NOT EXISTS\s+(\w+)"
+    sqlite_tables = set(re.findall(pattern, SCHEMA_SQLITE))
+    postgres_tables = set(re.findall(pattern, SCHEMA_POSTGRES))
+    assert set(BACKUP_TABLES) == sqlite_tables == postgres_tables
+
+
+def test_summary_warns_for_legacy_archives_missing_tables() -> None:
+    assert "Неполный архив" in summary({"counts": {}, "tables": {"users": []}, "created_at": 0})
+
+
 async def test_dump_roundtrip_restores_everything(db, tmp_path) -> None:
     blob, payload = await make_dump(db)
+    assert payload["version"] == 2
     assert payload["counts"]["users"] == 2
     assert payload["counts"]["bets"] == 2
+    assert payload["counts"]["tickets"] == 1
+    assert payload["counts"]["app_meta"] == 1
+    assert payload["counts"]["bet_requests"] == 2
+    assert payload["counts"]["blackjack_games"] == 1
 
     fresh = Database(tmp_path / "restored.db", start_balance=1000)
     await fresh.connect()
@@ -74,6 +98,30 @@ async def test_restore_replaces_current_data(db, tmp_path) -> None:
     assert {row["user_id"] for row in users} == {1, 2}
 
 
+async def test_incomplete_restore_is_rejected_before_any_table_is_wiped(db) -> None:
+    data = await db.dump_rows()
+    before_balance = await db.get_balance(1)
+    data.pop("tickets")
+
+    with pytest.raises(BackupError, match="Дамп неполный"):
+        await db.restore_rows(data)
+
+    assert await db.get_balance(1) == before_balance
+    ticket_count = await db._fetchone("SELECT COUNT(*) AS n FROM tickets WHERE user_id = ?", (1,))
+    assert int(ticket_count["n"]) == 1
+
+
+async def test_restore_rejects_unknown_columns_before_wiping(db) -> None:
+    data = await db.dump_rows()
+    before_balance = await db.get_balance(1)
+    data["users"][0]["user_id) VALUES (0)"] = 99
+
+    with pytest.raises(BackupError, match="неизвестные поля"):
+        await db.restore_rows(data)
+
+    assert await db.get_balance(1) == before_balance
+
+
 async def test_broken_dump_is_rejected(db) -> None:
     blob, payload = await make_dump(db)
 
@@ -94,6 +142,15 @@ async def test_broken_dump_is_rejected(db) -> None:
     tampered = gzip.compress(json.dumps(payload, ensure_ascii=False).encode())
     with pytest.raises(BackupError, match="повреждена"):
         decode(tampered)
+
+
+async def test_dump_content_checksum_catches_edits_with_same_row_counts(db) -> None:
+    _, payload = await make_dump(db)
+    payload["tables"]["users"][0]["full_name"] = "tampered"
+    edited = gzip.compress(json.dumps(payload, ensure_ascii=False).encode())
+
+    with pytest.raises(BackupError, match="Контрольная сумма"):
+        decode(edited)
 
 
 async def test_dump_logged_and_throttled(db) -> None:

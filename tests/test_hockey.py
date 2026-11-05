@@ -474,8 +474,9 @@ async def test_nhl_settles_winning_final_bet(db: Database) -> None:
     assert await db.get_balance(1) == expected
 
 
-async def test_khl_without_feed_waits_for_admin(db: Database) -> None:
-    """КХЛ в фиде нет: матч ждёт админа, деньги не двигаем."""
+async def test_khl_without_feed_waits_for_admin(db: Database, monkeypatch) -> None:
+    """КХЛ без включённого внешнего фида ждёт админа; внешнюю сеть не трогаем."""
+    monkeypatch.setattr("app.services.sync.settings.khl_results_enabled", False)
     fields = {
         "fonbet_id": 777,
         "tournament": "Фонбет КХЛ. Регулярный сезон",

@@ -33,7 +33,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
-from app.db.database import BackupError
+from app.db.database import BACKUP_TABLES, BackupError
 from app.services.backup import (
     BackupService,
     decode,
@@ -547,6 +547,15 @@ async def on_backup_file(message: Message, db: Database, backup: BackupService) 
         payload = decode(buffer.getvalue())
     except BackupError as exc:
         await message.answer(f"Это не наш дамп: {exc}")
+        return
+
+    missing_tables = set(BACKUP_TABLES) - set(payload.get("tables") or {})
+    if missing_tables:
+        await message.answer(
+            "Дамп старого или неполного формата. Не хватает таблиц: "
+            + ", ".join(sorted(missing_tables))
+            + ". Восстановление не запущено, чтобы не стереть несохранённые данные."
+        )
         return
 
     current = await db.dump_rows()

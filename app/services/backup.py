@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gzip
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -22,15 +24,22 @@ from aiogram.types import BufferedInputFile
 
 from app.config import settings
 from app.db import Database
-from app.db.database import BackupError
+from app.db.database import BACKUP_TABLES, BackupError
 
 log = logging.getLogger(__name__)
 
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 
 
 def _checksum(tables: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     return {name: len(rows) for name, rows in tables.items()}
+
+
+def _content_digest(tables: dict[str, list[dict[str, Any]]]) -> str:
+    canonical = json.dumps(
+        tables, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def encode(tables: dict[str, list[dict[str, Any]]], *, kind: str = "manual") -> bytes:
@@ -41,6 +50,7 @@ def encode(tables: dict[str, list[dict[str, Any]]], *, kind: str = "manual") -> 
         "created_at": int(time.time()),
         "kind": kind,
         "counts": _checksum(tables),
+        "sha256": _content_digest(tables),
         "tables": tables,
     }
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -60,17 +70,31 @@ def decode(blob: bytes) -> dict[str, Any]:
 
     if payload.get("app") != "cs2-bets":
         raise BackupError("Это дамп другого приложения")
-    if int(payload.get("version", 0)) > BACKUP_VERSION:
+    version = int(payload.get("version", 0))
+    if version > BACKUP_VERSION:
         raise BackupError("Дамп сделан более новой версией приложения")
     tables = payload.get("tables")
     if not isinstance(tables, dict):
         raise BackupError("В дампе нет таблиц")
 
-    expected = payload.get("counts") or {}
+    expected = payload.get("counts")
+    if not isinstance(expected, dict):
+        raise BackupError("В дампе нет контрольных чисел строк")
     actual = _checksum(tables)
     for name, count in expected.items():
         if actual.get(name) != count:
             raise BackupError(f"Таблица {name} повреждена: {actual.get(name)} строк вместо {count}")
+    missing_counts = set(actual) - set(expected)
+    if missing_counts:
+        raise BackupError(
+            "В дампе нет контрольных чисел для таблиц: " + ", ".join(sorted(missing_counts))
+        )
+    if version >= 2:
+        saved_digest = payload.get("sha256")
+        if not isinstance(saved_digest, str) or not hmac.compare_digest(
+            saved_digest, _content_digest(tables)
+        ):
+            raise BackupError("Контрольная сумма содержимого дампа не совпадает")
     return payload
 
 
@@ -104,12 +128,17 @@ def filename(created_at: int, *, kind: str = "backup") -> str:
 def summary(payload: dict[str, Any]) -> str:
     counts = payload.get("counts") or {}
     created = time.strftime("%d.%m.%Y %H:%M UTC", time.gmtime(int(payload.get("created_at", 0))))
-    return (
+    text = (
         f"<b>Бэкап от {created}</b>\n"
         f"Игроков: {counts.get('users', 0)} · ставок: {counts.get('bets', 0)} · "
         f"матчей: {counts.get('matches', 0)} · операций: {counts.get('ledger', 0)}\n"
         f"Таблиц в дампе: {len(counts)}"
     )
+    tables = payload.get("tables") or {}
+    missing = set(BACKUP_TABLES) - set(tables)
+    if missing:
+        text += "\n⚠️ <b>Неполный архив</b>: отсутствуют " + ", ".join(sorted(missing))
+    return text
 
 
 def target_chat_id() -> int:

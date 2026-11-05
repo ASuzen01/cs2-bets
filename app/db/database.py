@@ -83,7 +83,10 @@ BACKUP_TABLES: tuple[str, ...] = (
     "quest_chain",
     "achievements",
     "referrals",
+    "tickets",
     "events",
+    "app_meta",
+    "bet_requests",
     "backup_log",
 )
 """Порядок важен: сначала родители, потом зависимые строки."""
@@ -113,6 +116,8 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("quest_chain", "user_id"),
     ("referrals", "invited_id"),
     ("referrals", "inviter_id"),
+    ("tickets", "user_id"),
+    ("bet_requests", "user_id"),
     ("events", "user_id"),
 )
 
@@ -263,7 +268,7 @@ class Database:
             self._backend = None
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[Any]:
+    async def transaction(self, *, isolation: str | None = None) -> AsyncIterator[Any]:
         """Транзакция. Записи идут строго по одной.
 
         На процесс одно соединение с базой, поэтому два одновременных `BEGIN`
@@ -294,7 +299,12 @@ class Database:
                     # висящая транзакция от прошлого запроса: спасаем соединение
                     log.warning("DB: незакрытая транзакция перед BEGIN — откатываю")
                     await conn.rollback()
-                await conn.execute(conn.begin_sql)
+                begin_sql = conn.begin_sql
+                if getattr(conn, "name", "") == "postgres" and isolation:
+                    if isolation.upper() != "REPEATABLE READ":
+                        raise ValueError("Поддерживается только REPEATABLE READ")
+                    begin_sql = "BEGIN ISOLATION LEVEL REPEATABLE READ"
+                await conn.execute(begin_sql)
                 if getattr(conn, "name", "") == "postgres":
                     # два инстанса на одном Postgres: замок в памяти не поможет,
                     # берём advisory-замок транзакции — он снимается сам на COMMIT
@@ -480,11 +490,13 @@ class Database:
         return self._url.startswith(("postgres://", "postgresql://"))
 
     async def dump_rows(self) -> dict[str, list[dict[str, Any]]]:
-        """Снимок всех таблиц: переносимый между SQLite и Postgres."""
+        """Согласованный снимок всех таблиц в одной транзакции."""
         data: dict[str, list[dict[str, Any]]] = {}
-        for table in BACKUP_TABLES:
-            rows = await self._fetchall(f"SELECT * FROM {table}")
-            data[table] = [dict(row) for row in rows]
+        async with self.transaction(isolation="REPEATABLE READ") as conn:
+            for table in BACKUP_TABLES:
+                async with conn.execute(f"SELECT * FROM {table}") as cur:
+                    rows = await cur.fetchall()
+                data[table] = [dict(row) for row in rows]
         return data
 
     async def restore_rows(self, data: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
@@ -492,6 +504,28 @@ class Database:
         unknown = set(data) - set(BACKUP_TABLES)
         if unknown:
             raise BackupError(f"В дампе незнакомые таблицы: {', '.join(sorted(unknown))}")
+        missing = set(BACKUP_TABLES) - set(data)
+        if missing:
+            raise BackupError(
+                "Дамп неполный — отсутствуют таблицы " + ", ".join(sorted(missing))
+                + ". Восстановление отменено, чтобы не удалить несохранённые данные."
+            )
+
+        for table, rows in data.items():
+            if not isinstance(rows, list):
+                raise BackupError(f"Таблица {table} в дампе должна быть списком строк")
+            allowed_columns = await self.conn.table_columns(table)
+            for row in rows:
+                if not isinstance(row, dict) or not row:
+                    raise BackupError(f"В таблице {table} обнаружена некорректная строка")
+                columns = set(row)
+                if any(not isinstance(column, str) for column in columns):
+                    raise BackupError(f"В таблице {table} некорректные имена полей")
+                unknown_columns = columns - allowed_columns
+                if unknown_columns:
+                    raise BackupError(
+                        f"В таблице {table} неизвестные поля: {', '.join(sorted(unknown_columns))}"
+                    )
 
         counts: dict[str, int] = {}
         async with self.transaction() as conn:
@@ -520,7 +554,8 @@ class Database:
                 continue
             await self._backend.execute(  # type: ignore[union-attr]
                 f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
-                f"COALESCE((SELECT MAX(id) FROM {table}), 1))"
+                f"COALESCE((SELECT MAX(id) FROM {table}), 1), "
+                f"EXISTS(SELECT 1 FROM {table}))"
             )
 
     async def log_backup(self, size_bytes: int, users: int, bets: int, kind: str) -> int:
