@@ -928,6 +928,7 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
             "roulette": games.game_options("roulette"),
             "dice": games.game_options("dice"),
         },
+        "plinko": games.plinko_config(),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
         "max_bet": CASINO_MAX_BET,
@@ -965,7 +966,7 @@ async def api_casino_state(request: web.Request) -> web.Response:
 
 
 async def api_casino_play(request: web.Request) -> web.Response:
-    """Раунд рулетки или костей.
+    """Раунд рулетки, костей или Плинко.
 
     Клиент присылает игру, выбор и сумму. Исход бросает сервер (`services.games`),
     клиент получает его уже готовым и только доигрывает анимацию до нужного числа.
@@ -978,7 +979,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     selection = str(body.get("selection") or "").strip().lower()
     amount = _as_int(body.get("amount"))
 
-    if game not in ("roulette", "dice"):
+    if game not in ("roulette", "dice", "plinko"):
         return _bad("Такой игры нет")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")

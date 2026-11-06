@@ -144,7 +144,7 @@
 
   <section class="screen catalog-mode" id="screen-games">
     <div class="game-catalog-head">
-      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 5 ИГР</span></div>
+      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 6 ИГР</span></div>
       <h1>Игровой зал</h1>
       <p>Выбери игру и начинай раунд</p>
     </div>
@@ -310,6 +310,36 @@
         </span>
         <b class="game-tile-title">Самолётик</b>
         <small class="game-tile-description">Забери выплату до вылета</small>
+        <span class="game-tile-arrow" aria-hidden="true">↗</span>
+      </button>
+      <button class="game-tile" type="button" data-game="plinko" aria-pressed="false">
+        <span class="game-tile-art art-plinko" aria-hidden="true">
+          <svg viewBox="0 0 220 210">
+            <defs>
+              <linearGradient id="plinko-board" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#243d39"/><stop offset="1" stop-color="#171c23"/>
+              </linearGradient>
+              <radialGradient id="plinko-orb" cx="32%" cy="28%">
+                <stop offset="0" stop-color="#fff5d6"/><stop offset=".55" stop-color="#e1c779"/><stop offset="1" stop-color="#a77c35"/>
+              </radialGradient>
+            </defs>
+            <rect x="21" y="22" width="178" height="157" rx="24" fill="url(#plinko-board)" stroke="#83734d" stroke-width="2"/>
+            <path d="M110 36 127 60 93 83 127 105 93 128 110 151" fill="none" stroke="#78b99b" stroke-width="2.2" opacity=".75" stroke-linecap="round" stroke-linejoin="round"/>
+            <g fill="#d5c18b" stroke="#fff0c3" stroke-width=".8">
+              <circle cx="110" cy="47" r="2.7"/>
+              <circle cx="99" cy="66" r="2.5"/><circle cx="121" cy="66" r="2.5"/>
+              <circle cx="88" cy="85" r="2.4"/><circle cx="110" cy="85" r="2.4"/><circle cx="132" cy="85" r="2.4"/>
+              <circle cx="77" cy="104" r="2.3"/><circle cx="99" cy="104" r="2.3"/><circle cx="121" cy="104" r="2.3"/><circle cx="143" cy="104" r="2.3"/>
+              <circle cx="66" cy="123" r="2.2"/><circle cx="88" cy="123" r="2.2"/><circle cx="110" cy="123" r="2.2"/><circle cx="132" cy="123" r="2.2"/><circle cx="154" cy="123" r="2.2"/>
+            </g>
+            <circle cx="127" cy="60" r="7" fill="url(#plinko-orb)" stroke="#fff0c0" stroke-width="1.3"/>
+            <path d="M61 158h98" stroke="#b49a5b" stroke-width="1.3"/>
+            <path d="M75 158v11m20-11v11m20-11v11m20-11v11m20-11v11" stroke="#796947" stroke-width="1.4"/>
+            <circle cx="75" cy="173" r="3" fill="#4f8d70"/><circle cx="95" cy="173" r="3" fill="#847049"/><circle cx="115" cy="173" r="3" fill="#9a8048"/><circle cx="135" cy="173" r="3" fill="#847049"/><circle cx="155" cy="173" r="3" fill="#4f8d70"/>
+          </svg>
+        </span>
+        <b class="game-tile-title">Плинко</b>
+        <small class="game-tile-description">Лови множитель в ячейке</small>
         <span class="game-tile-arrow" aria-hidden="true">↗</span>
       </button>
     </div>

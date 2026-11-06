@@ -66,10 +66,12 @@
     crashTicker: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over" },
-    casinoStake: { roulette: 50, dice: 50 },
+    casinoStake: { roulette: 50, dice: 50, plinko: 50 },
+    plinkoRows: 12,
+    plinkoRisk: "medium",
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
-    casinoResults: { roulette: null, dice: null },  // результат своей игры у каждой игры
+    casinoResults: { roulette: null, dice: null, plinko: null },  // результат текущей мини-игры
     casinoToken: null,        // метка тапа текущего раунда (защита от двойного списания)
     recentNumbers: [],        // дорожка выпавших чисел
     rouletteAngle: 0,
@@ -3254,17 +3256,22 @@
     const plus = document.querySelector('#games .stake-step[data-step="1"]');
     if (plus) plus.disabled = state.casinoBusy || info.raw >= info.max;
 
-    const odds = potential(game).odds;
+    const estimate = potential(game);
+    const odds = estimate.odds;
     const meta = $("#betMeta");
     if (meta) {
       meta.textContent = "";
       meta.classList.toggle("warn", !stakeOk(game));
       meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
-      const payout = odds ? roundPayout(info.raw || 0, odds) : null;
-      meta.append(el("span", null,
-        "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выплата " +
-        (payout === null ? "—" : money(payout)) + " · чистая прибыль " +
-        (payout === null ? "—" : moneySigned(payout - (info.raw || 0)))));
+      if (game === "plinko") {
+        meta.append(el("span", null, `Ячейки: ×${estimate.minMultiplier.toFixed(2)}–×${estimate.maxMultiplier.toFixed(2)} · выплата зависит от траектории`));
+      } else {
+        const payout = odds ? roundPayout(info.raw || 0, odds) : null;
+        meta.append(el("span", null,
+          "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выплата " +
+          (payout === null ? "—" : money(payout)) + " · чистая прибыль " +
+          (payout === null ? "—" : moneySigned(payout - (info.raw || 0)))));
+      }
     }
 
     const play = $("#playBtn");
@@ -3274,11 +3281,12 @@
       if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
-      else play.textContent = (game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(info.raw);
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : "Бросить кости") + " · " + money(info.raw);
     }
   }
 
   function pickFor(game) {
+    if (game === "plinko") return `${state.plinkoRows}:${state.plinkoRisk}`;
     if (state.casinoPick[game]) return state.casinoPick[game];
     return game === "roulette" ? "red" : "over";
   }
@@ -3518,6 +3526,14 @@
 
   function potential(game) {
     const pick = pickFor(game);
+    if (game === "plinko") {
+      const table = state.casino && state.casino.plinko && state.casino.plinko.multipliers[pick];
+      const values = Array.isArray(table) ? table.map(Number) : [0, 0];
+      return {
+        label: "Плинко", odds: null, stake: stakeFor(game), payout: null, profit: null,
+        minMultiplier: Math.min(...values), maxMultiplier: Math.max(...values),
+      };
+    }
     const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
     const option = options.find((item) => item.code === pick);
     const odds = option ? Number(option.odds) : 0;
@@ -3579,6 +3595,9 @@
       const word = colour === "green" ? "зеро" : colour === "red" ? "красное" : "чёрное";
       return `${result.number} — ${word}`;
     }
+    if (result.game === "plinko") {
+      return `Ячейка ${Number(result.slot) + 1} · ×${Number(result.multiplier).toFixed(2)}`;
+    }
     return `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
   }
 
@@ -3599,9 +3618,11 @@
     const line1 = el("div", "line1");
     line1.append(el("span", null, "Выпало"));
     line1.append(el("span", "big", what));
-    const line2 = el("div", "line2", result.win
-      ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
-      : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
+    const line2 = el("div", "line2", result.game === "plinko"
+      ? `×${Number(result.multiplier).toFixed(2)} · выплата ${money(result.payout)} · результат ${moneySigned(result.payout - result.amount)}`
+      : result.win
+        ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
+        : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
     box.append(line1, line2);
   }
 
@@ -3639,9 +3660,12 @@
       who.append(document.createTextNode(row.label));
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
-          : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик" : "кости"));
+          : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
+            : row.game === "plinko" ? "плинко" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
-        : row.game === "ladder" || row.game === "blackjack" || row.game === "crash" ? row.outcome : "сумма " + row.outcome;
+        : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
+          : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
+            ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
       const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
       line.append(who, tag, res);
@@ -3660,12 +3684,18 @@
         "Зеро забирает равные ставки."
       ));
       box.append(el("span", "edge", "преимущество банка 2.7 %"));
-    } else {
+    } else if (game === "dice") {
       box.append(el("b", null, "Кости · два кубика. "));
       box.append(document.createTextNode(
         "«Меньше 6» — сумма 2–6, «больше 8» — сумма 8–12 (по ×2.29), точная сумма — от ×5.73 за семёрку до ×34.38 за дубль."
       ));
       box.append(el("span", "edge", "преимущество банка 4.5 %"));
+    } else {
+      box.append(el("b", null, "Плинко · шарик отскакивает по рядам штырьков. "));
+      box.append(document.createTextNode(
+        "Перед раундом выбери 8, 12 или 16 рядов и риск. Число шагов вправо определяет ячейку; чем реже ячейка, тем выше множитель. Выплата включает остаток ставки."
+      ));
+      box.append(el("span", "edge", "целевой RTP 95,5 % · округление монет может немного снизить фактическую отдачу"));
     }
     return box;
   }
@@ -4267,6 +4297,200 @@
     return button;
   }
 
+  function plinkoLayout(rows) {
+    const width = 360;
+    const spacing = (width - 56) / rows;
+    const top = 29;
+    const dy = 21.5;
+    const binY = top + rows * dy + 6;
+    return { width, height: binY + 34, center: width / 2, spacing, top, dy, binY };
+  }
+
+  function plinkoCoordinates(rows, path, layout) {
+    const points = [{ x: layout.center, y: layout.top - 16 }, { x: layout.center, y: layout.top }];
+    let rights = 0;
+    path.forEach((direction, index) => {
+      rights += Number(direction);
+      const decisions = index + 1;
+      const x = decisions < rows
+        ? layout.center - decisions * layout.spacing / 2 + rights * layout.spacing
+        : layout.center - (rows - 1) * layout.spacing / 2 + rights * layout.spacing;
+      points.push({ x, y: layout.top + decisions * layout.dy });
+    });
+    return points;
+  }
+
+  function plinkoMultiplierLabel(value) {
+    const multiplier = Number(value);
+    if (multiplier >= 10) return String(Math.round(multiplier));
+    return multiplier.toFixed(2);
+  }
+
+  function plinkoBoardNode(rows, risk, multipliers, result) {
+    const layout = plinkoLayout(rows);
+    const svg = svgNode("svg", {
+      class: "plinko-board-svg", id: "plinkoBoardSvg",
+      viewBox: `0 0 ${layout.width} ${layout.height}`, role: "img",
+      "aria-label": `Поле Плинко, ${rows} рядов, риск ${risk}`,
+      "data-rows": rows, "data-center": layout.center, "data-spacing": layout.spacing,
+      "data-top": layout.top, "data-dy": layout.dy,
+    });
+    const defs = svgNode("defs");
+    const boardGlow = svgNode("radialGradient", { id: "plinko-board-glow", cx: ".5", cy: ".15", r: ".9" });
+    boardGlow.append(svgNode("stop", { offset: "0", "stop-color": "#294a40" }), svgNode("stop", { offset: "1", "stop-color": "#151c20" }));
+    const ballGradient = svgNode("radialGradient", { id: "plinko-ball-g", cx: ".3", cy: ".25" });
+    ballGradient.append(svgNode("stop", { offset: "0", "stop-color": "#fff5d5" }), svgNode("stop", { offset: ".55", "stop-color": "#e5c974" }), svgNode("stop", { offset: "1", "stop-color": "#a37b39" }));
+    defs.append(boardGlow, ballGradient);
+    svg.append(defs);
+    svg.append(svgNode("rect", { x: "0", y: "0", width: layout.width, height: layout.height, rx: "17", fill: "url(#plinko-board-glow)" }));
+    svg.append(svgNode("path", {
+      d: `M${layout.center} ${layout.top - 7} L${layout.center - rows * layout.spacing / 2} ${layout.binY + 28} M${layout.center} ${layout.top - 7} L${layout.center + rows * layout.spacing / 2} ${layout.binY + 28}`,
+      class: "plinko-rails",
+    }));
+    const trail = svgNode("path", { id: "plinkoTrail", class: "plinko-trail", d: "" });
+    svg.append(trail);
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let peg = 0; peg <= row; peg += 1) {
+        const x = layout.center - row * layout.spacing / 2 + peg * layout.spacing;
+        const y = layout.top + row * layout.dy;
+        svg.append(svgNode("circle", { cx: x, cy: y, r: "4.2", class: "plinko-peg-shadow" }));
+        svg.append(svgNode("circle", { cx: x, cy: y, r: "2.6", class: "plinko-peg" }));
+        svg.append(svgNode("circle", { cx: x - 0.7, cy: y - 0.8, r: ".8", class: "plinko-peg-glint" }));
+      }
+    }
+
+    const picked = result ? Number(result.slot) : -1;
+    multipliers.forEach((value, slot) => {
+      const x = layout.center - rows * layout.spacing / 2 + slot * layout.spacing;
+      const width = layout.spacing;
+      const bin = svgNode("g", { id: `plinkoBin${slot}`, class: "plinko-bin" + (slot === picked ? " landed" : "") });
+      bin.setAttribute("aria-label", `Ячейка ${slot + 1}, множитель ×${Number(value).toFixed(2)}`);
+      bin.append(svgNode("rect", {
+        x: x + 1.1, y: layout.binY, width: Math.max(1, width - 2.2), height: "25", rx: Math.min(4, width * .18),
+        class: Number(value) >= 1 ? "plinko-bin-high" : "plinko-bin-low",
+      }));
+      const label = svgNode("text", {
+        x: x + width / 2, y: layout.binY + 16.5, "text-anchor": "middle",
+        "font-size": Math.min(10, width * .34), "font-weight": "800", class: "plinko-bin-label",
+      });
+      label.textContent = plinkoMultiplierLabel(value);
+      bin.append(label);
+      svg.append(bin);
+    });
+
+    const ball = svgNode("g", { id: "plinkoBall", class: "plinko-ball", transform: `translate(${layout.center} ${layout.top - 16})` });
+    ball.append(svgNode("circle", { cx: "0", cy: "0", r: "7.2", class: "plinko-ball-shadow" }));
+    ball.append(svgNode("circle", { cx: "0", cy: "0", r: "5.8", fill: "url(#plinko-ball-g)", stroke: "#fff0c4", "stroke-width": "1" }));
+    ball.append(svgNode("circle", { cx: "-1.7", cy: "-2", r: "1.5", fill: "#fff9e5", opacity: ".8" }));
+    svg.append(ball);
+
+    if (result && Array.isArray(result.path)) {
+      const points = plinkoCoordinates(rows, result.path, layout);
+      trail.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" "));
+      const last = points[points.length - 1];
+      ball.setAttribute("transform", `translate(${last.x} ${last.y})`);
+    }
+    return svg;
+  }
+
+  async function animatePlinko(result) {
+    const svg = $("#plinkoBoardSvg");
+    const ball = $("#plinkoBall");
+    const trail = $("#plinkoTrail");
+    if (!svg || !ball || !trail) return;
+    const rows = Number(result.rows);
+    const layout = plinkoLayout(rows);
+    const points = plinkoCoordinates(rows, result.path || [], layout);
+    ball.setAttribute("transform", `translate(${points[0].x} ${points[0].y})`);
+    trail.setAttribute("d", "");
+    document.querySelectorAll("#plinkoBoardSvg .plinko-bin").forEach((bin) => bin.classList.remove("landed"));
+    await pause(90);
+    for (let index = 1; index < points.length; index += 1) {
+      if (!ball.isConnected || !trail.isConnected) return;
+      const point = points[index];
+      ball.setAttribute("transform", `translate(${point.x} ${point.y})`);
+      trail.setAttribute("d", points.slice(0, index + 1)
+        .map((item, part) => `${part ? "L" : "M"}${item.x.toFixed(2)} ${item.y.toFixed(2)}`).join(" "));
+      await pause(index === 1 ? 95 : 115);
+    }
+    const landed = $(`#plinkoBin${Number(result.slot)}`);
+    if (landed) landed.classList.add("landed");
+    haptic(result.win ? "ok" : "bad");
+    await pause(160);
+  }
+
+  function renderPlinko(host) {
+    host.textContent = "";
+    host.append(gameBackButton());
+    const config = state.casino && state.casino.plinko;
+    if (!config) {
+      host.append(el("div", "skeleton"));
+      return;
+    }
+    const result = state.casinoResults.plinko;
+    const rows = result ? Number(result.rows) : Number(state.plinkoRows);
+    const risk = result ? String(result.risk) : state.plinkoRisk;
+    const multipliers = result
+      ? result.multipliers
+      : config.multipliers[`${rows}:${risk}`];
+    const card = el("section", "plinko-game-card");
+    card.append(el("div", "plinko-kicker", "КАССА · ЛОВИ СВОЙ МНОЖИТЕЛЬ"));
+    card.append(el("h2", "plinko-title", "Плинко"));
+    card.append(el("p", "plinko-copy", "Выбери риск и число рядов. Шарик отскочит к случайной ячейке — каждый шаг решает сервер."));
+
+    const rowsBar = el("div", "plinko-control-row");
+    rowsBar.append(el("span", null, "Ряды"));
+    config.rows.forEach((value) => {
+      const button = el("button", "plinko-choice" + (value === rows ? " active" : ""), String(value));
+      button.type = "button";
+      button.dataset.plinkoRows = String(value);
+      button.setAttribute("aria-pressed", String(value === rows));
+      button.disabled = state.casinoBusy;
+      rowsBar.append(button);
+    });
+    card.append(rowsBar);
+
+    const riskBar = el("div", "plinko-risk-row");
+    Object.entries(config.risks).forEach(([key, label]) => {
+      const button = el("button", "plinko-risk" + (key === risk ? " active" : ""), label);
+      button.type = "button";
+      button.dataset.plinkoRisk = key;
+      button.setAttribute("aria-pressed", String(key === risk));
+      button.disabled = state.casinoBusy;
+      riskBar.append(button);
+    });
+    card.append(riskBar);
+
+    const stage = el("div", "plinko-stage");
+    stage.append(plinkoBoardNode(rows, risk, multipliers, result));
+    card.append(stage);
+    const currentTable = config.multipliers[`${state.plinkoRows}:${state.plinkoRisk}`] || multipliers;
+    const minMultiplier = Math.min(...currentTable);
+    const maxMultiplier = Math.max(...currentTable);
+    card.append(el("div", "plinko-payline", `Риск ${config.risks[state.plinkoRisk]} · выплата от ×${minMultiplier.toFixed(2)} до ×${maxMultiplier.toFixed(2)}`));
+    card.append(stakeRow("plinko"));
+
+    const info = potential("plinko");
+    const meta = el("div", "bet-meta");
+    meta.id = "betMeta";
+    meta.append(el("span", null, `Ставка: ${money(info.stake)}`));
+    meta.append(el("span", null, `Множители ячеек: ×${info.minMultiplier.toFixed(2)}–×${info.maxMultiplier.toFixed(2)}`));
+    card.append(meta);
+
+    const play = el("button", "btn play plinko-drop");
+    play.id = "playBtn";
+    play.type = "button";
+    play.textContent = `УРОНИТЬ ШАРИК · ${money(info.stake)}`;
+    play.disabled = state.casinoBusy || !stakeOk("plinko");
+    card.append(play);
+    card.append(outcomeNode());
+    card.append(summaryNode(), historyNode(), rulesNode("plinko"));
+    host.append(card);
+    if (result) paintOutcome(result);
+    if (state.casinoBusy) lockTable(true);
+  }
+
   function renderGames() {
     const host = $("#games");
     if (!host) return;
@@ -4306,6 +4530,10 @@
     if (!state.casino) {
       host.textContent = "";
       host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
+      return;
+    }
+    if (state.game === "plinko") {
+      renderPlinko(host);
       return;
     }
 
@@ -4458,9 +4686,9 @@
     const play = $("#playBtn");
     if (play) {
       play.disabled = busy;
-      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : "Бросаем…";
+      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : "Бросаем…";
     }
-    document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .stake-chip, #games .stake-step, #stakeInput")
+    document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => { node.disabled = busy; });
   }
 
@@ -4503,6 +4731,7 @@
 
       if (state.game === game) {
         if (game === "roulette") await spinRouletteTo(data.number);
+        else if (game === "plinko") await animatePlinko(data);
         else await rollDiceTo(data.dice);
       }
 
@@ -4512,7 +4741,7 @@
       if (onScreen) paintOutcome(data, { pop: true });
       else {
         // результат некуда рисовать — говорим тостом, но именно про эту игру
-        const name = game === "roulette" ? "Рулетка" : "Кости";
+        const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : "Кости";
         toast(`${name} · ${outcomeText(data)} · ` +
           (data.win
             ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - amount)}`
@@ -4621,6 +4850,21 @@
       }
 
       if (node.id === "playBtn") { playCasinoRound(); return; }
+
+      if (node.dataset.plinkoRows) {
+        state.plinkoRows = Number(node.dataset.plinkoRows);
+        state.casinoResults.plinko = null;
+        haptic("light");
+        renderGames();
+        return;
+      }
+      if (node.dataset.plinkoRisk) {
+        state.plinkoRisk = node.dataset.plinkoRisk;
+        state.casinoResults.plinko = null;
+        haptic("light");
+        renderGames();
+        return;
+      }
 
       if (node.dataset.code) {
         state.casinoPick[game] = node.dataset.code;

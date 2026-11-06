@@ -87,6 +87,7 @@
   .game-tile[data-game="ladder"]{--game-accent:#b29aff;background:radial-gradient(ellipse at 50% 35%,#343252,#171c29 72%)}
   .game-tile[data-game="blackjack"]{--game-accent:#77d4b3;background:radial-gradient(ellipse at 50% 35%,#25433f,#151e29 72%)}
   .game-tile[data-game="crash"]{--game-accent:#8bd6b5;background:radial-gradient(ellipse at 50% 35%,#27453e,#151e29 72%)}
+  .game-tile[data-game="plinko"]{--game-accent:#d9c17d;background:radial-gradient(ellipse at 50% 35%,#30423a,#151e29 72%)}
   @media (max-width:360px){
     #screen-games.catalog-mode{margin:-12px -12px 0;padding:18px 12px 24px}
     .game-menu{gap:9px}
@@ -1141,3 +1142,32 @@ button:focus-visible{outline-color:#d6b66d}
 .crash-economy,.crash-foot{margin-top:10px;color:#a69c82;font-size:9px;line-height:1.5;text-align:center}
 .crash-foot{color:#77786f}
 @media(max-width:360px){.crash-card{padding:15px 12px}.crash-stage{min-height:194px}.crash-chip{min-width:39px;padding:0 6px}}
+/* Plinko board and controls */
+.plinko-game-card{padding:18px 15px 17px;border:1px solid rgba(202,178,112,.22);border-radius:20px;background:radial-gradient(ellipse at 50% 0%,rgba(63,94,75,.2),transparent 42%),linear-gradient(160deg,#1b2022,#141719);box-shadow:0 16px 42px rgba(0,0,0,.25)}
+.plinko-kicker{color:#bba66a;font-size:9px;font-weight:900;letter-spacing:.18em;text-align:center}
+.plinko-title{margin:6px 0 3px;color:#f0e5c8;font-family:Georgia,serif;font-size:27px;font-weight:700;text-align:center}
+.plinko-copy{max-width:360px;margin:0 auto 15px;color:#a7a493;font-size:11px;line-height:1.5;text-align:center}
+.plinko-control-row{display:flex;align-items:center;gap:7px;margin:0 auto 9px;max-width:380px}
+.plinko-control-row>span{margin-right:auto;color:#c2b99f;font-size:11px;font-weight:800}
+.plinko-choice,.plinko-risk{height:35px;padding:0 14px;border:1px solid #504a37;border-radius:10px;color:#d4cdb9;background:#191b19;font-size:11px;font-weight:850;transition:all .16s ease}
+.plinko-choice.active,.plinko-risk.active{border-color:#c6a85f;color:#f4dda0;background:linear-gradient(135deg,rgba(189,153,75,.22),rgba(137,106,53,.11));box-shadow:inset 0 0 14px rgba(210,176,91,.08)}
+.plinko-risk-row{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;max-width:380px;margin:0 auto 13px}
+.plinko-risk{width:100%;padding:0 6px;color:#bcb7a7}
+.plinko-stage{width:min(100%,390px);margin:0 auto;padding:8px;border:1px solid rgba(186,160,99,.2);border-radius:17px;background:radial-gradient(ellipse at 50% 0%,rgba(45,76,61,.18),transparent 60%),#121718;box-shadow:inset 0 1px 22px rgba(0,0,0,.32)}
+.plinko-board-svg{display:block;width:100%;height:auto;overflow:visible;touch-action:manipulation}
+.plinko-rails{fill:none;stroke:rgba(194,166,101,.25);stroke-width:1.2}
+.plinko-trail{fill:none;stroke:#8fd4ae;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;opacity:.88;filter:drop-shadow(0 0 4px rgba(111,215,155,.48))}
+.plinko-peg-shadow{fill:rgba(0,0,0,.52)}
+.plinko-peg{fill:#c2ad73;stroke:#f0dda8;stroke-width:.75;filter:drop-shadow(0 1px 2px rgba(231,195,105,.32))}
+.plinko-peg-glint{fill:#fff3d2;opacity:.82}
+.plinko-bin-low{fill:#334039;stroke:#59674d;stroke-width:.8}
+.plinko-bin-high{fill:#655331;stroke:#a18449;stroke-width:.8}
+.plinko-bin-label{fill:#e8dfc8;font-family:Arial,sans-serif;font-variant-numeric:tabular-nums}
+.plinko-bin.landed rect{fill:#d5b45f;stroke:#fff0b5;stroke-width:1.6;filter:drop-shadow(0 0 6px rgba(238,201,104,.55))}
+.plinko-bin.landed text{fill:#211a0c}
+.plinko-ball{filter:drop-shadow(0 2px 4px rgba(240,205,117,.65));transition:transform .105s cubic-bezier(.2,.75,.25,1)}
+.plinko-ball-shadow{fill:rgba(0,0,0,.34)}
+.plinko-payline{margin:10px 0 1px;color:#cabb91;font-size:10px;font-weight:800;letter-spacing:.035em;text-align:center}
+.plinko-drop{margin-top:11px;border-color:#c6a75d!important;color:#1a160c!important;background:linear-gradient(120deg,#e7d398,#b48b48)!important;box-shadow:0 8px 22px rgba(173,139,73,.2)}
+.plinko-drop:disabled{opacity:.48}
+@media(max-width:360px){.plinko-game-card{padding:15px 11px}.plinko-stage{padding:5px}.plinko-choice,.plinko-risk{padding-left:9px;padding-right:9px}.plinko-copy{font-size:10px}}
