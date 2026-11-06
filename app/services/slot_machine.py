@@ -18,7 +18,7 @@ SYMBOLS: tuple[dict[str, Any], ...] = (
     {"code": "cherry", "name": "Вишня", "icon": "🍒", "weight": 2900},
     {"code": "lemon", "name": "Лимон", "icon": "🍋", "weight": 2400},
     {"code": "bell", "name": "Колокол", "icon": "🔔", "weight": 1900},
-    {"code": "bar", "name": "BAR", "icon": "▰", "weight": 1300},
+    {"code": "bar", "name": "BAR", "icon": "BAR", "weight": 1300},
     {"code": "seven", "name": "Семёрка", "icon": "7️⃣", "weight": 900},
     {"code": "diamond", "name": "Бриллиант", "icon": "💎", "weight": 300},
     {"code": "scatter", "name": "Scatter", "icon": "✦", "weight": 300},

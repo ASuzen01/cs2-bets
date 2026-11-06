@@ -29,6 +29,7 @@ def test_slot_configuration_and_expected_rtp() -> None:
     assert (config["rows"], config["reels"], config["ways"]) == (3, 5, 243)
     assert config["rtp"] == 95.5
     assert config["scatter_awards"] == {"3": 10, "4": 15, "5": 20}
+    assert next(symbol for symbol in config["symbols"] if symbol["code"] == "bar")["icon"] == "BAR"
     actual = slot_machine._expected_return_per_way(slot_machine.PAYTABLE) * (
         1 + slot_machine._expected_free_spins()
     )
