@@ -54,6 +54,11 @@
   #screen-games.catalog-mode{margin:-14px -14px 0;padding:22px 14px 28px;min-height:calc(100svh - 132px);
     color:var(--text);background:var(--bg)}
   .game-catalog-head{padding:0 3px 18px}
+  #screen-games:not(.catalog-mode) .game-catalog-head{display:none}
+  #screen-games:not(.catalog-mode) .game-back{display:inline-flex;width:auto;min-height:34px;
+    margin:0 0 8px;padding:6px 12px;border-radius:10px;font-size:12px}
+  #screen-games:not(.catalog-mode) .casino-play-dock .game-back{min-height:30px;
+    margin:0 auto 4px;padding:4px 10px;font-size:11px}
   .game-catalog-eyebrow{display:flex;align-items:center;gap:7px;color:#d8bd7a;font-size:10px;letter-spacing:.17em;font-weight:900}
   .game-catalog-eyebrow>span:last-child{color:#8090a4;letter-spacing:.08em}
   .catalog-live-dot{width:7px;height:7px;border-radius:50%;background:#59d6ac;box-shadow:0 0 10px rgba(89,214,172,.7)}
