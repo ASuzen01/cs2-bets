@@ -165,6 +165,111 @@ async def test_player_stats_counts_roi(db: Database) -> None:
     assert stats["roi"] == 33                       # (200-150)/150
     assert stats["biggest_win"] == 200
     assert stats["favourite_tournament"].startswith("Counter-Strike")
+    assert stats["cash_staked"] == 150
+    assert stats["cash_returned"] == 200
+    assert stats["promo_staked"] == 0
+
+
+async def test_player_stats_separates_ticket_funded_bets_from_own_balance(db: Database) -> None:
+    match = await _match(db, fonbet_id=556)
+    match_id = int(match["id"])
+    await db.place_bet(match_id, USER["id"], None, "a", 100)
+    ticket_id = await db.add_ticket(USER["id"], 200, "test", kind="single")
+    await db.place_bet(match_id, USER["id"], None, "a", 200, ticket_id=ticket_id)
+    await db.set_status(match_id, "live")
+    await db.settle_match(match_id, "a")
+
+    stats = await db.player_stats(USER["id"])
+
+    assert stats["cash_staked"] == 100
+    assert stats["cash_returned"] == 200
+    assert stats["promo_staked"] == 200
+    assert stats["promo_returned"] == 400
+    assert stats["staked"] == 300 and stats["returned"] == 600
+    assert stats["roi"] == 100  # ROI personal only: (200-100)/100
+
+
+async def test_player_roi_ignores_unsettled_stakes_until_result(db: Database) -> None:
+    settled = await _match(db, fonbet_id=562)
+    open_match = await _match(db, fonbet_id=563)
+    await db.place_bet(int(settled["id"]), USER["id"], None, "a", 100)
+    await db.place_bet(int(open_match["id"]), USER["id"], None, "a", 500)
+    await db.set_status(int(settled["id"]), "live")
+    await db.settle_match(int(settled["id"]), "a")
+
+    stats = await db.player_stats(USER["id"])
+
+    assert stats["cash_staked"] == 600
+    assert stats["settled_cash_staked"] == 100
+    assert stats["cash_returned"] == 200
+    assert stats["roi"] == 100
+
+
+async def test_player_roi_includes_cashout_refund_and_commission(db: Database) -> None:
+    match = await _match(db, fonbet_id=564)
+    await db.place_bet(int(match["id"]), USER["id"], None, "a", 100)
+    bet = await db._fetchone(
+        "SELECT id FROM bets WHERE user_id = ? ORDER BY id DESC LIMIT 1", (USER["id"],)
+    )
+    await db.cashout_bet(int(bet["id"]), USER["id"], 0.95)
+
+    stats = await db.player_stats(USER["id"])
+
+    assert stats["cash_staked"] == 100
+    assert stats["settled_cash_staked"] == 100
+    assert stats["cash_returned"] == 95
+    assert stats["roi"] == -5
+    assert stats["bets"] == 0  # проданная ставка не считается обычной ставкой/winrate
+
+
+async def test_player_stats_recognizes_ticket_funded_express(db: Database) -> None:
+    first = await _match(db, fonbet_id=558)
+    second = await _match(db, fonbet_id=559)
+    ticket_id = await db.add_ticket(USER["id"], 300, "test", kind="express")
+    await db.place_express(
+        USER["id"], None, 300,
+        [{"match_id": int(first["id"]), "side": "a"}, {"match_id": int(second["id"]), "side": "b"}],
+        ticket_id=ticket_id,
+    )
+
+    stats = await db.player_stats(USER["id"])
+
+    assert stats["cash_staked"] == 0
+    assert stats["promo_staked"] == 300
+    assert stats["staked"] == 300
+
+
+async def test_line_rtp_counts_only_settled_sports_bets(db: Database) -> None:
+    settled = await _match(db, fonbet_id=560)
+    still_open = await _match(db, fonbet_id=561)
+    await db.place_bet(int(settled["id"]), USER["id"], None, "a", 100)
+    await db.place_bet(int(still_open["id"]), USER["id"], None, "a", 500)
+    await db.set_status(int(settled["id"]), "live")
+    await db.settle_match(int(settled["id"]), "a")
+
+    totals = await db.line_totals()
+
+    assert totals["bets_count"] == 1
+    assert totals["bets_staked"] == 100
+    assert totals["bets_paid"] == 200
+
+
+async def test_bet_request_cleanup_keeps_events_and_prunes_only_expired_tokens(db: Database) -> None:
+    old = int(time.time()) - 8 * 24 * 60 * 60
+    await db._write(
+        "INSERT INTO bet_requests (user_id, channel, token, bet_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        (USER["id"], "bet", "retry-token", 0, old),
+    )
+    await db.log_event(USER["id"], "winback", "retention-check")
+    match = await _match(db, fonbet_id=557)
+    await db.place_bet(int(match["id"]), USER["id"], None, "a", 100, token="retry-token")
+
+    token = await db._fetchone(
+        "SELECT created_at, bet_id FROM bet_requests WHERE user_id = ? AND channel = ? AND token = ?",
+        (USER["id"], "bet", "retry-token"),
+    )
+    assert token is not None and int(token["created_at"]) > old and int(token["bet_id"]) > 0
+    assert await db.has_event(USER["id"], "winback", "retention-check")
 
 
 # ------------------------------------------------------------------- лимиты
@@ -175,6 +280,26 @@ def test_rate_limiter_window() -> None:
     assert not limiter.allow(1, "/api/wheel", now=1000)     # девятый — в минуту не пускаем
     assert limiter.allow(2, "/api/wheel", now=1000)         # другой игрок не страдает
     assert limiter.allow(1, "/api/wheel", now=1100)         # окно прошло
+
+
+def test_rate_limiter_prunes_inactive_client_keys() -> None:
+    limiter = RateLimiter()
+    assert limiter.allow(1, "/api/wheel", now=1000)
+    assert limiter.allow(2, "/api/wheel", now=1000)
+    assert limiter.allow(3, "/api/wheel", now=1061)
+    assert set(limiter._hits) == {(3, "/api/wheel")}
+
+
+async def test_honesty_reports_all_games_and_separates_theory_from_realized_line(client: TestClient) -> None:
+    data = await (await client.get("/api/honesty")).json()
+    assert data["roulette"]["rtp"] == 97.3
+    assert data["games"]["slots"]["rtp"] == 95.5
+    assert data["games"]["plinko"]["rtp"] == 95.5
+    assert data["games"]["ladder"]["rtp"] == 95.5
+    assert data["games"]["crash"]["cashout_2x_return"] == 95.0248
+    assert data["games"]["blackjack"]["rtp"] is None
+    assert data["games"]["baccarat"]["rtp_by_bet"]["banker"] == 98.94
+    assert "не прогноз RTP" in data["betting_note"]
 
 
 async def test_state_has_no_money_ceiling(client: TestClient) -> None:

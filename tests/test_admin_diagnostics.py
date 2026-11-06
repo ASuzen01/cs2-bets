@@ -102,8 +102,34 @@ async def test_player_stats_summary_includes_roi_winrate_and_open_counts(db: Dat
     assert "рассчитано 2" in text and "выиграно 1" in text and "winrate 50%" in text
     assert "Открыто: 0 ставок · 0 экспрессов" in text
     assert "ROI 20%" in text
-    assert "поставлено 150" in text and "возвращено 180" in text
+    assert "поставлено 150" in text and "возвращено по рассчитанным 180" in text
     assert "Крупнейшая спортивная выплата: 180" in text
+
+
+async def test_player_stats_report_refuses_group_chat(db: Database) -> None:
+    from types import SimpleNamespace
+
+    from app.handlers.admin import _send_player_stats
+
+    message = FakeMessage()
+    message.chat = SimpleNamespace(type="supergroup")
+    await _send_player_stats(message, db, USER_ID)
+
+    assert len(message.answers) == 1
+    assert "только в личном чате" in message.answers[0][0]
+
+
+async def test_player_diagnostics_refuses_group_chat(db: Database) -> None:
+    from types import SimpleNamespace
+
+    from app.handlers.admin import _send_player_diagnostics
+
+    message = FakeMessage()
+    message.chat = SimpleNamespace(type="group")
+    await _send_player_diagnostics(message, db, USER_ID)
+
+    assert len(message.answers) == 1
+    assert "только в личном чате" in message.answers[0][0]
 
 
 async def test_player_stats_picker_flow_shows_selected_player(db: Database) -> None:

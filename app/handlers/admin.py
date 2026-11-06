@@ -679,7 +679,16 @@ async def cmd_feed(message: Message, db: Database, syncer: Any) -> None:
     await message.answer("\n".join(lines))
 
 
+def _private_admin_report_chat(message: Message) -> bool:
+    """Reports contain player-only details; never expose them in group chats."""
+    chat = getattr(message, "chat", None)
+    return getattr(chat, "type", "private") == "private"
+
+
 async def _send_player_diagnostics(message: Message, db: Database, user_id: int) -> None:
+    if not _private_admin_report_chat(message):
+        await message.answer("Отчёты по игрокам доступны только в личном чате с ботом.")
+        return
     user = await db.get_user(user_id)
     if user is None:
         await message.answer(f"Игрок <code>{user_id}</code> не найден.")
@@ -735,6 +744,9 @@ async def cmd_player(
     message: Message, command: CommandObject, db: Database, state: FSMContext
 ) -> None:
     """Read-only сводка по игроку; без ID предлагает выбрать игрока."""
+    if not _private_admin_report_chat(message):
+        await message.reply("Отчёты по игрокам доступны только в личном чате с ботом.")
+        return
     args = (command.args or "").split()
     if not args:
         await _begin_player_flow(message, state, db, "player")
@@ -750,6 +762,9 @@ async def cmd_player(
 
 
 async def _send_player_stats(message: Message, db: Database, user_id: int) -> None:
+    if not _private_admin_report_chat(message):
+        await message.answer("Отчёты по игрокам доступны только в личном чате с ботом.")
+        return
     user = await db.get_user(user_id)
     if user is None:
         await message.answer(f"Игрок <code>{user_id}</code> не найден.")
@@ -761,7 +776,12 @@ async def _send_player_stats(message: Message, db: Database, user_id: int) -> No
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else "без имени")
     staked = int(stats["staked"])
     returned = int(stats["returned"])
-    net = returned - staked
+    cash_staked = int(stats["cash_staked"])
+    cash_returned = int(stats["cash_returned"])
+    settled_cash_staked = int(stats["settled_cash_staked"])
+    promo_staked = int(stats["promo_staked"])
+    promo_returned = int(stats["promo_returned"])
+    net = cash_returned - settled_cash_staked
     net_text = ("+" if net >= 0 else "−") + texts.money(abs(net))
     tournament = str(stats["favourite_tournament"] or "нет данных")
 
@@ -771,9 +791,14 @@ async def _send_player_stats(message: Message, db: Database, user_id: int) -> No
         f"Спорт: {int(stats['bets'])} ставок/экспрессов · рассчитано {int(stats['settled'])} · "
         f"выиграно {int(stats['won'])} · winrate {int(stats['winrate'])}%",
         f"Открыто: {len(active_bets)} ставок · {len(active_expresses)} экспрессов",
-        f"Общий оборот (спорт + казино): поставлено {texts.money(staked)}, "
-        f"возвращено {texts.money(returned)}",
-        f"Итог: <b>{net_text}</b> · ROI {int(stats['roi'])}%",
+        f"Свои монеты (спорт + казино): поставлено {texts.money(cash_staked)} "
+        f"(включая открытые), возвращено по рассчитанным {texts.money(cash_returned)}",
+        f"Бонусные ставки: номинал {texts.money(promo_staked)} "
+        f"(включая открытые), выплаты по рассчитанным {texts.money(promo_returned)}",
+        f"Общий оборот с бонусами: поставлено {texts.money(staked)}, "
+        f"возвращено по рассчитанным {texts.money(returned)}",
+        f"Итог по рассчитанным ставкам (свои монеты, спорт + казино): "
+        f"<b>{net_text}</b> · ROI {int(stats['roi'])}%",
         f"Казино: {int(stats['casino_rounds'])} раундов · результат "
         f"{('+' if int(stats['casino_net']) >= 0 else '−')}{texts.money(abs(int(stats['casino_net'])))}",
         f"Крупнейшая спортивная выплата: {texts.money(int(stats['biggest_win']))}",
@@ -787,6 +812,9 @@ async def cmd_player_stats(
     message: Message, command: CommandObject, db: Database, state: FSMContext
 ) -> None:
     """Сводная статистика игрока: /player_stats ID или выбор из списка."""
+    if not _private_admin_report_chat(message):
+        await message.reply("Отчёты по игрокам доступны только в личном чате с ботом.")
+        return
     args = (command.args or "").split()
     if not args:
         await _begin_player_flow(message, state, db, "player_stats")

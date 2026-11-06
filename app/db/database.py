@@ -33,6 +33,8 @@ from app.services.quests import by_code, quests_of_day  # noqa: E402  (посл�
 
 STREAK_STEP: float = 0.1      # каждый день серии даёт +10 % к бонусу
 STREAK_CAP: float = 1.5       # дальше не растёт: 15 дней — потолок
+BET_REQUEST_RETENTION_SECONDS = 7 * 24 * 60 * 60  # сетевые повторы защищаем неделю
+BET_REQUEST_PRUNE_INTERVAL_SECONDS = 60 * 60
 
 
 def bonus_amount(base: int, streak: int) -> int:
@@ -197,6 +199,7 @@ class Database:
         self._write_lock = asyncio.Lock()
         self._tx_owner: asyncio.Task[Any] | None = None
         self._tx_depth = 0
+        self._last_bet_request_prune = 0
 
     # ------------------------------------------------------------------ infra
     @property
@@ -359,6 +362,14 @@ class Database:
         Нужно, чтобы двойной тап на медленной сети не списывал деньги дважды.
         Возвращает None, если действие новое (можно продолжать), иначе id ставки/раунда.
         """
+        if now - self._last_bet_request_prune >= BET_REQUEST_PRUNE_INTERVAL_SECONDS:
+            # Токены нужны только для повторов сетевого запроса. Храним неделю;
+            # события winback/admin_ticket и прочие idempotency-ключи не трогаем.
+            await conn.execute(
+                "DELETE FROM bet_requests WHERE created_at < ?",
+                (now - BET_REQUEST_RETENTION_SECONDS,),
+            )
+            self._last_bet_request_prune = now
         if not token:
             return None
         cur = await conn.execute(
@@ -1070,20 +1081,16 @@ class Database:
         )
 
     async def line_totals(self) -> dict[str, int]:
-        """Итоги по всей линии: сколько поставлено и сколько выплачено.
-
-        Нужно для открытого отчёта о честности: игрок видит реальные суммы,
-        а не только обещания в правилах.
-        """
+        """Фактические валовые выплаты по рассчитанным спортивным ставкам."""
         bets = await self._fetchone(
-            "SELECT COALESCE(SUM(amount), 0) AS staked,"
-            " COALESCE(SUM(CASE WHEN payout > amount THEN payout ELSE 0 END), 0) AS paid"
-            " FROM bets WHERE cashed_out = 0"
+            "SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS staked,"
+            " COALESCE(SUM(payout), 0) AS paid"
+            " FROM bets WHERE payout IS NOT NULL"
         )
         expresses = await self._fetchone(
-            "SELECT COALESCE(SUM(stake), 0) AS staked,"
-            " COALESCE(SUM(CASE WHEN status = 'won' THEN payout ELSE 0 END), 0) AS paid"
-            " FROM expresses"
+            "SELECT COUNT(*) AS count, COALESCE(SUM(stake), 0) AS staked,"
+            " COALESCE(SUM(payout), 0) AS paid"
+            " FROM expresses WHERE status IN ('won', 'lost', 'void')"
         )
         casino = await self._fetchone(
             "SELECT COALESCE(SUM(amount), 0) AS staked, COALESCE(SUM(payout), 0) AS paid"
@@ -1093,8 +1100,10 @@ class Database:
             "SELECT COALESCE(SUM(prize), 0) AS paid, COUNT(*) AS spins FROM wheel_spins"
         )
         return {
+            "bets_count": int(bets["count"] or 0),
             "bets_staked": int(bets["staked"] or 0),
             "bets_paid": int(bets["paid"] or 0),
+            "express_count": int(expresses["count"] or 0),
             "express_staked": int(expresses["staked"] or 0),
             "express_paid": int(expresses["paid"] or 0),
             "casino_staked": int(casino["staked"] or 0),
@@ -2336,17 +2345,24 @@ class Database:
         }
 
     async def player_stats(self, user_id: int) -> dict[str, Any]:
-        """Итоги игрока: сколько поставил, сколько вернулось, винрейт и любимый турнир."""
+        """Итоги игрока с раздельным учётом списаний и бонусных ставок."""
         bets = await self._fetchall(
             """
-            SELECT b.amount, b.payout, m.status AS match_status, m.tournament
+            SELECT b.id, b.amount, b.payout, b.cashed_out,
+                   m.status AS match_status, m.tournament,
+                   EXISTS (SELECT 1 FROM tickets t WHERE t.bet_id = b.id) AS promo
             FROM bets b LEFT JOIN matches m ON m.id = b.match_id
-            WHERE b.user_id = ? AND b.cashed_out = 0
+            WHERE b.user_id = ?
             """,
             (user_id,),
         )
         expresses = await self._fetchall(
-            "SELECT stake, payout, status FROM expresses WHERE user_id = ?", (user_id,)
+            """
+            SELECT e.id, e.stake, e.payout, e.status,
+                   EXISTS (SELECT 1 FROM tickets t WHERE t.express_id = e.id) AS promo
+            FROM expresses e WHERE e.user_id = ?
+            """,
+            (user_id,),
         )
         casino = await self._fetchone(
             "SELECT COUNT(*) AS rounds, COALESCE(SUM(amount), 0) AS staked,"
@@ -2354,33 +2370,53 @@ class Database:
             (user_id,),
         )
 
-        staked = 0
-        returned = 0
-        won = 0
-        settled = 0
-        biggest = 0
+        cash_staked = promo_staked = 0
+        settled_cash_staked = settled_promo_staked = 0
+        cash_returned = promo_returned = 0
+        won = settled = biggest = 0
         tournaments: dict[str, int] = {}
 
         for row in bets:
-            staked += int(row["amount"])
-            match_status = str(row["match_status"] or "")
+            promo = bool(row["promo"])
+            amount = int(row["amount"])
             paid = int(row["payout"] or 0)
-            if row["payout"] is not None:
-                returned += paid
-                biggest = max(biggest, paid)
-            if match_status in ("finished", "cancelled"):
-                settled += 1
-                if match_status == "finished" and paid > 0:
-                    won += 1
-            if row["tournament"]:
-                name = str(row["tournament"])
-                tournaments[name] = tournaments.get(name, 0) + 1
+            if promo:
+                promo_staked += amount
+                if row["payout"] is not None:
+                    settled_promo_staked += amount
+                    promo_returned += paid
+            else:
+                cash_staked += amount
+                if row["payout"] is not None:
+                    settled_cash_staked += amount
+                    cash_returned += paid
+            if not bool(row["cashed_out"]):
+                if row["payout"] is not None:
+                    biggest = max(biggest, paid)
+                match_status = str(row["match_status"] or "")
+                if match_status in ("finished", "cancelled"):
+                    settled += 1
+                    if match_status == "finished" and paid > 0:
+                        won += 1
+                if row["tournament"]:
+                    name = str(row["tournament"])
+                    tournaments[name] = tournaments.get(name, 0) + 1
 
         for row in expresses:
-            staked += int(row["stake"])
+            promo = bool(row["promo"])
+            stake = int(row["stake"])
             paid = int(row["payout"] or 0)
+            if promo:
+                promo_staked += stake
+                if row["status"] in ("won", "lost", "void"):
+                    settled_promo_staked += stake
+                    promo_returned += paid
+            else:
+                cash_staked += stake
+                if row["status"] in ("won", "lost", "void"):
+                    settled_cash_staked += stake
+                    cash_returned += paid
             if row["payout"] is not None:
-                returned += paid
                 biggest = max(biggest, paid)
             status = str(row["status"] or "")
             if status in ("won", "lost", "void"):
@@ -2391,17 +2427,31 @@ class Database:
         casino_rounds = int(casino["rounds"]) if casino is not None else 0
         casino_staked = int(casino["staked"]) if casino is not None else 0
         casino_paid = int(casino["paid"]) if casino is not None else 0
+        cash_staked += casino_staked
+        settled_cash_staked += casino_staked
+        cash_returned += casino_paid
 
         favourite = max(tournaments, key=lambda key: tournaments[key]) if tournaments else ""
+        staked = cash_staked + promo_staked
+        returned = cash_returned + promo_returned
         return {
-            "bets": len(bets) + len(expresses),
+            "bets": sum(not bool(row["cashed_out"]) for row in bets) + len(expresses),
             "settled": settled,
             "won": won,
             "winrate": round(won * 100 / settled) if settled else 0,
-            "staked": staked + casino_staked,
-            "returned": returned + casino_paid,
-            "roi": round((returned + casino_paid - staked - casino_staked) * 100 / (staked + casino_staked))
-            if (staked + casino_staked)
+            # Combined totals kept for existing integrations; ROI uses only funds
+            # actually staked from the player's balance (including casino rounds).
+            "staked": staked,
+            "returned": returned,
+            "cash_staked": cash_staked,
+            "cash_returned": cash_returned,
+            "settled_cash_staked": settled_cash_staked,
+            "promo_staked": promo_staked,
+            "promo_returned": promo_returned,
+            "settled_promo_staked": settled_promo_staked,
+            "roi": round(
+                (cash_returned - settled_cash_staked) * 100 / settled_cash_staked
+            ) if settled_cash_staked
             else 0,
             "biggest_win": biggest,
             "favourite_tournament": favourite,

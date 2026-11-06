@@ -1582,6 +1582,7 @@
     box.append(host);
     api("/api/honesty").then((data) => {
       host.textContent = "";
+      host.append(el("div", "hint", "Теоретический RTP — средняя валовая выплата на длинной дистанции; короткая серия может сильно отличаться."));
       const kv = (label, value, hint) => {
         const row = el("div", "kv");
         row.append(el("span", null, label));
@@ -1594,8 +1595,31 @@
       kv("Колесо (платная крутка)",
         data.wheel.rtp + " %",
         `${data.wheel.slots} сектора, ${data.wheel.empty} пустых, ${data.wheel.tickets} с билетом · ` +
-        `в среднем ${money(data.wheel.expected)} за крутку по ${money(data.wheel.cost)}`);
-      kv("Линия ставок", data.line_rtp + " %", "сколько вернулось игрокам из поставленного");
+        `в среднем ${money(data.wheel.expected)} за крутку по ${money(data.wheel.cost)} · ${data.wheel.note}`);
+      const gameLabels = {
+        slots: "Слоты",
+        plinko: "Плинко",
+        ladder: "Лесенка",
+        crash: "Самолётик",
+        blackjack: "Блэкджек",
+      };
+      for (const [key, label] of Object.entries(gameLabels)) {
+        const game = data.games?.[key];
+        if (!game) continue;
+        const value = game.rtp == null ? "зависит от решений" : game.rtp + " %";
+        let note = game.note;
+        if (key === "crash") {
+          note += `; шанс забрать на ×2 — ${game.cashout_2x_win_probability} %`;
+        }
+        kv(label, value, note);
+      }
+      const baccarat = data.games?.baccarat;
+      if (baccarat) {
+        kv("Баккара — ставка на Игрока", baccarat.rtp_by_bet.player + " %", baccarat.note);
+        kv("Баккара — ставка на Банкира", baccarat.rtp_by_bet.banker + " %");
+        kv("Баккара — ставка на Ничью", baccarat.rtp_by_bet.tie + " %");
+      }
+      kv("Линия ставок", data.line_rtp + " %", "валовая выплата по рассчитанным спортивным ставкам / их сумма; фактическая история, не прогноз RTP");
       host.append(el("div", "hint", data.betting_note));
     }).catch((err) => {
       host.textContent = "";

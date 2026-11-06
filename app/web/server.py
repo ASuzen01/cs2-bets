@@ -349,25 +349,24 @@ async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:
 
 
 async def honesty_payload(db: Database) -> dict[str, Any]:
-    """Что отдаёт каждая игра: считаем по правилам, а не «на слово».
-
-    Рулетка — европейское колесо на 37 лунок, кости — два кубика, колесо — 24
-    сектора из `WHEEL_VALUES`. Для ставок показываем реальные суммы по линии.
-    """
-    roulette_rtp = round(18 / games.ROULETTE_SLOTS * 2 * 100, 1)      # внешние ставки
+    """Теоретические правила всех игр и фактический агрегат линии."""
+    roulette_rtp = round(18 / games.ROULETTE_SLOTS * 2 * 100, 1)
     wheels = daily_layout()
-    expected = average_prize()
+    expected = sum(
+        int(settings.wheel_ticket_value) if is_ticket(value) else int(value)
+        for value in wheels
+    ) / max(1, len(wheels))
     cost = max(1, int(settings.wheel_cost))
     totals = await db.line_totals()
     return {
         "roulette": {
             "rtp": roulette_rtp,
             "slots": games.ROULETTE_SLOTS,
-            "note": "европейское колесо: 37 лунок, один ноль",
+            "note": "европейское колесо: 37 лунок, один ноль; одинаковая матожидаемая отдача для стандартных ставок",
         },
         "dice": {
             "rtp": round(games.DICE_EDGE * 100, 1),
-            "note": "два кубика, 36 равновероятных исходов",
+            "note": "два кубика, 36 равновероятных исходов; коэффициенты округлены до сотых",
         },
         "wheel": {
             "slots": len(wheels),
@@ -378,7 +377,35 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
             "jackpot": int(WHEEL_JACKPOT),
             "ticket": settings.wheel_ticket_value,
             "tickets": sum(1 for value in wheels if is_ticket(value)),
-            "note": "бесплатная крутка раз в сутки; платная — по цене ниже",
+            "note": "билет учтён по номиналу; бесплатная крутка раз в сутки, платная — по цене ниже",
+        },
+        "games": {
+            "slots": {
+                "rtp": round(slot_machine.RTP * 100, 1),
+                "note": "теоретическая цель таблицы выплат; 3 ряда, 5 барабанов, 243 линии, скаттеры дают фриспины; из-за целых монет отдельные ставки могут отличаться",
+            },
+            "plinko": {
+                "rtp": round(games.PLINKO_RTP * 100, 1),
+                "note": "теоретическая цель; путь случайно выбирается в 8, 12 или 16 рядах, риск меняет таблицу множителей; округление может менять фактический возврат",
+            },
+            "ladder": {
+                "rtp": round(ladder_game.RTP * 100, 1),
+                "note": "на каждом ходе один безопасный вариант из раунда + 1; множитель = 95,5% / шанс дойти до этажа; выплата округляется до целой монеты",
+            },
+            "crash": {
+                "rtp": round(crash_game.RTP * 100, 1),
+                "cashout_2x_return": 95.0248,
+                "cashout_2x_win_probability": 47.5124,
+                "note": "множитель растёт до скрытого crash-point; валовая выплата — ставка × множитель при cash-out раньше точки. Точка округлена вниз до 0,01; при cash-out ровно ×2 возврат 95,0248%",
+            },
+            "blackjack": {
+                "rtp": None,
+                "note": "единого RTP нет: зависит от стратегии. Одна колода; дилер стоит на мягких 17; натуральный блэкджек платит 3:2; доступны split до 4 рук, double и страховка",
+            },
+            "baccarat": {
+                "rtp_by_bet": {"player": 98.76, "banker": 98.94, "tie": 85.64},
+                "note": "теоретические значения для Punto Banco на 8 колод; ничья возвращает ставки на Игрока/Банкира, ничья платит 8:1 чистыми",
+            },
         },
         "line": totals,
         "line_rtp": round(
@@ -388,8 +415,9 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
             1,
         ),
         "betting_note": (
-            "Кэфы ставок — из линии, маржа остаётся у букмекера; "
-            "монеты виртуальные, вывести их нельзя"
+            "Линия — фактическая валовая выплата / сумма рассчитанных спортивных ставок "
+            "(включая фрибеты по номиналу), не прогноз RTP; кэфы берутся из линии. "
+            "Монеты виртуальные, вывести их нельзя"
         ),
     }
 

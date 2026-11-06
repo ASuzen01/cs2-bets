@@ -39,12 +39,28 @@ DEFAULT_RULE: Final[tuple[int, int]] = (180, 60)
 class RateLimiter:
     """Скользящее окно по (игрок, путь). Памяти на игрока — единицы байт."""
 
+    PRUNE_INTERVAL_SECONDS = 60
+
     def __init__(self) -> None:
         self._hits: dict[tuple[int, str], deque[float]] = defaultdict(deque)
+        self._next_prune = 0.0
+
+    def _prune(self, now: float) -> None:
+        """Drop expired queues even for clients that never return."""
+        if now < self._next_prune:
+            return
+        for key, hits in list(self._hits.items()):
+            _, window = RULES.get(key[1], DEFAULT_RULE)
+            while hits and now - hits[0] > window:
+                hits.popleft()
+            if not hits:
+                self._hits.pop(key, None)
+        self._next_prune = now + self.PRUNE_INTERVAL_SECONDS
 
     def allow(self, user_id: int, path: str, now: float | None = None) -> bool:
         limit, window = RULES.get(path, DEFAULT_RULE)
         moment = time.monotonic() if now is None else now
+        self._prune(moment)
         hits = self._hits[(user_id, path)]
         while hits and moment - hits[0] > window:
             hits.popleft()
