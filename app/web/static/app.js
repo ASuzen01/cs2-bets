@@ -5082,8 +5082,14 @@
       const naturalTop = scrollY + spacer.getBoundingClientRect().top;
       const fixed = naturalTop <= scrollY;
       dock.classList.toggle("is-fixed", fixed);
-      dock.style.top = `${Math.max(0, naturalTop - scrollY)}px`;
-      spacer.style.height = fixed ? `${dock.offsetHeight}px` : "0px";
+      if (fixed) {
+        dock.style.top = "0px";
+        spacer.style.height = `${dock.offsetHeight}px`;
+      } else {
+        // У панели position:relative: ненулевой top сдвигает её и оставляет пустой отступ.
+        dock.style.removeProperty("top");
+        spacer.style.height = "0px";
+      }
     };
     state.casinoDockScrollHandler = update;
     window.addEventListener("scroll", update, { passive: true });
@@ -5440,6 +5446,8 @@
         state.game = btn.dataset.game;
         haptic("light");
         renderGames();
+        // The game menu may have been scrolled; start the selected game below the app header.
+        window.scrollTo(0, 0);
       });
     });
 
@@ -5460,6 +5468,7 @@
         state.game = null;
         haptic("light");
         renderGames();
+        window.scrollTo(0, 0);
         return;
       }
 
