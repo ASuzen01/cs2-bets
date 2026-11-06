@@ -306,8 +306,9 @@ async def test_existing_live_single_ticket_blocks_another_grant(db: Database) ->
 
 async def test_admin_freebet_grants_arbitrary_amount_for_24_hours(db: Database) -> None:
     now = int(time.time())
-    ticket_id, status = await db.grant_admin_freebet(
-        USER["id"], 12_345, "admin:1:100:200", now=now, ttl_seconds=24 * 3600
+    request_key = "admin:1:100:200"
+    ticket_id, status = await db.grant_admin_ticket(
+        USER["id"], 12_345, "single", request_key, now=now, ttl_seconds=24 * 3600
     )
 
     assert status == "granted"
@@ -317,13 +318,17 @@ async def test_admin_freebet_grants_arbitrary_amount_for_24_hours(db: Database) 
     assert int(tickets[0]["amount"]) == 12_345
     assert str(tickets[0]["source"]) == "админ"
     assert int(tickets[0]["expires_at"]) - int(tickets[0]["created_at"]) == 24 * 3600
-    assert await db.has_event(USER["id"], "admin_freebet", "admin:1:100:200")
+    assert await db.has_event(USER["id"], "admin_ticket", f"single:{request_key}")
 
 
-async def test_admin_freebet_is_idempotent_for_same_command(db: Database) -> None:
+async def test_admin_ticket_is_idempotent_for_same_command(db: Database) -> None:
     request_key = "admin:1:100:201"
-    first_id, first_status = await db.grant_admin_freebet(USER["id"], 777, request_key)
-    second_id, second_status = await db.grant_admin_freebet(USER["id"], 777, request_key)
+    first_id, first_status = await db.grant_admin_ticket(
+        USER["id"], 777, "single", request_key
+    )
+    second_id, second_status = await db.grant_admin_ticket(
+        USER["id"], 777, "single", request_key
+    )
 
     assert first_status == "granted"
     assert first_id is not None
@@ -332,11 +337,58 @@ async def test_admin_freebet_is_idempotent_for_same_command(db: Database) -> Non
     assert len(await db.tickets(USER["id"], kind="single")) == 1
 
 
-async def test_admin_freebet_does_not_stack_active_single_ticket(db: Database) -> None:
+async def test_admin_can_stack_single_freebets(db: Database) -> None:
     await db.add_ticket(USER["id"], 300, "предыдущий бонус", kind="single", ttl_seconds=24 * 3600)
 
-    ticket_id, status = await db.grant_admin_freebet(USER["id"], 900, "admin:1:100:202")
+    ticket_id, status = await db.grant_admin_ticket(
+        USER["id"], 900, "single", "admin:1:100:202"
+    )
 
-    assert ticket_id is None
-    assert status == "active_ticket"
-    assert len(await db.tickets(USER["id"], kind="single")) == 1
+    assert ticket_id is not None
+    assert status == "granted"
+    assert len(await db.tickets(USER["id"], kind="single")) == 2
+
+
+async def test_admin_tickets_of_both_kinds_are_visible_in_profile(
+    client: TestClient, db: Database
+) -> None:
+    await db.grant_admin_ticket(USER["id"], 450, "single", "admin:1:100:204")
+    await db.grant_admin_ticket(USER["id"], 900, "express", "admin:1:100:205")
+
+    response = await client.get("/api/state")
+    body = await response.json()
+
+    assert response.status == 200
+    assert {(ticket["kind"], ticket["amount"]) for ticket in body["tickets"]} == {
+        ("single", 450), ("express", 900),
+    }
+
+
+async def test_admin_express_freebet_can_be_used_on_express(db: Database) -> None:
+    first, _ = await db.upsert_match(
+        fonbet_id=7201, tournament="Cup", team_a="A", team_b="B",
+        start_time=int(time.time()) + 3600, odds_a=2.0, odds_b=2.0,
+    )
+    second, _ = await db.upsert_match(
+        fonbet_id=7202, tournament="Cup", team_a="C", team_b="D",
+        start_time=int(time.time()) + 3600, odds_a=1.8, odds_b=2.2,
+    )
+    ticket_id, status = await db.grant_admin_ticket(
+        USER["id"], 150, "express", "admin:1:100:203"
+    )
+    assert status == "granted"
+    assert ticket_id is not None
+    assert len(await db.tickets(USER["id"], kind="express")) == 1
+
+    express_id, _, balance = await db.place_express(
+        USER["id"], None, 150,
+        [{"match_id": int(first["id"]), "side": "a"},
+         {"match_id": int(second["id"]), "side": "b"}],
+        ticket_id=ticket_id,
+    )
+
+    assert balance == 1000
+    ticket = await db._fetchone("SELECT used_at, express_id FROM tickets WHERE id = ?", (ticket_id,))
+    assert ticket["used_at"] is not None
+    assert int(ticket["express_id"]) == express_id
+    assert await db.tickets(USER["id"], kind="express") == []

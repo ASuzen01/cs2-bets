@@ -152,7 +152,7 @@ def test_admin_menu_lists_registered_diagnostics_and_no_old_winback_command() ->
     names = {name for name, _ in ADMIN_COMMANDS}
     assert {
         "results", "maps", "hockey", "cleanup", "recount", "recheck", "players",
-        "stats", "grant", "freebet", "best", "backup", "version", "services",
+        "stats", "grant", "freebet", "freebet_express", "best", "backup", "version", "services",
         "player", "bettrace", "feed",
     } <= names
     assert "winback" not in names

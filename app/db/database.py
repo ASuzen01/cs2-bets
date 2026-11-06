@@ -661,7 +661,7 @@ class Database:
         )
         return int(getattr(created, "lastrowid", 0) or 0)
 
-    async def tickets(self, user_id: int, limit: int = 5, kind: str | None = None) -> list[Any]:
+    async def tickets(self, user_id: int, limit: int = 20, kind: str | None = None) -> list[Any]:
         """Живые билеты игрока: не истраченные и не просроченные.
 
         Просрочку не удаляем, а просто не показываем: история остаётся в базе.
@@ -676,7 +676,7 @@ class Database:
         if kind:
             sql += " AND kind = ?"
             params.append(kind)
-        sql += " ORDER BY id LIMIT ?"
+        sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         return await self._fetchall(sql, tuple(params))
 
@@ -968,24 +968,28 @@ class Database:
             )
             return int(row["id"]) if row else int(created.lastrowid or 0)
 
-    async def grant_admin_freebet(
+    async def grant_admin_ticket(
         self,
         user_id: int,
         amount: int,
+        kind: str,
         request_key: str,
         now: int | None = None,
         ttl_seconds: int = 86400,
     ) -> tuple[int | None, str]:
-        """Выдать адресный фрибет администратором, атомарно и с защитой от повтора.
+        """Атомарно выдать админский билет для ординара или экспресса.
 
-        `request_key` идентифицирует Telegram-команду. Повторная доставка одного
-        апдейта не создаст второй билет; активные single-билеты не суммируются.
+        Несколько активных билетов разрешены. `request_key` защищает от повтора
+        одного Telegram-апдейта, а тип/сумма/срок фиксируются в отдельном билете.
         """
         moment = int(now if now is not None else time.time())
+        ticket_kind = str(kind).strip().lower()
+        if ticket_kind not in {"single", "express"}:
+            raise ValueError("kind должен быть single или express")
         if amount <= 0 or amount > 2**31 - 1 or ttl_seconds <= 0:
             raise ValueError("amount должен быть в диапазоне int32, ttl_seconds — положительным")
-        key = request_key[:200]
-        if not key:
+        key = f"{ticket_kind}:{request_key[:200]}"
+        if not request_key.strip():
             raise ValueError("request_key обязателен")
 
         async with self.transaction() as conn:
@@ -997,7 +1001,7 @@ class Database:
 
             previous = await (
                 await conn.execute(
-                    "SELECT 1 FROM events WHERE user_id = ? AND name = 'admin_freebet' "
+                    "SELECT 1 FROM events WHERE user_id = ? AND name = 'admin_ticket' "
                     "AND payload = ? LIMIT 1",
                     (user_id, key),
                 )
@@ -1005,26 +1009,16 @@ class Database:
             if previous is not None:
                 return None, "duplicate"
 
-            active_ticket = await (
-                await conn.execute(
-                    "SELECT 1 FROM tickets WHERE user_id = ? AND kind = 'single' "
-                    "AND used_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
-                    (user_id, moment),
-                )
-            ).fetchone()
-            if active_ticket is not None:
-                return None, "active_ticket"
-
             created = await conn.execute(
                 """
                 INSERT INTO tickets (user_id, amount, source, kind, created_at, expires_at)
-                VALUES (?, ?, 'админ', 'single', ?, ?) RETURNING id
+                VALUES (?, ?, 'админ', ?, ?, ?) RETURNING id
                 """,
-                (user_id, int(amount), moment, moment + ttl_seconds),
+                (user_id, int(amount), ticket_kind, moment, moment + ttl_seconds),
             )
             row = await created.fetchone()
             await conn.execute(
-                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, 'admin_freebet', ?, ?)",
+                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, 'admin_ticket', ?, ?)",
                 (user_id, key, moment),
             )
             return (int(row["id"]) if row else int(created.lastrowid or 0)), "granted"

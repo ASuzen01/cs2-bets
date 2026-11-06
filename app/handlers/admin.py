@@ -4,7 +4,8 @@
 У админа остаются только служебные команды и подтверждение исходов:
 
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
-    /freebet 123456789 500 — выдать фрибет заданного номинала на 24 часа
+    /freebet 123456789 500 — выдать ординарный фрибет заданного номинала
+    /freebet_express 123456789 500 — выдать билет-фрибет на экспресс
     /version               — версия, коммит, uptime и backend
     /services              — фоновые задачи и состояние синхронизации
     /player 123456789      — профиль и последние операции игрока
@@ -181,33 +182,35 @@ async def _apply_coin_grant(message: Message, db: Database, user: Any, amount: i
 
 
 async def _apply_freebet(
-    message: Message, db: Database, user: Any, amount: int
+    message: Message, db: Database, user: Any, amount: int, kind: str = "single"
 ) -> None:
     user_id = int(user["user_id"])
     if message.from_user is None:
-        await message.reply("Не удалось определить администратора; фрибет не выдан.")
+        await message.reply("Не удалось определить администратора; билет не выдан.")
         return
-    request_key = f"{message.from_user.id}:{message.chat.id}:{message.message_id}:{amount}"
-    ticket_id, status = await db.grant_admin_freebet(
+    request_key = f"{message.from_user.id}:{message.chat.id}:{message.message_id}:{kind}:{amount}"
+    ticket_id, status = await db.grant_admin_ticket(
         user_id,
         amount,
+        kind,
         request_key,
         ttl_seconds=winback.TTL_HOURS * 3600,
     )
     if status != "granted" or ticket_id is None:
         messages = {
-            "duplicate": "Эта команда уже обработана; повторно фрибет не выдаю.",
-            "active_ticket": "У игрока уже есть активный неиспользованный билет-ординар.",
+            "duplicate": "Эта команда уже обработана; повторный билет не выдаю.",
             "not_found": "Игрок не найден в базе.",
         }
-        await message.reply(messages.get(status, "Не удалось выдать фрибет."))
+        await message.reply(messages.get(status, "Не удалось выдать билет."))
         return
 
+    kind_name = "экспресс-билет" if kind == "express" else "фрибет"
+    use_hint = "на любой экспресс" if kind == "express" else "на любой ординар в линии"
     try:
         await callback_bot(message).send_message(
             user_id,
-            f"Тебе выдан фрибет {amount} монет! Он доступен в профиле и действует "
-            f"{winback.TTL_HOURS} часа. Поставь его целиком на любой ординар в линии.\n\n"
+            f"Тебе выдан {kind_name} на {amount} монет! Он доступен в профиле и действует "
+            f"{winback.TTL_HOURS} часа. Поставь его целиком {use_hint}.\n\n"
             "виртуальные монеты · без реальных ставок",
             reply_markup=keyboards.app_kb(),
         )
@@ -215,14 +218,16 @@ async def _apply_freebet(
         log.warning("Фрибет #%s выдан игроку %s, но сообщение не отправлено: %s",
                     ticket_id, user_id, exc)
         await message.reply(
-            f"Фрибет {amount} выдан (билет #{ticket_id}), но уведомление отправить не удалось."
+            f"{kind_name.capitalize()} {amount} выдан (билет #{ticket_id}), "
+            "но уведомление отправить не удалось."
         )
         return
 
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else "игрок")
     await message.reply(
-        f"Фрибет {amount} на 24 часа выдан игроку {html.escape(str(name))} "
-        f"(<code>{user_id}</code>), билет #{ticket_id}. Уведомление отправлено."
+        f"{kind_name.capitalize()} на {amount} монет на 24 часа выдан игроку "
+        f"{html.escape(str(name))} (<code>{user_id}</code>), билет #{ticket_id}. "
+        "Уведомление отправлено."
     )
 
 
@@ -289,7 +294,40 @@ async def cmd_freebet(
     if not args[1].isdigit() or not 1 <= int(args[1]) <= 2**31 - 1:
         await message.reply("Сумма должна быть от 1 до 2 147 483 647 монет.")
         return
-    await _apply_freebet(message, db, user, int(args[1]))
+    await _apply_freebet(message, db, user, int(args[1]), kind="single")
+
+
+@router.message(Command("freebet_express"))
+async def cmd_freebet_express(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
+    """Выдать фрибет на экспресс: выбрать игрока/сумму либо передать аргументы."""
+    args = (command.args or "").split()
+    if not args:
+        await _begin_player_flow(message, state, db, "freebet_express")
+        return
+    if len(args) not in (1, 2) or not args[0].isdigit():
+        await message.reply(
+            "Формат: /freebet_express — выбрать игрока и сумму; "
+            "или /freebet_express ID СУММА."
+        )
+        return
+
+    user_id = int(args[0])
+    if user_id <= 0 or user_id > 2**63 - 1:
+        await message.reply("Укажи корректный положительный Telegram ID.")
+        return
+    user = await db.get_user(user_id)
+    if user is None:
+        await message.reply(f"Игрок <code>{user_id}</code> не найден.")
+        return
+    if len(args) == 1:
+        await _begin_amount_flow(message, state, "freebet_express", user)
+        return
+    if not args[1].isdigit() or not 1 <= int(args[1]) <= 2**31 - 1:
+        await message.reply("Сумма должна быть от 1 до 2 147 483 647 монет.")
+        return
+    await _apply_freebet(message, db, user, int(args[1]), kind="express")
 
 
 @router.message(Command("players"))
@@ -647,7 +685,7 @@ async def _send_player_diagnostics(message: Message, db: Database, user_id: int)
         return
 
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else "без имени")
-    tickets = await db.tickets(user_id, limit=5)
+    tickets = await db.tickets(user_id, limit=20)
     active_bets = await db.user_active_bets(user_id)
     active_expresses = await db.user_open_expresses(user_id)
     history = await db.history(user_id, limit=5)
@@ -718,7 +756,7 @@ async def _continue_admin_player_flow(
     if action == "player":
         await state.clear()
         await _send_player_diagnostics(message, db, int(user["user_id"]))
-    elif action in ("grant", "freebet"):
+    elif action in ("grant", "freebet", "freebet_express"):
         await _begin_amount_flow(message, state, str(action), user)
     else:
         await state.clear()
@@ -808,7 +846,9 @@ async def on_admin_amount(
     if action == "grant":
         await _apply_coin_grant(message, db, user, int(token))
     elif action == "freebet":
-        await _apply_freebet(message, db, user, int(token))
+        await _apply_freebet(message, db, user, int(token), kind="single")
+    elif action == "freebet_express":
+        await _apply_freebet(message, db, user, int(token), kind="express")
     else:
         await message.reply("Сценарий устарел. Запустите команду заново.")
 
