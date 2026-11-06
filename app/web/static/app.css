@@ -551,11 +551,18 @@
   .casino-panel .felt-glow{position:absolute;left:50%;top:-90px;width:260px;height:200px;
     transform:translateX(-50%);border-radius:50%;pointer-events:none;
     background:radial-gradient(circle,rgba(77,171,247,.16),transparent 72%)}
-  .casino-play-dock.sticky{position:sticky;top:0;z-index:6;margin:0 -14px 9px;padding:0 14px 9px;
+  .casino-play-dock{position:relative;z-index:10;width:100%;margin:0 0 8px;padding:0 0 9px;
     background:linear-gradient(180deg,rgba(9,11,14,.99),rgba(9,11,14,.96));
-    border-bottom:1px solid #28251f;box-shadow:0 8px 16px rgba(0,0,0,.28);backdrop-filter:blur(10px)}
-  .casino-play-dock .casino-panel{margin:0 0 8px}
-  .casino-play-dock .casino-outcome{margin:0 0 8px}
+    border-bottom:1px solid #28251f;box-shadow:0 8px 16px rgba(0,0,0,.28)}
+  .casino-play-dock.is-fixed{position:fixed;left:50%;transform:translateX(-50%);width:min(100vw,560px);
+    margin:0;padding:6px 14px 9px;backdrop-filter:blur(10px)}
+  .casino-play-dock-spacer{height:0;pointer-events:none}
+  .casino-play-dock .casino-panel{padding:7px 10px 8px;margin:0 0 6px}
+  .casino-play-dock .game-back{width:auto;min-height:30px;padding:5px 11px;margin:0 auto 5px;font-size:12px}
+  .casino-play-dock .roulette-wrap{width:min(68vw,245px)}
+  .casino-play-dock .dice-stage{min-height:132px}
+  .casino-play-dock .dice-wrap{padding:8px 0 26px}
+  .casino-play-dock .casino-outcome{margin:0 0 6px}
   .casino-play-dock .btn.play{margin:0}
 
   /* ---- колесо ---- */

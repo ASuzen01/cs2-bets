@@ -73,6 +73,7 @@
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResults: { roulette: null, dice: null, plinko: null, slots: null, baccarat: null },  // результаты мини-игр
     casinoHistoryOpen: false,
+    casinoDockScrollHandler: null,
     slotAutoCount: 10,
     slotAutoRemaining: 0,
     slotAutoRunning: false,
@@ -3782,6 +3783,7 @@
     if (!result) {
       box.className = "casino-outcome";
       box.textContent = "";
+      syncCasinoDockSpacer();
       return;
     }
     const pop = options && options.pop;
@@ -3807,6 +3809,7 @@
         ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
         : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
     box.append(line1, line2);
+    syncCasinoDockSpacer();
   }
 
   function summaryNode() {
@@ -5050,7 +5053,46 @@
     if (state.casinoBusy) lockTable(true);
   }
 
+  function clearCasinoDockTracking() {
+    if (state.casinoDockScrollHandler) {
+      window.removeEventListener("scroll", state.casinoDockScrollHandler);
+      window.removeEventListener("resize", state.casinoDockScrollHandler);
+      state.casinoDockScrollHandler = null;
+    }
+  }
+
+  function syncCasinoDockSpacer() {
+    const dock = $("#casinoPlayDock");
+    const spacer = $("#casinoDockSpacer");
+    if (dock && spacer && dock.classList.contains("is-fixed")) {
+      spacer.style.height = `${dock.offsetHeight}px`;
+    }
+  }
+
+  // Telegram WebViews can fail to keep position: sticky inside the game's scrolling pane.
+  // Keep the dock in normal flow until it reaches the viewport top, then pin it explicitly.
+  function trackCasinoDock(dock, spacer) {
+    clearCasinoDockTracking();
+    const update = () => {
+      if (!dock.isConnected || !spacer.isConnected) {
+        clearCasinoDockTracking();
+        return;
+      }
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      const naturalTop = scrollY + spacer.getBoundingClientRect().top;
+      const fixed = naturalTop <= scrollY;
+      dock.classList.toggle("is-fixed", fixed);
+      dock.style.top = `${Math.max(0, naturalTop - scrollY)}px`;
+      spacer.style.height = fixed ? `${dock.offsetHeight}px` : "0px";
+    };
+    state.casinoDockScrollHandler = update;
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update, { passive: true });
+    update();
+  }
+
   function renderGames() {
+    clearCasinoDockTracking();
     const host = $("#games");
     if (!host) return;
     const menu = $("#gameSwitch");
@@ -5101,17 +5143,19 @@
     }
 
     host.textContent = "";
-    host.append(gameBackButton());
     const game = state.game;
     const pick = pickFor(game);
 
     const fixedControls = game === "roulette" || game === "dice";
-    const playDock = fixedControls ? el("div", "casino-play-dock sticky") : null;
+    const playDock = fixedControls ? el("div", "casino-play-dock") : null;
+    const playDockSpacer = fixedControls ? el("div", "casino-play-dock-spacer") : null;
     if (playDock) {
-      playDock.append(tableHead(game), outcomeNode());
-      host.append(playDock);
+      playDock.id = "casinoPlayDock";
+      playDockSpacer.id = "casinoDockSpacer";
+      playDock.append(gameBackButton(), tableHead(game), outcomeNode());
+      host.append(playDockSpacer, playDock);
     } else {
-      host.append(tableHead(game), outcomeNode());
+      host.append(gameBackButton(), tableHead(game), outcomeNode());
     }
 
     const field = el("div", "casino-field" + (game === "roulette" ? " roulette-field" : ""));
@@ -5158,6 +5202,7 @@
     paintOutcome(state.casinoResults[game]);
     // перерисовали экран посреди раунда — блокировка должна остаться
     if (state.casinoBusy) lockTable(true);
+    if (playDock) trackCasinoDock(playDock, playDockSpacer);
   }
 
   // ------------------------------------------------------- анимация рулетки
