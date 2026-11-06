@@ -268,9 +268,38 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
   let telegramInitializedApp = null;
+  let telegramSafeTopInset = 0;
   let telegramInitRetryTimer = null;
   let telegramInitRetryCount = 0;
   let telegramLoadRetryRegistered = false;
+  function syncTelegramSafeArea(app) {
+    const root = document.documentElement;
+    const rootStyle = getComputedStyle(root);
+    const safe = app.safeAreaInset || {};
+    const content = app.contentSafeAreaInset || {};
+    const inset = (source, side, cssName) => {
+      if (source[side] !== undefined && source[side] !== null && Number.isFinite(Number(source[side]))) {
+        return Math.max(0, Number(source[side]));
+      }
+      const cssValue = parseFloat(rootStyle.getPropertyValue(cssName));
+      return Number.isFinite(cssValue) ? Math.max(0, cssValue) : 0;
+    };
+    const values = {};
+    ["top", "right", "bottom", "left"].forEach((side) => {
+      const safeValue = inset(safe, side, `--tg-safe-area-inset-${side}`);
+      const contentValue = inset(content, side, `--tg-content-safe-area-inset-${side}`);
+      root.style.setProperty(`--tg-safe-area-inset-${side}`, `${safeValue}px`);
+      root.style.setProperty(`--tg-content-safe-area-inset-${side}`, `${contentValue}px`);
+      values[side] = safeValue + contentValue;
+    });
+    telegramSafeTopInset = values.top;
+    root.style.setProperty("--app-safe-top", `${values.top}px`);
+    root.style.setProperty("--app-safe-bottom", `${values.bottom}px`);
+    root.style.setProperty("--app-safe-left", `${values.left}px`);
+    root.style.setProperty("--app-safe-right", `${values.right}px`);
+    if (state.casinoDockScrollHandler) state.casinoDockScrollHandler();
+  }
+
   function initializeTelegram() {
     const app = window.Telegram && window.Telegram.WebApp;
     if (!app) {
@@ -302,12 +331,20 @@
     try {
       app.ready();
       app.expand();
+      const syncInsets = () => syncTelegramSafeArea(app);
+      syncInsets();
       const platform = String(app.platform || "").toLowerCase();
       const isMobileTelegram = platform === "ios" || platform.startsWith("android");
+      if (typeof app.onEvent === "function") {
+        ["safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged"].forEach((eventName) => {
+          try { app.onEvent(eventName, syncInsets); } catch (e) { /* событие не поддерживается */ }
+        });
+      }
       if (isMobileTelegram && !app.isFullscreen && typeof app.isVersionAtLeast === "function"
         && app.isVersionAtLeast("8.0") && typeof app.requestFullscreen === "function") {
         const fallbackToExpanded = () => {
           try { app.expand(); } catch (e) { /* полноэкранный режим недоступен */ }
+          syncInsets();
         };
         if (typeof app.onEvent === "function") {
           try { app.onEvent("fullscreenFailed", fallbackToExpanded); } catch (e) { /* событие не поддерживается */ }
@@ -315,6 +352,7 @@
         try {
           const request = app.requestFullscreen();
           if (request && typeof request.catch === "function") request.catch(fallbackToExpanded);
+          setTimeout(syncInsets, 350);
         } catch (e) { fallbackToExpanded(); }
       }
       if (app.setHeaderColor) app.setHeaderColor("#0f1720");

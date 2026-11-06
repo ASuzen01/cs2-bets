@@ -3,14 +3,16 @@
     --text:#f2eee4; --muted:#99968d; --accent:#d6b66d; --accent-soft:#342d20;
     --ok:#78c49a; --warn:#d9b75e; --bad:#d47b76; --line:#302a20;
     --radius:18px; --tabbar:66px;
-    --app-safe-top:max(env(safe-area-inset-top,0px),var(--tg-content-safe-area-inset-top,0px));
-    --app-safe-bottom:max(env(safe-area-inset-bottom,0px),var(--tg-content-safe-area-inset-bottom,0px));
+    --app-safe-top:calc(max(env(safe-area-inset-top,0px),var(--tg-safe-area-inset-top,0px)) + var(--tg-content-safe-area-inset-top,0px));
+    --app-safe-bottom:calc(max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom,0px)) + var(--tg-content-safe-area-inset-bottom,0px));
+    --app-safe-left:calc(max(env(safe-area-inset-left,0px),var(--tg-safe-area-inset-left,0px)) + var(--tg-content-safe-area-inset-left,0px));
+    --app-safe-right:calc(max(env(safe-area-inset-right,0px),var(--tg-safe-area-inset-right,0px)) + var(--tg-content-safe-area-inset-right,0px));
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     font-size:15px;line-height:1.45;overscroll-behavior-y:contain}
-  body{padding-top:var(--app-safe-top);padding-bottom:calc(var(--tabbar) + 12px + var(--app-safe-bottom))}
+  body{padding:var(--app-safe-top) var(--app-safe-right) calc(var(--tabbar) + 12px + var(--app-safe-bottom)) var(--app-safe-left)}
   button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 
   header{position:relative;display:flex;align-items:center;gap:10px;
@@ -279,7 +281,7 @@
   .cartbar .grow span{font-size:11.5px;color:#9fd0ff}
 
   nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:7;display:flex;
-    height:calc(var(--tabbar) + var(--app-safe-bottom));padding-bottom:var(--app-safe-bottom);
+    height:calc(var(--tabbar) + var(--app-safe-bottom));padding:0 var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
     background:rgba(16,24,33,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
   nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:3px;font-size:10.5px;color:var(--muted)}
