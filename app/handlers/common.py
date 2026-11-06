@@ -18,7 +18,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import keyboards, texts
-from app.assets import MASCOT_PATH
+from app.assets import WELCOME_EMBLEM_PATH
 from app.config import settings
 from app.db import Database
 from app.services.notify import send_with_mascot
@@ -60,9 +60,12 @@ async def cmd_start(message: Message, db: Database) -> None:
 
     balance = await db.get_balance(message.from_user.id)  # заодно создаёт игрока
     text = texts.START.format(name=_name(message), balance=texts.money(balance))
-    if MASCOT_PATH.is_file() and message.bot is not None:
-        # приветствие приходит картинкой с маскотом; если фото не ушло — текстом
-        await send_with_mascot(message.bot, message.chat.id, text, keyboards.app_kb())
+    if WELCOME_EMBLEM_PATH.is_file() and message.bot is not None:
+        # приветствие использует эмблему приложения; если фото не ушло — текстом
+        await send_with_mascot(
+            message.bot, message.chat.id, text, keyboards.app_kb(),
+            photo_path=WELCOME_EMBLEM_PATH,
+        )
         return
     await message.answer(text, reply_markup=keyboards.app_kb())
 
