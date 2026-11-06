@@ -27,9 +27,13 @@ def test_crash_probability_buckets_match_the_distribution() -> None:
     assert crash.crash_point(54_456) == 1.01
     assert crash.crash_point(522_499) == 1.99
     assert crash.crash_point(522_500) == 2.00
+    assert crash.crash_point(524_875) == 2.00
+    assert crash.crash_point(524_876) == 2.01
     assert pytest.approx(0.054456) == 54_456 / 1_000_000  # exactly x1.00
-    assert pytest.approx(0.5225) == 522_500 / 1_000_000  # x1.00 through x1.99
-    assert pytest.approx(crash.RTP) == 477_500 / 1_000_000 * 2  # reaches x2.00
+    assert pytest.approx(0.5225) == 522_500 / 1_000_000  # below x2.00
+    assert pytest.approx(0.002376) == 2_376 / 1_000_000  # exactly x2.00
+    assert pytest.approx(0.475124) == 475_124 / 1_000_000  # strictly above x2.00
+    assert pytest.approx(0.950248) == 2 * 475_124 / 1_000_000  # cashout at x2.00
 
 
 def test_crash_minimum_stake_without_maximum() -> None:
