@@ -72,6 +72,11 @@
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResults: { roulette: null, dice: null, plinko: null, slots: null },  // результаты мини-игр
+    slotAutoCount: 10,
+    slotAutoRemaining: 0,
+    slotAutoRunning: false,
+    slotAutoRunId: 0,
+    slotQuick: false,
     casinoToken: null,        // метка тапа текущего раунда (защита от двойного списания)
     recentNumbers: [],        // дорожка выпавших чисел
     rouletteAngle: 0,
@@ -2708,6 +2713,7 @@
 
   // ------------------------------------------------------------- навигация
   function switchTab(tab) {
+    if (tab !== "games" && state.slotAutoRunning) stopSlotAutoSpin(true);
     state.tab = tab;
     document.querySelectorAll(".screen").forEach((node) => node.classList.remove("active"));
     const screen = document.getElementById("screen-" + tab);
@@ -3251,8 +3257,10 @@
       input.value = String(info.raw || info.min);
     }
 
-    const lockSlotStake = game === "slots"
-      && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
+    const lockSlotStake = game === "slots" && (
+      Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0
+      || state.slotAutoRunning
+    );
     document.querySelectorAll("#games .stake-chip").forEach((chip) => {
       chip.classList.toggle("active", Number(chip.dataset.stake) === info.raw);
       chip.disabled = state.casinoBusy || lockSlotStake;
@@ -3289,9 +3297,11 @@
     const play = $("#playBtn");
     if (play) {
       const freeSpins = game === "slots" && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
+      const autoRunning = game === "slots" && state.slotAutoRunning;
       const ok = freeSpins || stakeOk(game);
-      play.disabled = state.casinoBusy || !ok;
-      if (freeSpins) play.textContent = `Крутить фри-спин · осталось ${state.casino.slot_state.free_spins}`;
+      play.disabled = state.casinoBusy || autoRunning || !ok;
+      if (autoRunning) play.textContent = "Автоспин выполняется…";
+      else if (freeSpins) play.textContent = `Крутить фри-спин · осталось ${state.casino.slot_state.free_spins}`;
       else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
@@ -4583,13 +4593,15 @@
     const config = state.casino && state.casino.slots;
     if (!config || !Array.isArray(result.grid)) return;
     const symbols = config.symbols;
+    const fastMode = state.slotQuick;
+    const autoMode = state.slotAutoRunning;
     const spinReels = [];
     for (let reel = 0; reel < config.reels; reel += 1) {
       const strip = $(`#slotReel${reel}`);
       if (!strip) return;
       const initial = Array.from(strip.children).map((cell) => cell.dataset.symbol);
       const final = result.grid.map((row) => row[reel]);
-      const rollingCodes = Array.from({ length: 15 }, () => symbols[Math.floor(Math.random() * symbols.length)].code);
+      const rollingCodes = Array.from({ length: fastMode ? 5 : 15 }, () => symbols[Math.floor(Math.random() * symbols.length)].code);
       const sequence = initial.concat(rollingCodes, final);
       strip.style.transition = "none";
       strip.style.transitionDelay = "0ms";
@@ -4603,8 +4615,8 @@
       const firstCell = strip.firstElementChild;
       const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
       const step = (firstCell ? firstCell.getBoundingClientRect().height : 53) + gap;
-      const duration = 900 + reel * 170;
-      const delay = reel * 135;
+      const duration = fastMode ? 135 + reel * 28 : 900 + reel * 170;
+      const delay = fastMode ? reel * 25 : reel * 135;
       const distance = step * (sequence.length - config.rows);
       spinReels.push(new Promise((resolve) => {
         let settled = false;
@@ -4617,7 +4629,7 @@
           strip.style.transform = "translate3d(0,0,0)";
           strip.classList.remove("spinning");
           strip.replaceChildren(...final.map((code, row) => slotCellNode(config, code, row, reel, false)));
-          haptic("light");
+          if (!fastMode && !autoMode) haptic("light");
           resolve();
         };
         const onEnd = (event) => {
@@ -4637,7 +4649,8 @@
       const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
       if (cell) cell.classList.add("hit");
     });
-    haptic(result.win || result.awarded_free_spins ? "ok" : "bad");
+    if (!autoMode) haptic(result.win || result.awarded_free_spins ? "ok" : "bad");
+    else if (result.awarded_free_spins) haptic("ok");
   }
 
   function slotPaytableNode(config) {
@@ -4653,6 +4666,152 @@
     });
     details.append(table);
     return details;
+  }
+
+  function updateSlotAutoControls() {
+    const countLabel = state.slotAutoCount === 0 ? "∞" : String(state.slotAutoCount);
+    document.querySelectorAll("#games .slot-auto-count").forEach((button) => {
+      const selected = Number(button.dataset.slotAutoCount) === state.slotAutoCount;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.disabled = state.slotAutoRunning || state.casinoBusy;
+    });
+    const quick = $("#slotQuickButton");
+    if (quick) {
+      quick.classList.toggle("active", state.slotQuick);
+      quick.setAttribute("aria-pressed", String(state.slotQuick));
+      quick.textContent = state.slotQuick ? "Быстрый спин · ВКЛ" : "Быстрый спин";
+    }
+    const auto = $("#slotAutoButton");
+    if (auto) {
+      auto.classList.toggle("active", state.slotAutoRunning);
+      auto.setAttribute("aria-pressed", String(state.slotAutoRunning));
+      auto.textContent = state.slotAutoRunning ? "Остановить автоспин" : `Автоспин · ${countLabel}`;
+      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || (!freeSpins && !stakeOk("slots")));
+    }
+    const info = $("#slotAutoInfo");
+    if (info) {
+      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+      info.textContent = state.slotAutoRunning
+        ? state.slotAutoCount === 0
+          ? `Автоспин без лимита · фри-спины ${freeSpins} будут доиграны автоматически`
+          : `Осталось платных спинов: ${state.slotAutoRemaining}${freeSpins ? ` · фри-спинов ${freeSpins} сверх лимита` : ""}`
+        : `Серия: ${countLabel} платных спинов · фри-спины не уменьшают лимит`;
+    }
+  }
+
+  function slotAutoControlsNode() {
+    const panel = el("div", "slot-auto-panel");
+    const counts = el("div", "slot-auto-counts");
+    counts.append(el("span", null, "Серия"));
+    [[10, "10"], [25, "25"], [50, "50"], [0, "∞"]].forEach(([count, label]) => {
+      const button = el("button", "slot-auto-count" + (state.slotAutoCount === count ? " active" : ""), label);
+      button.type = "button";
+      button.dataset.slotAutoCount = String(count);
+      button.setAttribute("aria-pressed", String(state.slotAutoCount === count));
+      counts.append(button);
+    });
+    const actions = el("div", "slot-auto-actions");
+    const quick = el("button", "slot-quick-button", "Быстрый спин");
+    quick.id = "slotQuickButton";
+    quick.type = "button";
+    quick.dataset.slotQuick = "toggle";
+    const auto = el("button", "slot-auto-button", "Автоспин");
+    auto.id = "slotAutoButton";
+    auto.type = "button";
+    auto.dataset.slotAuto = "toggle";
+    actions.append(quick, auto);
+    const info = el("div", "slot-auto-info");
+    info.id = "slotAutoInfo";
+    panel.append(counts, actions, info);
+    updateSlotAutoControlsAfterRender(panel);
+    return panel;
+  }
+
+  function updateSlotAutoControlsAfterRender(panel) {
+    const countLabel = state.slotAutoCount === 0 ? "∞" : String(state.slotAutoCount);
+    panel.querySelectorAll(".slot-auto-count").forEach((button) => {
+      const selected = Number(button.dataset.slotAutoCount) === state.slotAutoCount;
+      button.classList.toggle("active", selected);
+      button.disabled = state.slotAutoRunning || state.casinoBusy;
+    });
+    const quick = panel.querySelector("#slotQuickButton");
+    if (quick) {
+      quick.classList.toggle("active", state.slotQuick);
+      quick.setAttribute("aria-pressed", String(state.slotQuick));
+      quick.textContent = state.slotQuick ? "Быстрый спин · ВКЛ" : "Быстрый спин";
+    }
+    const auto = panel.querySelector("#slotAutoButton");
+    if (auto) {
+      auto.classList.toggle("active", state.slotAutoRunning);
+      auto.setAttribute("aria-pressed", String(state.slotAutoRunning));
+      auto.textContent = state.slotAutoRunning ? "Остановить автоспин" : `Автоспин · ${countLabel}`;
+      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || (!freeSpins && !stakeOk("slots")));
+    }
+    const info = panel.querySelector("#slotAutoInfo");
+    if (info) {
+      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+      info.textContent = state.slotAutoRunning
+        ? state.slotAutoCount === 0
+          ? `Автоспин без лимита · фри-спины ${freeSpins} будут доиграны автоматически`
+          : `Осталось платных спинов: ${state.slotAutoRemaining}${freeSpins ? ` · фри-спинов ${freeSpins} сверх лимита` : ""}`
+        : `Серия: ${countLabel} платных спинов · фри-спины не уменьшают лимит`;
+    }
+  }
+
+  function stopSlotAutoSpin(silent) {
+    if (!state.slotAutoRunning) return;
+    state.slotAutoRunning = false;
+    state.slotAutoRemaining = 0;
+    state.slotAutoRunId += 1;
+    updateSlotAutoControls();
+    syncStakeUI("slots");
+    if (!silent) {
+      haptic("light");
+      toast("Автоспин остановлен");
+    }
+  }
+
+  async function startSlotAutoSpin() {
+    if (state.slotAutoRunning) {
+      stopSlotAutoSpin(false);
+      return;
+    }
+    if (state.casinoBusy) return;
+    const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+    if (!freeSpins && !stakeOk("slots")) {
+      toast(stakeState("slots").poor ? "Не хватает монет" : "Проверь сумму ставки", "bad");
+      return;
+    }
+
+    const runId = state.slotAutoRunId + 1;
+    state.slotAutoRunId = runId;
+    state.slotAutoRunning = true;
+    state.slotAutoRemaining = state.slotAutoCount;
+    updateSlotAutoControls();
+    syncStakeUI("slots");
+    try {
+      while (state.slotAutoRunning && runId === state.slotAutoRunId) {
+        const usingFreeSpin = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
+        if (!usingFreeSpin && state.slotAutoCount > 0 && state.slotAutoRemaining <= 0) break;
+        const completed = await playCasinoRound({ auto: true });
+        if (!completed || !state.slotAutoRunning || runId !== state.slotAutoRunId) break;
+        if (!usingFreeSpin && state.slotAutoCount > 0) state.slotAutoRemaining -= 1;
+        updateSlotAutoControls();
+        if (!state.slotAutoRunning || runId !== state.slotAutoRunId) break;
+        await pause(state.slotQuick ? 35 : 110);
+      }
+    } finally {
+      if (runId === state.slotAutoRunId) {
+        state.slotAutoRunning = false;
+        state.slotAutoRemaining = 0;
+        updateSlotAutoControls();
+        syncStakeUI("slots");
+        if (state.tab === "games" && state.game === "slots") renderSlots($("#games"));
+      }
+    }
   }
 
   function renderSlots(host) {
@@ -4680,7 +4839,7 @@
       : `SCATTER · 3 → 10 фри-спинов · 4 → 15 · 5+ → 20`;
     card.append(status);
     card.append(stakeRow("slots"));
-    if (hasFreeSpins) {
+    if (hasFreeSpins || state.slotAutoRunning) {
       card.querySelectorAll(".stake-chip, .stake-step, #stakeInput").forEach((control) => { control.disabled = true; });
     }
 
@@ -4692,9 +4851,10 @@
     const play = el("button", "btn play slot-spin-button");
     play.id = "playBtn";
     play.type = "button";
-    play.textContent = hasFreeSpins ? `КРУТИТЬ ФРИ-СПИН · ${saved.free_spins} ОСТАЛОСЬ` : `КРУТИТЬ · ${money(stakeFor("slots"))}`;
-    play.disabled = state.casinoBusy || (!hasFreeSpins && !stakeOk("slots"));
-    card.append(play);
+    play.textContent = state.slotAutoRunning ? "АВТОСПИН ВЫПОЛНЯЕТСЯ…"
+      : hasFreeSpins ? `КРУТИТЬ ФРИ-СПИН · ${saved.free_spins} ОСТАЛОСЬ` : `КРУТИТЬ · ${money(stakeFor("slots"))}`;
+    play.disabled = state.casinoBusy || state.slotAutoRunning || (!hasFreeSpins && !stakeOk("slots"));
+    card.append(play, slotAutoControlsNode());
     card.append(outcomeNode(), summaryNode(), historyNode(), slotPaytableNode(config), rulesNode("slots"));
     host.append(card);
     if (result) paintOutcome(result);
@@ -4905,7 +5065,7 @@
     document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => {
         const lockedSlotWager = !busy && state.game === "slots"
-          && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0
+          && (Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0 || state.slotAutoRunning)
           && Boolean(node.closest(".stake-block"));
         node.disabled = busy || lockedSlotWager;
       });
@@ -4919,8 +5079,9 @@
     syncStakeUI(state.game);
   }
 
-  async function playCasinoRound() {
-    if (state.casinoBusy || !state.casino || !state.user) return;
+  async function playCasinoRound(options) {
+    const fromAuto = Boolean(options && options.auto);
+    if (state.casinoBusy || !state.casino || !state.user) return false;
     const game = state.game;
     const slotState = state.casino && state.casino.slot_state || { free_spins: 0, spin_bet: 0 };
     const usingSlotFreeSpin = game === "slots" && Number(slotState.free_spins) > 0;
@@ -4929,12 +5090,12 @@
       ? Number(slotState.spin_bet)
       : Math.round(Number(state.casinoStake[game]) || 0);
     const info = stakeState(game);
-    if (!usingSlotFreeSpin && info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return; }
-    if (!usingSlotFreeSpin && info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return; }
+    if (!usingSlotFreeSpin && info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return false; }
+    if (!usingSlotFreeSpin && info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return false; }
     if (!usingSlotFreeSpin && (!canBet() || amount > balance())) {
       haptic("bad");
       openNoCoinsSheet(minBet());
-      return;
+      return false;
     }
 
     state.casinoBusy = true;
@@ -5008,16 +5169,19 @@
         at: Math.floor(Date.now() / 1000),
       }].concat(state.casino.history || []).slice(0, 12);
 
-      if (data.win) {
+      if (data.win && !fromAuto) {
         toast(`Выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`, "ok");
       }
       if (onScreen && game === "slots") renderSlots($("#games"));
+      return true;
     } catch (err) {
       toast(err.message, "bad");
+      return false;
     } finally {
       state.casinoBusy = false;
       lockTable(false);
       refreshSide();
+      updateSlotAutoControls();
     }
   }
 
@@ -5047,6 +5211,7 @@
       const game = state.game;
 
       if (node.dataset.backToGames !== undefined) {
+        if (state.slotAutoRunning) stopSlotAutoSpin(true);
         if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
           toast("Дождись конца хода", "bad");
           return;
@@ -5082,6 +5247,22 @@
         return;
       }
 
+      if (node.dataset.slotAutoCount !== undefined) {
+        state.slotAutoCount = Math.max(0, Number(node.dataset.slotAutoCount) || 0);
+        haptic("light");
+        updateSlotAutoControls();
+        return;
+      }
+      if (node.dataset.slotQuick !== undefined) {
+        state.slotQuick = !state.slotQuick;
+        haptic("light");
+        updateSlotAutoControls();
+        return;
+      }
+      if (node.dataset.slotAuto !== undefined) {
+        startSlotAutoSpin();
+        return;
+      }
       if (node.id === "playBtn") { playCasinoRound(); return; }
 
       if (node.dataset.plinkoRows) {
