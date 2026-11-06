@@ -99,6 +99,10 @@ def _norm(name: str) -> str:
     text = unicodedata.normalize("NFKD", str(name or ""))
     text = "".join(char for char in text if not unicodedata.combining(char))
     text = text.lower().replace("&", " and ")
+    # Результатный фид иногда передаёт скандинавские буквы через ae/oe/aa:
+    # например, Mjällby AIF в Fonbet против Mjaellby в Livescore.
+    for source, target in (("ae", "a"), ("oe", "o"), ("aa", "a")):
+        text = text.replace(source, target)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     tokens = [token for token in text.split() if token and token not in STOP_TOKENS]
     return " ".join(tokens)
@@ -119,12 +123,30 @@ def translit(name: str) -> str:
     return "".join(TRANSLIT.get(char, char) for char in str(name or "").lower())
 
 
+# Частые локальные варианты имён из линии против латиницы фида результатов.
+# Узкие алиасы применяются только после нормализации; дата и имя второго клуба
+# всё равно должны совпасть, поэтому это не делает поиск менее строгим.
+RESULT_NAME_ALIASES = {
+    "melbiu": "mjallby",                    # Мьельбю → Mjällby / Mjaellby
+    "borats bania luka": "borac banja luka", # Борац Баня-Лука → Borac Banja Luka
+}
+
+
+def _result_name(name: str) -> str:
+    normalized = _norm(translit(name))
+    return RESULT_NAME_ALIASES.get(normalized, normalized)
+
+
 def name_score(left: str, right: str) -> float:
     """Насколько названия похожи: 1.0 — одно и то же, 0.5 — совпал один токен."""
     if same_team(left, right):
         return 1.0
-    left_tokens = set(_norm(translit(left)).split())
-    right_tokens = set(_norm(right).split())
+    left_name = _result_name(left)
+    right_name = _result_name(right)
+    if left_name == right_name and left_name:
+        return 1.0
+    left_tokens = set(left_name.split())
+    right_tokens = set(right_name.split())
     if not left_tokens or not right_tokens:
         return 0.0
     common = left_tokens & right_tokens

@@ -210,3 +210,13 @@ def test_russian_names_match_english_feed_via_translit() -> None:
     # однофамильцы из другой пары не проходят
     assert not pair_matches("Реал Сосьедад", "Барселона", "Real Madrid", "Barcelona")
     assert not pair_matches("АЕК Афины", "Реал Мадрид", "AEK Athens U19", "Real Madrid U19")
+
+
+def test_scandinavian_transliteration_matches_live_score_feed() -> None:
+    """Mjaellby из Livescore должна совпадать с Mjällby AIF из линии."""
+    from app.services.results import pair_matches, same_team
+
+    assert same_team("Mjällby AIF", "Mjaellby")
+    assert pair_matches("Mjällby AIF", "Borac Banja Luka", "Mjaellby", "Borac Banja Luka")
+    # В базе текущей линии названия сохранены по-русски — это тоже должно находиться.
+    assert pair_matches("Мьельбю", "Борац Баня-Лука", "Mjaellby", "Borac Banja Luka")
