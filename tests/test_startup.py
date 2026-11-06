@@ -187,12 +187,16 @@ async def test_webhook_is_installed_on_startup(db: Database, monkeypatch) -> Non
     assert bot.webhook is not None
     assert bot.webhook["url"] == "https://bot.onrender.com/webhook"
     assert bot_module.WEBHOOK_STATE["ok"] is True
+    await bot_module.on_shutdown(bot=bot, db=db, syncer=FakeSyncer())
 
 
 async def test_startup_works_without_recheck_service(db: Database) -> None:
     """Старые вызовы (без сервиса) не должны падать."""
     import bot as bot_module
 
+    bot = FakeBot()
+    syncer = FakeSyncer()
     await bot_module.on_startup(
-        bot=FakeBot(), db=db, syncer=FakeSyncer(), allowed_updates=[], backup=None
+        bot=bot, db=db, syncer=syncer, allowed_updates=[], backup=None
     )
+    await bot_module.on_shutdown(bot=bot, db=db, syncer=syncer)

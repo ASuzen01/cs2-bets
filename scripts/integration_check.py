@@ -223,15 +223,41 @@ async def check(bot, db, dp) -> None:
             odds_a=2.00,
             odds_b=1.80,
         )
+        bet_payload = {
+            "match_id": int(second["id"]), "side": "a", "amount": 250, "token": "same-bet-tap",
+        }
         bet = await client.post(
-            "/api/bet",
-            headers={"X-Telegram-Init-Data": init},
-            json={"match_id": int(second["id"]), "side": "a", "amount": 250},
+            "/api/bet", headers={"X-Telegram-Init-Data": init}, json=bet_payload,
         )
         assert bet.status == 200, await bet.text()
         bet_body = await bet.json()
         assert bet_body["balance"] == 750, bet_body
         assert abs(float(bet_body["odds"]) - 2.00) < 0.01, bet_body
+
+        # Повтор того же POST (типичный retry после сетевого таймаута) — это одна ставка.
+        bet_count = int((await db._fetchone("SELECT COUNT(*) AS n FROM bets WHERE user_id = ?", (777,)))["n"])
+        repeated_bet = await client.post(
+            "/api/bet", headers={"X-Telegram-Init-Data": init}, json=bet_payload,
+        )
+        repeated_bet_body = await repeated_bet.json()
+        assert repeated_bet.status == 200 and repeated_bet_body["balance"] == 750, repeated_bet_body
+        assert int((await db._fetchone("SELECT COUNT(*) AS n FROM bets WHERE user_id = ?", (777,)))["n"]) == bet_count
+
+        # Повторный раунд слотов с тем же ключом возвращает исход первой операции.
+        slot_payload = {
+            "game": "slots", "selection": "paid_spin", "amount": 10, "token": "same-slot-tap",
+        }
+        slot = await client.post(
+            "/api/casino/play", headers={"X-Telegram-Init-Data": init}, json=slot_payload,
+        )
+        slot_body = await slot.json()
+        repeated_slot = await client.post(
+            "/api/casino/play", headers={"X-Telegram-Init-Data": init}, json=slot_payload,
+        )
+        repeated_slot_body = await repeated_slot.json()
+        assert slot.status == repeated_slot.status == 200, (slot_body, repeated_slot_body)
+        assert repeated_slot_body["round"] == slot_body["round"]
+        assert repeated_slot_body["balance"] == slot_body["balance"]
 
         express = await client.post(
             "/api/express",
@@ -294,12 +320,17 @@ async def check(bot, db, dp) -> None:
         assert state["bonus"]["daily"]["amount"] == settings.daily_bonus
         slots = state["bonus"]["wheel"]["slots"]
         assert len(slots) == 24, len(slots)
-        assert [s["value"] for s in slots].count(1000) == 1
-        assert [s["value"] for s in slots].count(200) == 7
-        assert [s["value"] for s in slots].count(50) == 8
-        assert [s["value"] for s in slots].count(0) == 8
-        assert all(slots[i]["value"] != slots[(i + 1) % 24]["value"] for i in range(24)), \
-            "рядом стоят одинаковые сектора"
+        values = [slot["value"] for slot in slots]
+        assert values.count(5000) == 1
+        assert values.count(500) == 2
+        assert values.count(100) == 7
+        assert values.count(25) == 10
+        assert values.count(0) == 4
+        assert all(
+            (slots[i]["value"], slots[i]["ticket"])
+            != (slots[(i + 1) % 24]["value"], slots[(i + 1) % 24]["ticket"])
+            for i in range(24)
+        ), "рядом стоят одинаковые призы"
 
         # баланс перед колесом берём из состояния: до этого его меняли ставки на футбол
         before_wheel = (await (await client.get(
@@ -309,7 +340,9 @@ async def check(bot, db, dp) -> None:
         wheel = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={})
         wheel_body = await wheel.json()
         assert wheel_body["spun"] is True, wheel_body
-        assert wheel_body["prize"] == slots[wheel_body["slot"]]["value"], wheel_body
+        wheel_slot = slots[wheel_body["slot"]]
+        assert wheel_body["prize"] == (0 if wheel_slot["ticket"] else wheel_slot["value"]), wheel_body
+        assert bool(wheel_body.get("ticket")) == bool(wheel_slot["ticket"]), wheel_body
         balance_after_wheel = wheel_body["balance"]
         assert balance_after_wheel == before_wheel + wheel_body["prize"], wheel_body
 
@@ -319,14 +352,24 @@ async def check(bot, db, dp) -> None:
         paid = await client.post("/api/wheel", headers={"X-Telegram-Init-Data": init}, json={"paid": True})
         paid_body = await paid.json()
         assert paid_body["spun"] is True and paid_body["free"] is False, paid_body
-        assert paid_body["prize"] == slots[paid_body["slot"]]["value"], paid_body
+        paid_slot = slots[paid_body["slot"]]
+        assert paid_body["prize"] == (0 if paid_slot["ticket"] else paid_slot["value"]), paid_body
+        assert bool(paid_body.get("ticket")) == bool(paid_slot["ticket"]), paid_body
         assert paid_body["balance"] == balance_after_wheel - cost + paid_body["prize"], paid_body
         balance_after_wheel = paid_body["balance"]
 
-        tease = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
-        tease_body = await tease.json()
+        daily = await client.post("/api/bonus", headers={"X-Telegram-Init-Data": init}, json={})
+        daily_body = await daily.json()
+        assert daily.status == 200 and daily_body["received"] is True, daily_body
+
+        tease_body = None
+        for _ in range(10):
+            tease = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
+            assert tease.status == 200, await tease.text()
+            tease_body = await tease.json()
+        assert tease_body is not None
         assert tease_body["claimed"] is True and tease_body["amount"] == 50, tease_body
-        assert tease_body["balance"] == balance_after_wheel + 50, tease_body
+        assert tease_body["balance"] == daily_body["balance"] + 50, tease_body
 
         tease_again = await client.post("/api/tease", headers={"X-Telegram-Init-Data": init}, json={})
         assert (await tease_again.json())["claimed"] is False

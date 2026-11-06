@@ -1,0 +1,25 @@
+name: Production smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Дождаться Render и проверить production
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          PRODUCTION_BASE_URL: https://cs2-bets-bot.onrender.com
+          PRODUCTION_SMOKE_TIMEOUT: "900"
+        run: python scripts/production_smoke.py

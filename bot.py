@@ -37,6 +37,7 @@ from app.logging import setup_logging
 from app.middlewares import ThrottlingMiddleware, UserSyncMiddleware
 from app.services import matchnotify, reminders, winback
 from app.services.backup import BackupService
+from app.services.health_alerts import HealthAlertMonitor
 from app.services.keepalive import KEEPALIVE, PING_PATH
 from app.services.manual_result import apply_manual_results
 from app.services.maps import repair_refunded_maps
@@ -47,6 +48,7 @@ from app.services.recheck import (
 from app.services.sync import MatchSyncer
 
 log = logging.getLogger(__name__)
+HEALTH_ALERTS: HealthAlertMonitor | None = None
 
 USER_COMMANDS: list[tuple[str, str]] = [
     ("start", "Открыть приложение"),
@@ -171,6 +173,9 @@ async def on_startup(
         recheck.start()
 
     syncer.start()
+    global HEALTH_ALERTS
+    HEALTH_ALERTS = HealthAlertMonitor(bot, db, syncer)
+    HEALTH_ALERTS.start()
     # сервис на бесплатном Render засыпает после 15 минут тишины — пингуем себя
     KEEPALIVE.start()
     # напоминание о серии дней: одно сообщение в сутки, вечером
@@ -205,6 +210,10 @@ async def on_shutdown(
     recheck: RecheckService | None = None,
 ) -> None:
     log.info("Остановка бота")
+    global HEALTH_ALERTS
+    if HEALTH_ALERTS is not None:
+        await HEALTH_ALERTS.stop()
+        HEALTH_ALERTS = None
     if recheck is not None:
         await recheck.stop()
     await KEEPALIVE.stop()
@@ -311,6 +320,7 @@ def build_web_app(
             "reminders": reminders.stats(),
             "match_notify": matchnotify.stats(),
             "winback": winback.stats(),
+            "health_alerts": HEALTH_ALERTS.stats if HEALTH_ALERTS is not None else None,
             # встал ли вебхук: видно, если Telegram не принял адрес
             "webhook": dict(WEBHOOK_STATE),
         }
