@@ -283,22 +283,33 @@
               <linearGradient id="crash-sky" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0" stop-color="#213d3a"/><stop offset="1" stop-color="#171d26"/>
               </linearGradient>
-              <linearGradient id="crash-wing" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#f0d995"/><stop offset="1" stop-color="#a37e3e"/>
+              <linearGradient id="crash-plane-body" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#fff5d9"/><stop offset=".42" stop-color="#d9c791"/><stop offset="1" stop-color="#8f7441"/>
+              </linearGradient>
+              <linearGradient id="crash-plane-wing" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#8f7647"/><stop offset=".48" stop-color="#f0dfb0"/><stop offset="1" stop-color="#aa8b50"/>
               </linearGradient>
             </defs>
             <rect x="20" y="24" width="180" height="148" rx="24" fill="url(#crash-sky)" stroke="#796b49" stroke-width="2"/>
-            <path d="M39 143h30l18-16 22 3 18-28 22-4 17-29 24-18" fill="none" stroke="#58b99a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
-            <circle cx="166" cy="69" r="24" fill="#e8cf92" opacity=".08"/>
-            <g transform="translate(147 48) rotate(-20)">
-              <path d="M0 12 42 0 29 16 39 23 34 27 23 21 15 37 10 38 12 20 0 16z" fill="url(#crash-wing)" stroke="#f7e8bd" stroke-width="1" stroke-linejoin="round"/>
+            <circle cx="116" cy="97" r="53" fill="#e8cf92" opacity=".075"/>
+            <ellipse cx="112" cy="113" rx="48" ry="18" fill="#080d11" opacity=".38" transform="rotate(-24 112 113)"/>
+            <g transform="rotate(27 110 103)" stroke-linejoin="round">
+              <path d="M110 43c5 7 8 24 9 45l47 23q7 4 0 9l-46-11-3 30 13 12-3 5-17-6-17 6-3-5 13-12-3-30-46 11q-7-5 0-9l47-23c1-21 4-38 9-45z"
+                    fill="url(#crash-plane-body)" stroke="#fff0c7" stroke-width="2"/>
+              <path d="M104 94 61 114l43-9M116 94l43 20-43-9M104 135l-20 12 25-6M116 135l20 12-25-6"
+                    fill="none" stroke="url(#crash-plane-wing)" stroke-width="2.5" opacity=".9"/>
+              <path d="M110 47c3 12 4 28 4 46l-1 49" fill="none" stroke="#fff8e8" stroke-width="1.4" opacity=".82"/>
+              <path d="M106 60q4-5 8 0l2 10h-12z" fill="#304047" stroke="#d2c08f" stroke-width="1.2"/>
+              <rect x="81" y="98" width="12" height="27" rx="6" fill="#5d5c51" stroke="#e4d5ac" stroke-width="1.5"/>
+              <rect x="127" y="98" width="12" height="27" rx="6" fill="#5d5c51" stroke="#e4d5ac" stroke-width="1.5"/>
+              <path d="M85 105v11M131 105v11" stroke="#b5a477" stroke-width="1.2" opacity=".8"/>
+              <circle cx="110" cy="78" r="1.5" fill="#ae8747"/><circle cx="110" cy="85" r="1.3" fill="#ae8747"/>
             </g>
-            <text x="110" y="155" text-anchor="middle" fill="#e2d4b1" font-family="Georgia,serif" font-size="13" letter-spacing="4">TAKE FLIGHT</text>
             <circle cx="45" cy="48" r="2" fill="#e8cf92"/><circle cx="82" cy="68" r="1.5" fill="#e8cf92" opacity=".7"/><circle cx="60" cy="101" r="1.5" fill="#e8cf92" opacity=".5"/>
           </svg>
         </span>
         <b class="game-tile-title">Самолётик</b>
-        <small class="game-tile-description">Забери до вылета · ракетка</small>
+        <small class="game-tile-description">Забери выплату до вылета</small>
         <span class="game-tile-arrow" aria-hidden="true">↗</span>
       </button>
     </div>
