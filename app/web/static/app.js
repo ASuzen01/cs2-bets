@@ -72,6 +72,7 @@
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResults: { roulette: null, dice: null, plinko: null, slots: null, baccarat: null },  // результаты мини-игр
+    casinoHistoryOpen: false,
     slotAutoCount: 10,
     slotAutoRemaining: 0,
     slotAutoRunning: false,
@@ -3776,12 +3777,18 @@
   }
 
   function historyNode() {
-    const host = el("div", "casino-hist");
-    host.id = "casinoHist";
+    const details = el("details", "game-dropdown game-history");
+    details.id = "casinoHist";
+    details.open = Boolean(state.casinoHistoryOpen);
     const rows = (state.casino && state.casino.history) || [];
+    const summary = el("summary", null, "История раундов");
+    details.append(summary);
+    const host = el("div", "casino-hist");
     if (!rows.length) {
       host.append(el("div", "empty", "Пока пусто — первый раунд впереди."));
-      return host;
+      details.append(host);
+      details.addEventListener("toggle", () => { state.casinoHistoryOpen = details.open; });
+      return details;
     }
     rows.slice(0, 8).forEach((row) => {
       const net = Number(row.payout) - Number(row.amount);
@@ -3808,7 +3815,9 @@
       line.append(who, tag, res);
       host.append(line);
     });
-    return host;
+    details.append(host);
+    details.addEventListener("toggle", () => { state.casinoHistoryOpen = details.open; });
+    return details;
   }
 
   function rulesNode(game) {
@@ -3839,14 +3848,47 @@
         "Общая ставка за спин распределяется между 243 ways; комбинации из 3–5 одинаковых символов считаются слева направо. Scatter на любых барабанах: 3 символа дают 10, 4 — 15, 5 и более — 20 фри-спинов. Фри-спины используют ту же ставку; повторного запуска бонуса во время фри-спинов нет."
       ));
       box.append(el("span", "edge", "целевой RTP 95,5 % с учётом фри-спинов · округление выплаты до целых монет"));
-    } else {
+    } else if (game === "baccarat") {
       box.append(el("b", null, "Баккара · Punto Banco, восемь колод. "));
       box.append(document.createTextNode(
         "Ближайшая к 9 сумма выигрывает. Игрок добирает на 0–5; правило добора Банкира применяется автоматически. Натуральные 8 или 9 останавливают раздачу. На ставках Игрок/Банкир при ничьей ставка возвращается."
       ));
       box.append(el("span", "edge", "Игрок ×2 · Банкир ×1,95 (5% комиссия) · Ничья ×9 gross (8:1 net)"));
+      box.append(el("p", null, "Карты перемешиваются на сервере перед каждой раздачей; анимация только показывает уже определённые карты."));
+    } else if (game === "ladder") {
+      box.append(el("b", null, "Лесенка · до восьми этажей. "));
+      box.append(document.createTextNode("На каждом этаже выбери дверь: за одной спрятан приз. После удачного выбора можно забрать выплату или продолжить; промах завершает игру без выплаты. Число дверей растёт с этажом, выплаты учитывают вероятность прохождения."));
+      box.append(el("span", "edge", "теоретический RTP 95,5 % · исход двери выбирает сервер"));
+      box.append(el("p", null, "Положение приза генерируется сервером криптографическим генератором; браузер не выбирает и не меняет исход."));
+    } else if (game === "blackjack") {
+      box.append(el("b", null, "Блэкджек · одна колода из 52 карт. "));
+      box.append(document.createTextNode("Обычная победа — чистая прибыль 1:1, ничья возвращает ставку, натуральный блэкджек — 3:2. Дилер стоит на любой 17. Удвоение доступно на первых двух картах; одинаковые ранги можно разделить до четырёх рук. Тузы повторно не делятся, после сплита тузов выдаётся по одной карте. Страховка стоит половину исходной ставки и при блэкджеке дилера возвращает 3× сумму страховки."));
+      box.append(el("p", null, "Колода перемешивается на сервере; состав и порядок карт не задаются браузером."));
+    } else if (game === "crash") {
+      box.append(el("b", null, "Самолётик · зафиксируй множитель до вылета. "));
+      box.append(document.createTextNode("Выплата включает ставку и рассчитывается по множителю в момент успешного запроса на сервер. Если самолёт улетает раньше, ставка проигрывает. Каждый полёт независим; история не предсказывает следующий."));
+      box.append(el("span", "edge", "теоретический RTP 95,5 % · округление выплаты вниз"));
+      box.append(el("p", null, "Точка вылета генерируется сервером криптографически; сервер проверяет и фиксирует выплату. Интерфейс отображает ход полёта, но не выбирает исход."));
     }
+    if (game === "roulette") box.append(el("p", null, "Номер выбирается сервером криптографическим генератором из 0–36; колесо лишь анимирует уже выбранный результат."));
+    if (game === "dice") box.append(el("p", null, "Оба кубика бросает сервер криптографическим генератором; анимация не влияет на результат."));
+    if (game === "plinko") box.append(el("p", null, "Путь шарика определяется сервером до анимации; отрисовка не меняет ячейку или выплату."));
+    if (game === "slots") box.append(el("p", null, "Символы и выплаты определяет сервер. Ставка за весь спин, 243 ways; фри-спины используют сохранённую сервером ставку и не запускают бонус повторно."));
     return box;
+  }
+
+  function gameInfoNode(game) {
+    const details = el("details", "game-dropdown game-info");
+    const summary = el("summary");
+    summary.append(el("span", "game-info-icon", "i"), el("span", null, "Правила и честность"));
+    details.append(summary);
+    const content = el("div", "game-info-content");
+    content.append(rulesNode(game));
+    if (game === "slots" && state.casino && state.casino.slots) {
+      content.append(slotPaytableNode(state.casino.slots));
+    }
+    details.append(content);
+    return details;
   }
 
   function crashReadout() {
@@ -4018,7 +4060,6 @@
         const value = crashReadout();
         if (button && !state.crashBusy) button.textContent = `ЗАБРАТЬ · ${money(Math.floor(Number(state.crash.stake) * value))}`;
       }, 60);
-      card.append(el("div", "crash-foot", "Нажатие фиксирует текущий множитель на сервере. Если самолёт улетит первым — ставка сгорит."));
     } else {
       if (game && game.status === "crashed") {
         card.append(el("div", "crash-message lost", `Полёт завершился на ×${Number(game.crash_multiplier).toFixed(2)}. Ставка ${money(game.stake)} потеряна.`));
@@ -4050,9 +4091,8 @@
       start.dataset.crashAction = "start";
       start.disabled = state.crashBusy || amount < 10 || amount > 5000 || amount > balance();
       card.append(start);
-      card.append(el("div", "crash-economy", "Целевой RTP 95,5 % · ставка 10–5 000 монет. Выплата включает ставку; округление монет вниз может немного снизить фактический RTP на малых ставках."));
-      card.append(el("div", "crash-foot", "Каждый полёт независим. История не предсказывает следующий вылет."));
     }
+    card.append(historyNode(), gameInfoNode("crash"));
     host.append(card);
   }
 
@@ -4214,9 +4254,8 @@
       start.disabled = state.ladderBusy || balance() < Number(state.ladderStake || minStake);
       start.textContent = `Начать · ${money(Number(state.ladderStake || minStake))}`;
       card.append(start);
-      card.append(el("div", "ladder-note", `RTP 95,5 % · ставка ${minStake}–${maxStake} 🪙 · максимальная выплата при ставке ${maxStake} — ${money(Math.round(maxStake * ladderMultiplier(8)))}`));
     }
-    card.append(el("div", "ladder-foot", "Выплата включает ставку. Ошибка на любом этаже завершает игру без выплаты."));
+    card.append(historyNode(), gameInfoNode("ladder"));
     host.append(card);
   }
 
@@ -4295,7 +4334,6 @@
     const heading = el("div", "bj-heading");
     heading.append(el("div", "bj-kicker", "КЛАССИЧЕСКАЯ ИГРА 21"));
     heading.append(el("h2", null, "Блэкджек"));
-    heading.append(el("div", "bj-rules-line", "Натуральный blackjack — 3:2 · дилер стоит на 17"));
     table.append(heading);
 
     const showCards = game && (game.status === "insurance" || game.status === "playing" || game.status === "settled");
@@ -4383,13 +4421,7 @@
       startBox.append(blackjackStakeBlock());
       table.append(startBox);
     }
-    const footer = el("div", "bj-footnote",
-      "Обычная победа приносит чистую прибыль 1:1, ничья возвращает ставку; натуральный блэкджек — 3:2. " +
-      "Дилер стоит на любой 17. Удвоение доступно на первых двух картах; сплит одинаковых рангов — до 4 рук. " +
-      "Тузы нельзя делить повторно, после сплита тузов выдаётся по одной карте. Используется одна колода из 52 карт: " +
-      "одинаковые карты не повторяются. Страховка против туза стоит половину ставки, при блэкджеке дилера возвращает 3× сумму страховки.");
-    table.append(footer);
-    host.append(table, summaryNode(), historyNode());
+    host.append(table, summaryNode(), historyNode(), gameInfoNode("blackjack"));
   }
 
   async function startBlackjack(amount) {
@@ -4634,7 +4666,7 @@
     play.disabled = state.casinoBusy || !stakeOk("plinko");
     card.append(play);
     card.append(outcomeNode());
-    card.append(summaryNode(), historyNode(), rulesNode("plinko"));
+    card.append(summaryNode(), historyNode(), gameInfoNode("plinko"));
     host.append(card);
     if (result) paintOutcome(result);
     if (state.casinoBusy) lockTable(true);
@@ -4960,7 +4992,7 @@
       : hasFreeSpins ? `КРУТИТЬ ФРИ-СПИН · ${saved.free_spins} ОСТАЛОСЬ` : `КРУТИТЬ · ${money(stakeFor("slots"))}`;
     play.disabled = state.casinoBusy || state.slotAutoRunning || (!hasFreeSpins && !stakeOk("slots"));
     card.append(play, slotAutoControlsNode());
-    card.append(outcomeNode(), summaryNode(), historyNode(), slotPaytableNode(config), rulesNode("slots"));
+    card.append(outcomeNode(), summaryNode(), historyNode(), gameInfoNode("slots"));
     host.append(card);
     if (result) paintOutcome(result);
     if (state.casinoBusy) lockTable(true);
@@ -5062,8 +5094,7 @@
     host.append(play);
 
     host.append(summaryNode());
-    host.append(historyNode());
-    host.append(rulesNode(game));
+    host.append(historyNode(), gameInfoNode(game));
 
     paintOutcome(state.casinoResults[game]);
     // перерисовали экран посреди раунда — блокировка должна остаться
@@ -5201,6 +5232,11 @@
       haptic("bad");
       openNoCoinsSheet(minBet());
       return false;
+    }
+
+    if (game === "roulette" || game === "dice") {
+      const animationTarget = game === "roulette" ? $(".roulette-wrap") : $(".dice-stage");
+      if (animationTarget) animationTarget.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
     state.casinoBusy = true;
