@@ -4530,6 +4530,18 @@
     return symbol ? symbol.icon : "·";
   }
 
+  function slotCellNode(config, code, row, reel, hit) {
+    const cell = el("div", "slot-cell" + (hit ? " hit" : ""));
+    cell.dataset.row = String(row);
+    cell.dataset.reel = String(reel);
+    cell.dataset.symbol = code;
+    const icon = el("span", "slot-symbol", slotSymbolIcon(config, code));
+    if (code === "bar") icon.classList.add("bar-symbol");
+    if (code === "scatter") cell.classList.add("scatter-cell");
+    cell.append(icon);
+    return cell;
+  }
+
   function slotGridNode(config, result) {
     const shell = el("div", "slot-machine-shell");
     const frame = el("div", "slot-machine-frame");
@@ -4544,19 +4556,20 @@
     ];
     const symbols = result && Array.isArray(result.grid) ? result.grid : fallback;
     const hits = new Set((result && result.winning_cells || []).map((cell) => `${cell[0]}:${cell[1]}`));
-    for (let row = 0; row < config.rows; row += 1) {
-      for (let reel = 0; reel < config.reels; reel += 1) {
+    for (let reel = 0; reel < config.reels; reel += 1) {
+      const column = el("div", "slot-reel");
+      column.setAttribute("aria-label", `Барабан ${reel + 1}`);
+      const window = el("div", "slot-reel-window");
+      const strip = el("div", "slot-reel-strip");
+      strip.id = `slotReel${reel}`;
+      strip.dataset.reel = String(reel);
+      for (let row = 0; row < config.rows; row += 1) {
         const code = symbols[row] && symbols[row][reel] || "cherry";
-        const cell = el("div", "slot-cell" + (hits.has(`${row}:${reel}`) ? " hit" : ""));
-        cell.dataset.row = String(row);
-        cell.dataset.reel = String(reel);
-        cell.dataset.symbol = code;
-        const icon = el("span", "slot-symbol", slotSymbolIcon(config, code));
-        if (code === "bar") icon.classList.add("bar-symbol");
-        if (code === "scatter") cell.classList.add("scatter-cell");
-        cell.append(icon);
-        grid.append(cell);
+        strip.append(slotCellNode(config, code, row, reel, hits.has(`${row}:${reel}`)));
       }
+      window.append(strip);
+      column.append(window);
+      grid.append(column);
     }
     frame.append(grid);
     shell.append(frame);
@@ -4570,41 +4583,56 @@
     const config = state.casino && state.casino.slots;
     if (!config || !Array.isArray(result.grid)) return;
     const symbols = config.symbols;
+    const spinReels = [];
     for (let reel = 0; reel < config.reels; reel += 1) {
-      for (let turn = 0; turn < 5; turn += 1) {
-        for (let row = 0; row < config.rows; row += 1) {
-          const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
-          if (!cell) return;
-          const symbol = symbols[Math.floor(Math.random() * symbols.length)];
-          cell.dataset.symbol = symbol.code;
-          cell.classList.add("rolling");
-          cell.classList.remove("hit", "scatter-cell");
-          const icon = cell.querySelector(".slot-symbol");
-          if (icon) {
-            icon.textContent = symbol.icon;
-            icon.classList.toggle("bar-symbol", symbol.code === "bar");
-          }
-          cell.classList.toggle("scatter-cell", symbol.code === "scatter");
-        }
-        await pause(58 + reel * 9);
-      }
-      for (let row = 0; row < config.rows; row += 1) {
-        const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
-        const code = result.grid[row][reel];
-        const symbol = symbols.find((item) => item.code === code);
-        if (!cell || !symbol) continue;
-        cell.dataset.symbol = code;
-        cell.classList.remove("rolling");
-        cell.classList.toggle("scatter-cell", code === "scatter");
-        const icon = cell.querySelector(".slot-symbol");
-        if (icon) {
-          icon.textContent = symbol.icon;
-          icon.classList.toggle("bar-symbol", code === "bar");
-        }
-      }
-      haptic("light");
-      await pause(110 + reel * 24);
+      const strip = $(`#slotReel${reel}`);
+      if (!strip) return;
+      const initial = Array.from(strip.children).map((cell) => cell.dataset.symbol);
+      const final = result.grid.map((row) => row[reel]);
+      const rollingCodes = Array.from({ length: 15 }, () => symbols[Math.floor(Math.random() * symbols.length)].code);
+      const sequence = initial.concat(rollingCodes, final);
+      strip.style.transition = "none";
+      strip.style.transitionDelay = "0ms";
+      strip.style.transform = "translate3d(0,0,0)";
+      strip.classList.add("spinning");
+      strip.replaceChildren(...sequence.map((code, index) => {
+        const row = index < config.rows ? index : index >= sequence.length - config.rows ? index - (sequence.length - config.rows) : index % config.rows;
+        return slotCellNode(config, code, row, reel, false);
+      }));
+      void strip.offsetHeight;
+      const firstCell = strip.firstElementChild;
+      const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
+      const step = (firstCell ? firstCell.getBoundingClientRect().height : 53) + gap;
+      const duration = 900 + reel * 170;
+      const delay = reel * 135;
+      const distance = step * (sequence.length - config.rows);
+      spinReels.push(new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          strip.removeEventListener("transitionend", onEnd);
+          strip.style.transition = "none";
+          strip.style.transitionDelay = "0ms";
+          strip.style.transform = "translate3d(0,0,0)";
+          strip.classList.remove("spinning");
+          strip.replaceChildren(...final.map((code, row) => slotCellNode(config, code, row, reel, false)));
+          haptic("light");
+          resolve();
+        };
+        const onEnd = (event) => {
+          if (event.target === strip && event.propertyName === "transform") finish();
+        };
+        strip.addEventListener("transitionend", onEnd);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          strip.style.transition = `transform ${duration}ms cubic-bezier(.08,.82,.18,1)`;
+          strip.style.transitionDelay = `${delay}ms`;
+          strip.style.transform = `translate3d(0,-${distance}px,0)`;
+        }));
+        setTimeout(finish, duration + delay + 280);
+      }));
     }
+    await Promise.all(spinReels);
     (result.winning_cells || []).forEach(([row, reel]) => {
       const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
       if (cell) cell.classList.add("hit");

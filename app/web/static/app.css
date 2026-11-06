@@ -1200,3 +1200,11 @@ button:focus-visible{outline-color:#d6b66d}
 .slot-paytable-row{display:flex;align-items:center;justify-content:space-between;gap:5px;padding:7px 8px;border-radius:7px;background:rgba(255,255,255,.025)}
 .slot-pay-symbol{color:#ddd2b3;font-size:10px;font-weight:800}.slot-pay-values{color:#c5ad70;font-size:9px;font-variant-numeric:tabular-nums;font-weight:800;white-space:nowrap}
 @media(max-width:360px){.slot-game-card{padding:15px 11px}.slot-grid{grid-template-rows:repeat(3,minmax(47px,1fr));gap:2px}.slot-cell{min-height:47px}.slot-machine-shell{padding:7px 6px 4px}.slot-machine-frame{padding:5px}.slot-pay-values{font-size:8px}}
+/* Reels are continuous, clipped strips: each visible cell always contains a symbol. */
+.slot-grid{grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch}
+.slot-reel{min-width:0;overflow:hidden}
+.slot-reel-window{height:165px;overflow:hidden}
+.slot-reel-strip{display:flex;flex-direction:column;gap:3px;transform:translate3d(0,0,0);will-change:transform}
+.slot-reel-strip.spinning .slot-cell{filter:blur(.55px) brightness(1.12)}
+.slot-cell{height:53px;min-height:53px;flex:0 0 53px}
+@media(max-width:360px){.slot-reel-window{height:145px}.slot-reel-strip{gap:2px}.slot-cell{height:47px;min-height:47px;flex-basis:47px}}
