@@ -8,6 +8,5 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 STATIC_DIR = WEB_DIR / "static"
 
 MASCOT_PATH = STATIC_DIR / "mascot.png"
-WELCOME_EMBLEM_PATH = STATIC_DIR / "welcome-crest.png"
 
-__all__ = ["MASCOT_PATH", "STATIC_DIR", "WEB_DIR", "WELCOME_EMBLEM_PATH"]
+__all__ = ["MASCOT_PATH", "STATIC_DIR", "WEB_DIR"]

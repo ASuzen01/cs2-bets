@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from html import escape
-from pathlib import Path
 from typing import Any
 
 from aiogram import Bot
@@ -22,21 +21,13 @@ from app.db import Database
 log = logging.getLogger(__name__)
 
 
-async def send_with_mascot(
-    bot: Bot,
-    chat_id: int,
-    caption: str,
-    markup: Any = None,
-    *,
-    photo_path: Path | None = None,
-) -> None:
-    """Сообщение с картинкой; если фото не ушло — отправляем текстом."""
-    image = photo_path or MASCOT_PATH
-    if image.is_file():
+async def send_with_mascot(bot: Bot, chat_id: int, caption: str, markup: Any = None) -> None:
+    """Сообщение с общей эмблемой; если фото не ушло — отправляем текстом."""
+    if MASCOT_PATH.is_file():
         try:
             await bot.send_photo(
                 chat_id=chat_id,
-                photo=FSInputFile(str(image)),
+                photo=FSInputFile(str(MASCOT_PATH)),
                 caption=caption,
                 reply_markup=markup,
             )
