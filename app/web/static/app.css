@@ -551,6 +551,12 @@
   .casino-panel .felt-glow{position:absolute;left:50%;top:-90px;width:260px;height:200px;
     transform:translateX(-50%);border-radius:50%;pointer-events:none;
     background:radial-gradient(circle,rgba(77,171,247,.16),transparent 72%)}
+  .casino-play-dock.sticky{position:sticky;top:0;z-index:6;margin:0 -14px 9px;padding:0 14px 9px;
+    background:linear-gradient(180deg,rgba(9,11,14,.99),rgba(9,11,14,.96));
+    border-bottom:1px solid #28251f;box-shadow:0 8px 16px rgba(0,0,0,.28);backdrop-filter:blur(10px)}
+  .casino-play-dock .casino-panel{margin:0 0 8px}
+  .casino-play-dock .casino-outcome{margin:0 0 8px}
+  .casino-play-dock .btn.play{margin:0}
 
   /* ---- колесо ---- */
   .roulette-wrap{position:relative;display:grid;place-items:center;margin:2px auto 4px;scroll-margin-block:100px;

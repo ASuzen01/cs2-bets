@@ -5105,8 +5105,14 @@
     const game = state.game;
     const pick = pickFor(game);
 
-    host.append(tableHead(game));
-    host.append(outcomeNode());
+    const fixedControls = game === "roulette" || game === "dice";
+    const playDock = fixedControls ? el("div", "casino-play-dock sticky") : null;
+    if (playDock) {
+      playDock.append(tableHead(game), outcomeNode());
+      host.append(playDock);
+    } else {
+      host.append(tableHead(game), outcomeNode());
+    }
 
     const field = el("div", "casino-field" + (game === "roulette" ? " roulette-field" : ""));
     if (game === "roulette") {
@@ -5143,7 +5149,8 @@
     play.id = "playBtn";
     play.type = "button";
     play.textContent = (game === "roulette" ? "Крутить колесо" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.stake);
-    host.append(play);
+    if (playDock) playDock.append(play);
+    else host.append(play);
 
     host.append(summaryNode());
     host.append(historyNode(), gameInfoNode(game));
@@ -5284,11 +5291,6 @@
       haptic("bad");
       openNoCoinsSheet(minBet());
       return false;
-    }
-
-    if (game === "roulette" || game === "dice") {
-      const animationTarget = game === "roulette" ? $(".roulette-wrap") : $(".dice-stage");
-      if (animationTarget) animationTarget.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
     state.casinoBusy = true;
