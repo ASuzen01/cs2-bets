@@ -403,6 +403,8 @@
     if (!res.ok || data.ok === false) {
       const err = new Error(data.error || "Ошибка " + res.status);
       err.status = res.status;
+      const retryAfter = Number(res.headers.get("Retry-After"));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter;
       throw err;
     }
     return data;
@@ -5093,11 +5095,19 @@
         const usingFreeSpin = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
         if (!usingFreeSpin && state.slotAutoCount > 0 && state.slotAutoRemaining <= 0) break;
         const completed = await playCasinoRound({ auto: true });
+        if (completed && typeof completed === "object" && completed.retryAfter) {
+          toast(`Защита от частых запросов: автоспин продолжится через ${completed.retryAfter} сек`);
+          await pause((completed.retryAfter + 1) * 1000);
+          if (!state.slotAutoRunning || runId !== state.slotAutoRunId) break;
+          continue;
+        }
         if (!completed || !state.slotAutoRunning || runId !== state.slotAutoRunId) break;
         if (!usingFreeSpin && state.slotAutoCount > 0) state.slotAutoRemaining -= 1;
         updateSlotAutoControls();
         if (!state.slotAutoRunning || runId !== state.slotAutoRunId) break;
-        await pause(state.slotQuick ? 35 : 110);
+        // /api/casino/play is capped at 40/min. Even with the short visual
+        // animation, keep quick auto mode below that per-user request budget.
+        await pause(state.slotQuick ? 1400 : 110);
       }
     } finally {
       if (runId === state.slotAutoRunId) {
@@ -5536,6 +5546,9 @@
       if (onScreen && game === "slots") renderSlots($("#games"));
       return true;
     } catch (err) {
+      if (fromAuto && err.status === 429) {
+        return { retryAfter: Math.max(1, Math.min(60, Number(err.retryAfter) || 60)) };
+      }
       toast(err.message, "bad");
       return false;
     } finally {
