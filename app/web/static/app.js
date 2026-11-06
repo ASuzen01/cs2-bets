@@ -268,9 +268,36 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
   let telegramInitializedApp = null;
+  let telegramInitRetryTimer = null;
+  let telegramInitRetryCount = 0;
+  let telegramLoadRetryRegistered = false;
   function initializeTelegram() {
     const app = window.Telegram && window.Telegram.WebApp;
-    if (!app || app === telegramInitializedApp) return;
+    if (!app) {
+      // The Telegram SDK is async; initData can already be available through the shim.
+      // Retry briefly and after window.load so fullscreen isn't silently skipped on startup.
+      if (!telegramLoadRetryRegistered && document.readyState !== "complete") {
+        telegramLoadRetryRegistered = true;
+        window.addEventListener("load", () => {
+          telegramLoadRetryRegistered = false;
+          initializeTelegram();
+        }, { once: true });
+      }
+      if (!telegramInitRetryTimer && telegramInitRetryCount < 20) {
+        telegramInitRetryTimer = setTimeout(() => {
+          telegramInitRetryTimer = null;
+          telegramInitRetryCount += 1;
+          initializeTelegram();
+        }, 150);
+      }
+      return;
+    }
+    if (telegramInitRetryTimer) {
+      clearTimeout(telegramInitRetryTimer);
+      telegramInitRetryTimer = null;
+    }
+    telegramInitRetryCount = 0;
+    if (app === telegramInitializedApp) return;
     telegramInitializedApp = app;
     try {
       app.ready();
