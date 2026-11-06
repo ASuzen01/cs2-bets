@@ -13,7 +13,6 @@ import secrets
 RTP = 0.955
 MAX_ROUNDS = 8
 MIN_STAKE = 10
-MAX_STAKE = 50
 
 
 def window_count(round_no: int) -> int:
@@ -46,18 +45,15 @@ def choose_window(windows: int) -> int:
     return secrets.randbelow(windows)
 
 
-def validate_stake(stake: int, max_stake: int = MAX_STAKE) -> int:
+def validate_stake(stake: int) -> int:
     amount = int(stake)
     if amount < MIN_STAKE:
         raise ValueError(f"Минимальная ставка — {MIN_STAKE} 🪙")
-    if amount > int(max_stake):
-        raise ValueError(f"Максимальная ставка в «Лесенке» — {int(max_stake)} 🪙")
     return amount
 
 
 __all__ = [
     "MAX_ROUNDS",
-    "MAX_STAKE",
     "MIN_STAKE",
     "RTP",
     "choose_window",

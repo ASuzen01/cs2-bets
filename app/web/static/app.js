@@ -28,7 +28,7 @@
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
-    limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250, ladder_max_bet: 50 },
+    limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250 },
     cart: readCart(),
     betsView: "all",
     tickets: [],       // билеты в экспресс с колеса
@@ -1760,7 +1760,7 @@
   function stakeBounds() {
     return {
       min: Math.max(1, Number((state.limits && state.limits.min_bet) || 10)),
-      max: Math.max(1, Number((state.casino && state.casino.max_bet) || 5000)),
+      max: Number.POSITIVE_INFINITY,
     };
   }
 
@@ -3300,7 +3300,7 @@
 
   function casinoLimits() {
     const limits = state.limits || {};
-    const max = Number((state.casino && state.casino.max_bet) || 5000);
+    const max = Number.POSITIVE_INFINITY;
     return { min: Math.max(1, Number(limits.min_bet) || 10), max };
   }
 
@@ -4228,7 +4228,6 @@
       input.type = "number";
       input.inputMode = "numeric";
       input.min = "10";
-      input.max = "5000";
       input.value = String(amount);
       input.dataset.crashInput = "true";
       input.setAttribute("aria-label", "Ставка в самолётике");
@@ -4236,7 +4235,7 @@
       card.append(input);
       const start = el("button", "btn crash-start", `ВЗЛЁТ · ${money(amount)}`);
       start.dataset.crashAction = "start";
-      start.disabled = state.crashBusy || amount < 10 || amount > 5000 || amount > balance();
+      start.disabled = state.crashBusy || amount < 10 || amount > balance();
       card.append(start);
     }
     card.append(historyNode(), gameInfoNode("crash"));
@@ -4382,24 +4381,37 @@
       } else if (game && ["cashed", "complete"].includes(game.status)) {
         card.append(el("div", "ladder-result won", game.status === "complete" ? `Восемь этажей пройдены! Выплата ${money(game.payout)} зачислена.` : `Выплата ${money(game.payout)} зачислена после ${game.round} этажа.`));
       }
-      const limits = state.limits || {};
-      const maxStake = Number(limits.ladder_max_bet || 50);
       const minStake = 10;
+      const amount = Number(state.ladderStake || minStake);
       const picker = el("div", "ladder-stakes");
       picker.append(el("span", null, "Ставка"));
-      [10, 25, maxStake].filter((value, index, list) => value >= minStake && list.indexOf(value) === index).forEach((value) => {
-        const chip = el("button", "ladder-stake" + (Number(state.ladderStake) === value ? " active" : ""), money(value));
+      [10, 25].forEach((value) => {
+        const chip = el("button", "ladder-stake" + (amount === value ? " active" : ""), money(value));
         chip.type = "button";
         chip.dataset.ladderStake = String(value);
         chip.disabled = state.ladderBusy || balance() < value;
         picker.append(chip);
       });
+      const all = el("button", "ladder-stake" + (amount === balance() ? " active" : ""), `Всё · ${money(balance())}`);
+      all.type = "button";
+      all.dataset.ladderStake = String(balance());
+      all.disabled = state.ladderBusy || balance() < minStake;
+      picker.append(all);
       card.append(picker);
+      const input = el("input", "crash-stake-input");
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = String(minStake);
+      input.value = String(amount);
+      input.dataset.ladderInput = "true";
+      input.setAttribute("aria-label", "Ставка в Лесенке");
+      input.disabled = state.ladderBusy;
+      card.append(input);
       const start = el("button", "btn ladder-start", game && game.status === "lost" ? "Ещё раз" : "Начать · 10 🪙");
       start.type = "button";
       start.dataset.ladderAction = "start";
-      start.disabled = state.ladderBusy || balance() < Number(state.ladderStake || minStake);
-      start.textContent = `Начать · ${money(Number(state.ladderStake || minStake))}`;
+      start.disabled = state.ladderBusy || amount < minStake || amount > balance();
+      start.textContent = `Начать · ${money(amount)}`;
       card.append(start);
     }
     card.append(historyNode(), gameInfoNode("ladder"));
@@ -5658,18 +5670,31 @@
       }
     });
     host.addEventListener("input", (event) => {
-      const input = event.target.closest("[data-crash-input]");
+      const input = event.target.closest("[data-crash-input], [data-ladder-input]");
       if (!input) return;
       const parsed = Number.parseInt(input.value, 10);
-      state.crashStake = Number.isFinite(parsed) ? parsed : 0;
-      const start = $(".crash-start");
-      if (start) {
-        start.textContent = `ВЗЛЁТ · ${money(Math.max(0, state.crashStake))}`;
-        start.disabled = state.crashBusy || state.crashStake < 10 || state.crashStake > 5000 || state.crashStake > balance();
+      const amount = Number.isFinite(parsed) ? parsed : 0;
+      if (input.dataset.crashInput) {
+        state.crashStake = amount;
+        const start = $(".crash-start");
+        if (start) {
+          start.textContent = `ВЗЛЁТ · ${money(Math.max(0, amount))}`;
+          start.disabled = state.crashBusy || amount < 10 || amount > balance();
+        }
+        document.querySelectorAll(".crash-chip").forEach((chip) => {
+          chip.classList.toggle("active", Number(chip.dataset.crashStake) === amount);
+        });
+      } else {
+        state.ladderStake = amount;
+        const start = $(".ladder-start");
+        if (start) {
+          start.textContent = `Начать · ${money(Math.max(0, amount))}`;
+          start.disabled = state.ladderBusy || amount < 10 || amount > balance();
+        }
+        document.querySelectorAll(".ladder-stake").forEach((chip) => {
+          chip.classList.toggle("active", Number(chip.dataset.ladderStake) === amount);
+        });
       }
-      document.querySelectorAll(".crash-chip").forEach((chip) => {
-        chip.classList.toggle("active", Number(chip.dataset.crashStake) === state.crashStake);
-      });
     });
   }
 

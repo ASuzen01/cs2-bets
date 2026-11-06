@@ -1697,13 +1697,13 @@ class Database:
         }
 
     async def start_ladder(
-        self, user_id: int, stake: int, prize_index: int, max_stake: int = 50
+        self, user_id: int, stake: int, prize_index: int
     ) -> dict[str, Any]:
         """Списывает ставку и создаёт партию; активную партию нельзя задвоить."""
         from app.services.ladder import MAX_ROUNDS, MIN_STAKE
 
-        if not MIN_STAKE <= stake <= max_stake:
-            raise InvalidBet(f"Ставка в «Лесенке» — от {MIN_STAKE} до {max_stake} 🪙")
+        if stake < MIN_STAKE:
+            raise InvalidBet(f"Минимальная ставка в «Лесенке» — {MIN_STAKE} 🪙")
         if not 0 <= prize_index < 2:
             raise InvalidBet("Неверный игровой раунд")
         now = int(time.time())
@@ -1937,10 +1937,10 @@ class Database:
         self, user_id: int, stake: int, crash_multiplier: float, *, now: float | None = None
     ) -> dict[str, Any]:
         """Debit stake and commit a private crash point in one transaction."""
-        from app.services.crash import MAX_STAKE, MIN_STAKE, multiplier_at
+        from app.services.crash import MIN_STAKE, multiplier_at
 
-        if not MIN_STAKE <= int(stake) <= MAX_STAKE:
-            raise InvalidBet(f"Ставка в «Самолётике» — от {MIN_STAKE} до {MAX_STAKE} 🪙")
+        if int(stake) < MIN_STAKE:
+            raise InvalidBet(f"Минимальная ставка в «Самолётике» — {MIN_STAKE} 🪙")
         if not 1.0 <= float(crash_multiplier) <= 1_000_000.0:
             raise InvalidBet("Некорректная точка вылета")
         moment = float(time.time() if now is None else now)

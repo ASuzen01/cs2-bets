@@ -23,10 +23,11 @@ def test_ladder_multipliers_match_target_rtp() -> None:
     assert ladder.payout(50, 8) == 17_327_520
 
 
-def test_ladder_stake_limits_and_window_bounds() -> None:
+def test_ladder_minimum_stake_and_window_bounds() -> None:
     assert ladder.validate_stake(10) == 10
     assert ladder.validate_stake(50) == 50
-    for amount in (0, 9, 51):
+    assert ladder.validate_stake(100_000) == 100_000
+    for amount in (0, 9):
         with pytest.raises(ValueError):
             ladder.validate_stake(amount)
     assert [ladder.window_count(i) for i in range(1, 9)] == list(range(2, 10))
@@ -203,3 +204,14 @@ async def test_ladder_api_rejects_stake_below_minimum_without_debit(api_client) 
     assert response.status == 400
     assert "Минимальная ставка" in (await response.json())["error"]
     assert await database.get_balance(7001) == 1000
+
+
+async def test_ladder_api_accepts_stake_above_former_ceiling(api_client) -> None:
+    client, database = api_client
+    await database.add_coins(7001, 6_000, "тест большого баланса")
+    response = await client.post("/api/ladder/start", json={"amount": 6_000})
+    assert response.status == 200
+    result = await response.json()
+    assert result["ok"] is True
+    assert result["game"]["stake"] == 6_000
+    assert result["balance"] == 1_000

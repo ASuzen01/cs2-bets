@@ -13,16 +13,15 @@ import secrets
 
 RTP = 0.955
 MIN_STAKE = 10
-MAX_STAKE = 5_000
 MAX_MULTIPLIER = 1_000_000.0
 GROWTH_PER_SECOND = 0.16
 _SCALE = 1_000_000
 
 
-def validate_stake(amount: int, *, maximum: int = MAX_STAKE) -> int:
+def validate_stake(amount: int) -> int:
     value = int(amount)
-    if not MIN_STAKE <= value <= int(maximum):
-        raise ValueError(f"Ставка в «Самолётике» — от {MIN_STAKE} до {int(maximum)} 🪙")
+    if value < MIN_STAKE:
+        raise ValueError(f"Минимальная ставка в «Самолётике» — {MIN_STAKE} 🪙")
     return value
 
 
@@ -57,7 +56,6 @@ def payout(stake: int, multiplier: float) -> int:
 __all__ = [
     "GROWTH_PER_SECOND",
     "MAX_MULTIPLIER",
-    "MAX_STAKE",
     "MIN_STAKE",
     "RTP",
     "crash_point",

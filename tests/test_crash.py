@@ -20,10 +20,11 @@ def test_crash_distribution_endpoints_and_multiplier() -> None:
     assert crash.payout(50, 2.39) == 119
 
 
-def test_crash_stake_limits() -> None:
+def test_crash_minimum_stake_without_maximum() -> None:
     assert crash.validate_stake(10) == 10
     assert crash.validate_stake(5_000) == 5_000
-    for amount in (0, 9, 5_001):
+    assert crash.validate_stake(100_000) == 100_000
+    for amount in (0, 9):
         with pytest.raises(ValueError):
             crash.validate_stake(amount)
 
@@ -138,3 +139,14 @@ async def test_crash_api_round_flow(crash_api_client, monkeypatch) -> None:
     state = await state_response.json()
     assert state["crash"]["status"] == "cashed"
     assert any(item["game"] == "crash" for item in state["casino"]["history"])
+
+
+async def test_crash_api_accepts_stake_above_former_ceiling(crash_api_client) -> None:
+    client, database = crash_api_client
+    await database.add_coins(7001, 6_000, "тест большого баланса")
+    response = await client.post("/api/crash/start", json={"amount": 6_000})
+    assert response.status == 200
+    result = await response.json()
+    assert result["ok"] is True
+    assert result["game"]["stake"] == 6_000
+    assert result["balance"] == 1_000

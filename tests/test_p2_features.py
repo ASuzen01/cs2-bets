@@ -177,17 +177,49 @@ def test_rate_limiter_window() -> None:
     assert limiter.allow(1, "/api/wheel", now=1100)         # окно прошло
 
 
-async def test_bet_over_max_is_refused(client: TestClient, db: Database) -> None:
+async def test_state_has_no_money_ceiling(client: TestClient) -> None:
+    state = await (await client.get("/api/state")).json()
+    assert "max_bet" not in state["limits"]
+    assert "ladder_max_bet" not in state["limits"]
+    assert "max_bet" not in state["casino"]
+
+
+async def test_single_bet_above_former_ceiling_is_accepted(client: TestClient, db: Database) -> None:
     match = await _match(db)
+    await db.add_coins(USER["id"], 10_000, "тест большого баланса")
     before = await db.get_balance(USER["id"])
 
     resp = await client.post(
-        "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 999999}
+        "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 6_000}
     )
     data = await resp.json()
 
-    assert resp.status == 400 and "Максимальная ставка" in data["error"]
-    assert await db.get_balance(USER["id"]) == before
+    assert resp.status == 200 and data["ok"] is True
+    assert await db.get_balance(USER["id"]) == before - 6_000
+
+
+async def test_express_above_former_ceiling_is_accepted(client: TestClient, db: Database) -> None:
+    first = await _match(db, fonbet_id=556)
+    second = await _match(db, fonbet_id=557)
+    await db.add_coins(USER["id"], 10_000, "тест большого баланса")
+    resp = await client.post(
+        "/api/express",
+        json={"legs": [{"match_id": int(first["id"]), "side": "a"},
+                        {"match_id": int(second["id"]), "side": "b"}], "amount": 6_000},
+    )
+    data = await resp.json()
+    assert resp.status == 200 and data["ok"] is True
+
+
+async def test_casino_and_blackjack_above_former_ceiling_are_accepted(client: TestClient, db: Database) -> None:
+    await db.add_coins(USER["id"], 20_000, "тест большого баланса")
+    casino = await client.post(
+        "/api/casino/play", json={"game": "roulette", "selection": "red", "amount": 6_000}
+    )
+    assert casino.status == 200 and (await casino.json())["ok"] is True
+
+    blackjack = await client.post("/api/blackjack/start", json={"amount": 6_000})
+    assert blackjack.status == 200 and (await blackjack.json())["ok"] is True
 
 
 async def test_metrics_and_health(client: TestClient) -> None:

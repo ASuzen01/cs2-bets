@@ -302,8 +302,6 @@ async def api_state(request: web.Request) -> web.Response:
             "crash": await db.crash_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
-                "max_bet": settings.max_bet,
-                "ladder_max_bet": settings.ladder_max_bet,
                 "max_legs": settings.max_express_legs,
                 "max_odds": settings.max_express_odds,
                 "daily_bonus": settings.daily_bonus,
@@ -435,8 +433,6 @@ async def api_bet(request: web.Request) -> web.Response:
         return _bad("Сумма должна быть положительной")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
-    if amount > settings.max_bet:
-        return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
 
     hockey = hockey_side(side)
     if hockey is not None:      # рынок хоккея: основное время, победа в матче, тотал
@@ -548,11 +544,8 @@ async def api_express(request: web.Request) -> web.Response:
     if len(legs) < 2 or any(not leg["side"] for leg in legs):
         return _bad("Нужно минимум 2 исхода")
     ticket_id = _as_int(body.get("ticket_id")) or None
-    if ticket_id is None:
-        if amount < settings.min_bet:
-            return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
-        if amount > settings.max_bet:
-            return _bad(f"Максимальная ставка — {settings.max_bet} 🪙")
+    if ticket_id is None and amount < settings.min_bet:
+        return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
 
     metrics.count_express()
     express_id, odds, balance = await db.place_express(
@@ -916,9 +909,6 @@ async def api_bets(request: web.Request) -> web.Response:
 
 
 # -------------------------------------------------------------------- казино
-CASINO_MAX_BET = 5000
-
-
 async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
     """Роспись игр, сводка и последние раунды — одним куском для экранов."""
     summary = await db.casino_summary(user_id)
@@ -934,7 +924,6 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
         "slot_state": await db.slot_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
-        "max_bet": CASINO_MAX_BET,
         "summary": {
             "rounds": int(summary["rounds"] or 0) if summary else 0,
             "staked": int(summary["staked"] or 0) if summary else 0,
@@ -986,8 +975,6 @@ async def api_casino_play(request: web.Request) -> web.Response:
         return _bad("Такой игры нет")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
-    if amount > CASINO_MAX_BET:
-        return _bad(f"Максимальная ставка — {CASINO_MAX_BET} 🪙")
     if not selection:
         return _bad("Выбери, на что ставишь")
 
@@ -1042,8 +1029,6 @@ async def api_blackjack_start(request: web.Request) -> web.Response:
     amount = _as_int(body.get("amount"))
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
-    if amount > CASINO_MAX_BET:
-        return _bad(f"Максимальная ставка — {CASINO_MAX_BET} 🪙")
     metrics.count_casino()
     try:
         state = blackjack_game.new_game(amount)
@@ -1081,14 +1066,13 @@ async def api_ladder_start(request: web.Request) -> web.Response:
     user_id = int(request[USER_KEY]["user_id"])
     amount = _as_int((await _json_body(request)).get("amount"))
     try:
-        stake = ladder_game.validate_stake(amount, settings.ladder_max_bet)
+        stake = ladder_game.validate_stake(amount)
     except ValueError as exc:
         return _bad(str(exc))
     metrics.count_casino()
     try:
         game = await db.start_ladder(
             user_id, stake, ladder_game.choose_window(ladder_game.window_count(1)),
-            settings.ladder_max_bet,
         )
     except InsufficientFunds:
         return _bad("Недостаточно монет на балансе")
