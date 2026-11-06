@@ -22,7 +22,7 @@ from aiohttp import web
 from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
-from app.services import achievements, games, slot_machine
+from app.services import achievements, baccarat, games, slot_machine
 from app.services import blackjack as blackjack_game
 from app.services import crash as crash_game
 from app.services import ladder as ladder_game
@@ -927,6 +927,7 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
         "options": {
             "roulette": games.game_options("roulette"),
             "dice": games.game_options("dice"),
+            "baccarat": baccarat.options(),
         },
         "plinko": games.plinko_config(),
         "slots": slot_machine.slot_config(),
@@ -968,7 +969,7 @@ async def api_casino_state(request: web.Request) -> web.Response:
 
 
 async def api_casino_play(request: web.Request) -> web.Response:
-    """Раунд рулетки, костей, Плинко или слот-машины.
+    """Раунд рулетки, костей, Плинко, слот-машины или баккары.
 
     Клиент присылает игру, выбор и сумму. Исход бросает сервер (`services.games`),
     клиент получает его уже готовым и только доигрывает анимацию до нужного числа.
@@ -981,7 +982,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     selection = str(body.get("selection") or "").strip().lower()
     amount = _as_int(body.get("amount"))
 
-    if game not in ("roulette", "dice", "plinko", "slots"):
+    if game not in ("roulette", "dice", "plinko", "slots", "baccarat"):
         return _bad("Такой игры нет")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
@@ -1007,7 +1008,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, **result})
 
     try:
-        result = games.play(game, selection, amount)
+        result = baccarat.play(selection, amount) if game == "baccarat" else games.play(game, selection, amount)
     except ValueError as exc:
         return _bad(str(exc))
 

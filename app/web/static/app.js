@@ -65,13 +65,13 @@
     crashPolling: false,
     crashTicker: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
-    casinoPick: { roulette: "red", dice: "over" },
-    casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50 },
+    casinoPick: { roulette: "red", dice: "over", baccarat: "player" },
+    casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50, baccarat: 50 },
     plinkoRows: 12,
     plinkoRisk: "medium",
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
-    casinoResults: { roulette: null, dice: null, plinko: null, slots: null },  // результаты мини-игр
+    casinoResults: { roulette: null, dice: null, plinko: null, slots: null, baccarat: null },  // результаты мини-игр
     slotAutoCount: 10,
     slotAutoRemaining: 0,
     slotAutoRunning: false,
@@ -3305,7 +3305,7 @@
       else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
-      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : "Бросить кости") + " · " + money(info.raw);
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.raw);
     }
   }
 
@@ -3575,10 +3575,97 @@
     };
   }
 
+  function baccaratCardNode(card, faceDown) {
+    const suit = card ? String(card.suit) : "♦";
+    const red = suit === "♥" || suit === "♦";
+    const node = el("div", "baccarat-card" + (faceDown ? " back" : red ? " red" : " black"));
+    if (faceDown) {
+      node.append(el("span", "baccarat-card-back-mark", "✦"));
+      return node;
+    }
+    node.append(el("span", "baccarat-card-rank", String(card.rank)));
+    node.append(el("span", "baccarat-card-suit", suit));
+    node.setAttribute("aria-label", `${card.rank}${suit}`);
+    return node;
+  }
+
+  function baccaratHandNode(side, title, cards, points, result) {
+    const hand = el("div", `baccarat-hand ${side}` + (result && result.result === side ? " winner" : ""));
+    hand.append(el("div", "baccarat-hand-heading", title));
+    const row = el("div", "baccarat-cards");
+    row.id = side === "player" ? "baccaratPlayerCards" : "baccaratBankerCards";
+    if (result) cards.forEach((card) => row.append(baccaratCardNode(card, false)));
+    else for (let index = 0; index < 2; index += 1) row.append(baccaratCardNode(null, true));
+    hand.append(row);
+    const score = el("div", "baccarat-hand-score", result ? `${points} очков` : "— очков");
+    score.id = side === "player" ? "baccaratPlayerScore" : "baccaratBankerScore";
+    hand.append(score);
+    return hand;
+  }
+
+  function baccaratTableNode(result) {
+    const board = el("div", "baccarat-board");
+    board.id = "baccaratBoard";
+    board.append(
+      baccaratHandNode("player", "ИГРОК", result ? result.player_cards : [], result ? result.player_points : 0, result),
+      el("div", "baccarat-vs", "VS"),
+      baccaratHandNode("banker", "БАНКИР", result ? result.banker_cards : [], result ? result.banker_points : 0, result),
+    );
+    const summary = el("div", "baccarat-table-result" + (result ? " show" : ""));
+    summary.id = "baccaratTableResult";
+    summary.textContent = result ? (result.result === "tie" ? "НИЧЬЯ" : result.result === "player" ? "ПОБЕДА ИГРОКА" : "ПОБЕДА БАНКИРА") : "PUNTO BANCO";
+    board.append(summary);
+    return board;
+  }
+
+  async function animateBaccarat(result) {
+    const playerRow = $("#baccaratPlayerCards");
+    const bankerRow = $("#baccaratBankerCards");
+    if (!playerRow || !bankerRow) return;
+    playerRow.replaceChildren(baccaratCardNode(null, true), baccaratCardNode(null, true));
+    bankerRow.replaceChildren(baccaratCardNode(null, true), baccaratCardNode(null, true));
+    const playerScore = $("#baccaratPlayerScore");
+    const bankerScore = $("#baccaratBankerScore");
+    if (playerScore) playerScore.textContent = "— очков";
+    if (bankerScore) bankerScore.textContent = "— очков";
+    const reveal = async (row, index, card) => {
+      await pause(145);
+      const face = baccaratCardNode(card, false);
+      face.classList.add("dealing");
+      if (row.children[index]) row.children[index].replaceWith(face);
+      else row.append(face);
+      await pause(125);
+      face.classList.remove("dealing");
+    };
+    await reveal(playerRow, 0, result.player_cards[0]);
+    await reveal(bankerRow, 0, result.banker_cards[0]);
+    await reveal(playerRow, 1, result.player_cards[1]);
+    await reveal(bankerRow, 1, result.banker_cards[1]);
+    if (result.player_cards.length > 2) await reveal(playerRow, 2, result.player_cards[2]);
+    if (result.banker_cards.length > 2) await reveal(bankerRow, 2, result.banker_cards[2]);
+    if (playerScore) playerScore.textContent = `${result.player_points} очков`;
+    if (bankerScore) bankerScore.textContent = `${result.banker_points} очков`;
+    const summary = $("#baccaratTableResult");
+    if (summary) {
+      summary.classList.add("show");
+      summary.textContent = result.result === "tie" ? "НИЧЬЯ" : result.result === "player" ? "ПОБЕДА ИГРОКА" : "ПОБЕДА БАНКИРА";
+    }
+    $("#baccaratBoard")?.querySelectorAll(".baccarat-hand").forEach((hand) => {
+      hand.classList.toggle("winner", hand.classList.contains(result.result));
+    });
+    haptic("ok");
+  }
+
   function tableHead(game) {
     const panel = el("div", "casino-panel");
     panel.append(el("div", "felt-glow"));
 
+    if (game === "baccarat") {
+      const wrap = el("div", "baccarat-wrap");
+      wrap.append(baccaratTableNode(state.casinoResults.baccarat));
+      panel.append(wrap);
+      return panel;
+    }
     if (game === "roulette") {
       const wrap = el("div", "roulette-wrap");
       wrap.append(rouletteSvgNode());
@@ -3626,6 +3713,10 @@
     if (result.game === "plinko") {
       return `Ячейка ${Number(result.slot) + 1} · ×${Number(result.multiplier).toFixed(2)}`;
     }
+    if (result.game === "baccarat") {
+      const label = result.result === "tie" ? "Ничья" : result.result === "player" ? "Победа игрока" : "Победа банкира";
+      return `${label} · ${result.player_points}:${result.banker_points}`;
+    }
     if (result.game === "slots") {
       return result.outcome || (result.win_count ? `${result.win_count} выигрышных ways` : "Без выигрыша");
     }
@@ -3651,7 +3742,13 @@
     line1.append(el("span", "big", what));
     const line2 = el("div", "line2", result.game === "plinko"
       ? `×${Number(result.multiplier).toFixed(2)} · выплата ${money(result.payout)} · результат ${moneySigned(result.payout - result.amount)}`
-      : result.game === "slots"
+      : result.game === "baccarat"
+        ? result.result === "tie" && result.selection !== "tie"
+          ? `Ничья · ставка возвращена ${money(result.payout)}`
+          : result.win
+            ? `«${result.label}» · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (×${Number(result.odds).toFixed(2)})`
+            : `«${result.label}» · ставка проиграла · выплата ${money(result.payout)}`
+        : result.game === "slots"
         ? `${result.free_spin ? "Фри-спин" : `Ставка ${money(result.spin_bet)}`} · выплата ${money(result.payout)}${result.awarded_free_spins ? ` · +${result.awarded_free_spins} фри-спинов` : ""}${result.free_spins_remaining ? ` · осталось ${result.free_spins_remaining}` : ""}`
         : result.win
         ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
@@ -3698,11 +3795,13 @@
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
           : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
-            : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина" : "кости"));
+            : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
+              : row.game === "baccarat" ? "баккара" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
-          : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
-            : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
+          : row.game === "baccarat" ? (row.outcome === "tie" ? "ничья" : row.outcome === "player" ? "игрок" : "банкир")
+            : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
+              : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
       const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
@@ -3734,12 +3833,18 @@
         "Перед раундом выбери 8, 12 или 16 рядов и риск. Число шагов вправо определяет ячейку; чем реже ячейка, тем выше множитель. Выплата включает остаток ставки."
       ));
       box.append(el("span", "edge", "целевой RTP 95,5 % · округление монет может немного снизить фактическую отдачу"));
-    } else {
+    } else if (game === "slots") {
       box.append(el("b", null, "Слот-машина · 5 барабанов, 3 ряда, 243 ways. "));
       box.append(document.createTextNode(
         "Общая ставка за спин распределяется между 243 ways; комбинации из 3–5 одинаковых символов считаются слева направо. Scatter на любых барабанах: 3 символа дают 10, 4 — 15, 5 и более — 20 фри-спинов. Фри-спины используют ту же ставку; повторного запуска бонуса во время фри-спинов нет."
       ));
       box.append(el("span", "edge", "целевой RTP 95,5 % с учётом фри-спинов · округление выплаты до целых монет"));
+    } else {
+      box.append(el("b", null, "Баккара · Punto Banco, восемь колод. "));
+      box.append(document.createTextNode(
+        "Ближайшая к 9 сумма выигрывает. Игрок добирает на 0–5; правило добора Банкира применяется автоматически. Натуральные 8 или 9 останавливают раздачу. На ставках Игрок/Банкир при ничьей ставка возвращается."
+      ));
+      box.append(el("span", "edge", "Игрок ×2 · Банкир ×1,95 (5% комиссия) · Ничья ×9 gross (8:1 net)"));
     }
     return box;
   }
@@ -4953,7 +5058,7 @@
     const play = el("button", "btn play");
     play.id = "playBtn";
     play.type = "button";
-    play.textContent = (game === "roulette" ? "Крутить колесо" : "Бросить кости") + " · " + money(info.stake);
+    play.textContent = (game === "roulette" ? "Крутить колесо" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.stake);
     host.append(play);
 
     host.append(summaryNode());
@@ -5060,7 +5165,7 @@
     const play = $("#playBtn");
     if (play) {
       play.disabled = busy;
-      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : "Бросаем…";
+      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : state.game === "baccarat" ? "Раздаём…" : "Бросаем…";
     }
     document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => {
@@ -5117,6 +5222,7 @@
         if (game === "roulette") await spinRouletteTo(data.number);
         else if (game === "plinko") await animatePlinko(data);
         else if (game === "slots") await animateSlots(data);
+        else if (game === "baccarat") await animateBaccarat(data);
         else await rollDiceTo(data.dice);
       }
 

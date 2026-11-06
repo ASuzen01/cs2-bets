@@ -89,6 +89,7 @@
   .game-tile[data-game="crash"]{--game-accent:#8bd6b5;background:radial-gradient(ellipse at 50% 35%,#27453e,#151e29 72%)}
   .game-tile[data-game="plinko"]{--game-accent:#d9c17d;background:radial-gradient(ellipse at 50% 35%,#30423a,#151e29 72%)}
   .game-tile[data-game="slots"]{--game-accent:#e1c578;background:radial-gradient(ellipse at 50% 35%,#453925,#151e29 72%)}
+  .game-tile[data-game="baccarat"]{--game-accent:#8dc7ad;background:radial-gradient(ellipse at 50% 35%,#284238,#151e29 72%)}
   @media (max-width:360px){
     #screen-games.catalog-mode{margin:-12px -12px 0;padding:18px 12px 24px}
     .game-menu{gap:9px}
@@ -1221,3 +1222,24 @@ button:focus-visible{outline-color:#d6b66d}
 .slot-auto-count:disabled,.slot-quick-button:disabled,.slot-auto-button:disabled{opacity:.42}
 .slot-auto-info{margin-top:8px;color:#958d78;font-size:9px;line-height:1.4;text-align:center}
 @media(max-width:360px){.slot-auto-panel{padding:9px}.slot-auto-count{min-width:34px;padding:0 7px}.slot-auto-actions{gap:6px}.slot-quick-button,.slot-auto-button{font-size:9px}}
+/* Baccarat table and dealt cards */
+.baccarat-wrap{width:100%;padding:10px 3px 4px}
+.baccarat-board{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 27px minmax(0,1fr);align-items:center;gap:6px;max-width:430px;min-height:226px;margin:auto;padding:18px 10px 42px;border:1px solid rgba(195,165,95,.35);border-radius:18px;background:radial-gradient(ellipse at 50% 45%,rgba(41,91,67,.55),transparent 68%),linear-gradient(145deg,#18372d,#101b19 75%);box-shadow:inset 0 0 32px rgba(0,0,0,.4),0 9px 22px rgba(0,0,0,.23)}
+.baccarat-board::before{content:"";position:absolute;inset:8px;border:1px solid rgba(199,170,101,.12);border-radius:13px;pointer-events:none}
+.baccarat-hand{position:relative;z-index:1;display:grid;justify-items:center;gap:8px;min-width:0;padding:8px 2px 7px;border:1px solid transparent;border-radius:12px;transition:background .25s,border-color .25s,box-shadow .25s}
+.baccarat-hand.winner{border-color:rgba(219,191,112,.7);background:rgba(189,157,79,.11);box-shadow:0 0 20px rgba(214,180,92,.13)}
+.baccarat-hand-heading{color:#bcae83;font-size:9px;font-weight:900;letter-spacing:.16em;text-align:center}
+.baccarat-cards{display:flex;align-items:center;justify-content:center;gap:4px;min-height:77px}
+.baccarat-card{position:relative;display:grid;place-items:center;width:46px;height:70px;flex:0 0 46px;overflow:hidden;border:1px solid #cbb77d;border-radius:7px;background:linear-gradient(145deg,#f2ead8,#d6cdb8);box-shadow:0 4px 8px rgba(0,0,0,.35);transform-origin:center;transition:transform .22s,opacity .2s,box-shadow .2s}
+.baccarat-card.red{color:#ad403c}.baccarat-card.black{color:#252e2a}
+.baccarat-card-rank{position:absolute;top:4px;left:5px;font-family:Georgia,serif;font-size:14px;font-weight:800;line-height:1}
+.baccarat-card-suit{font-size:31px;line-height:1;text-shadow:0 1px 1px rgba(0,0,0,.12)}
+.baccarat-card.back{border-color:#bea461;background:repeating-linear-gradient(45deg,#274338 0 4px,#1d332c 4px 8px);color:#d7c17b}
+.baccarat-card.back::after{content:"";position:absolute;inset:4px;border:1px solid rgba(218,195,126,.5);border-radius:4px}
+.baccarat-card-back-mark{font-size:22px;text-shadow:0 0 9px rgba(230,205,129,.45)}
+.baccarat-card.dealing{opacity:.25;transform:translateY(-12px) rotateY(82deg);box-shadow:0 0 0 rgba(0,0,0,0)}
+.baccarat-hand-score{color:#eee1bc;font-size:12px;font-weight:850;font-variant-numeric:tabular-nums}
+.baccarat-vs{z-index:1;color:#9b8c65;font-size:8px;font-weight:900;letter-spacing:.12em;text-align:center}
+.baccarat-table-result{position:absolute;right:14px;bottom:12px;left:14px;color:#9b9279;font-size:9px;font-weight:900;letter-spacing:.18em;text-align:center}
+.baccarat-table-result.show{color:#e4d39c;text-shadow:0 0 12px rgba(221,193,113,.25)}
+@media(max-width:360px){.baccarat-board{grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:3px;padding:14px 6px 39px}.baccarat-card{width:39px;height:63px;flex-basis:39px}.baccarat-cards{gap:3px}.baccarat-hand-heading{font-size:8px}.baccarat-vs{font-size:7px}}
