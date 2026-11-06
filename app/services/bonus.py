@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import random
+import secrets
 import time
 from typing import Any, Final
 
@@ -111,7 +112,7 @@ def daily_layout(day: int | None = None) -> tuple[int, ...]:
 
 def spin(layout: tuple[int, ...] | list[int], rng: random.Random | None = None) -> tuple[int, int]:
     """Крутит колесо: (номер сектора, приз). Сектора равновероятны."""
-    index = (rng or random).randrange(len(layout))
+    index = rng.randrange(len(layout)) if rng is not None else secrets.randbelow(len(layout))
     return index, int(layout[index])
 
 

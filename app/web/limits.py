@@ -18,7 +18,7 @@ RULES: Final[dict[str, tuple[int, int]]] = {
     "/api/casino/play": (40, 60),
     "/api/wheel": (8, 60),
     "/api/bonus": (8, 60),
-    "/api/tease": (8, 60),
+    "/api/tease": (30, 60),
     "/api/quest": (30, 60),
     "/api/share": (12, 60),
     "/api/cashout": (20, 60),

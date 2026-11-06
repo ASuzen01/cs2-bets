@@ -63,6 +63,8 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # продажа ставки до старта: признак, что деньги уже вернулись
     ("bets", "cashed_out", "ALTER TABLE bets ADD COLUMN cashed_out INTEGER NOT NULL DEFAULT 0"),
     ("casino_bets", "result_json", "ALTER TABLE casino_bets ADD COLUMN result_json TEXT"),
+    ("tease_claims", "tap_count", "ALTER TABLE tease_claims ADD COLUMN tap_count INTEGER NOT NULL DEFAULT 0"),
+    ("tease_claims", "tap_at", "ALTER TABLE tease_claims ADD COLUMN tap_at INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -743,28 +745,77 @@ class Database:
             await self._bump_quest(conn, user_id, "bonus", now)
             return True, 0, await self._balance_in(conn, user_id)
 
-    async def claim_tease(self, user_id: int, amount: int, cooldown: int) -> tuple[bool, int, int]:
-        """Пасхалка за десять нажатий: тоже раз в сутки."""
+    async def tap_tease(
+        self,
+        user_id: int,
+        amount: int,
+        cooldown: int,
+        *,
+        daily_cooldown: int,
+        target: int = 10,
+        tap_window_seconds: int = 60,
+    ) -> tuple[bool, int, int, int]:
+        """Серверно считает отдельные нажатия и платит только по достижении цели."""
         now = int(time.time())
+        target = max(1, int(target))
         async with self.transaction() as conn:
-            async with conn.execute(
-                "SELECT claimed_at FROM tease_claims WHERE user_id = ?", (user_id,)
-            ) as cur:
-                row = await cur.fetchone()
-            last = int(row["claimed_at"]) if row else 0
-            if last and now - last < cooldown:
-                return False, cooldown - (now - last), await self._balance_in(conn, user_id)
+            daily = await (
+                await conn.execute("SELECT bonus_at FROM users WHERE user_id = ?", (user_id,))
+            ).fetchone()
+            last_daily = int(daily["bonus_at"]) if daily is not None else 0
+            if not last_daily or now - last_daily >= daily_cooldown:
+                raise InvalidBet("Сначала забери ежедневный бонус")
+
+            row = await (
+                await conn.execute(
+                    "SELECT claimed_at, tap_count, tap_at FROM tease_claims WHERE user_id = ?",
+                    (user_id,),
+                )
+            ).fetchone()
+            last_claim = int(row["claimed_at"]) if row else 0
+            if last_claim and now - last_claim < cooldown:
+                return (
+                    False,
+                    cooldown - (now - last_claim),
+                    await self._balance_in(conn, user_id),
+                    0,
+                )
+
+            taps = int(row["tap_count"]) if row else 0
+            last_tap = int(row["tap_at"]) if row else 0
+            if not last_tap or now - last_tap > tap_window_seconds:
+                taps = 0
+            taps += 1
+
+            if taps >= target:
+                if row:
+                    await conn.execute(
+                        "UPDATE tease_claims SET claimed_at = ?, tap_count = 0, tap_at = 0 "
+                        "WHERE user_id = ?",
+                        (now, user_id),
+                    )
+                else:
+                    await conn.execute(
+                        "INSERT INTO tease_claims (user_id, claimed_at, tap_count, tap_at) "
+                        "VALUES (?, ?, 0, 0)",
+                        (user_id, now),
+                    )
+                await self._bump_quest(conn, user_id, "bonus", now)
+                _, _, balance = await self._credit(conn, user_id, amount, "за настойчивость", now)
+                return True, 0, balance, 0
 
             if row:
                 await conn.execute(
-                    "UPDATE tease_claims SET claimed_at = ? WHERE user_id = ?", (now, user_id)
+                    "UPDATE tease_claims SET tap_count = ?, tap_at = ? WHERE user_id = ?",
+                    (taps, now, user_id),
                 )
             else:
                 await conn.execute(
-                    "INSERT INTO tease_claims (user_id, claimed_at) VALUES (?, ?)", (user_id, now)
+                    "INSERT INTO tease_claims (user_id, claimed_at, tap_count, tap_at) "
+                    "VALUES (?, 0, ?, ?)",
+                    (user_id, taps, now),
                 )
-            await self._bump_quest(conn, user_id, "bonus", now)
-            return await self._credit(conn, user_id, amount, "за настойчивость", now)
+            return False, 0, await self._balance_in(conn, user_id), taps
 
     # ---------------------------------------------------------------- задания
     async def quests_state(self, user_id: int) -> list[Any]:
@@ -916,6 +967,63 @@ class Database:
                 (user_id, str(int(user["last_seen_at"] or 0)), moment),
             )
             return int(row["id"]) if row else int(created.lastrowid or 0)
+
+    async def grant_manual_winback_ticket(
+        self, user_id: int, amount: int, now: int | None = None, ttl_seconds: int = 86400
+    ) -> tuple[int | None, str]:
+        """Админская выдача фрибета в текущую winback-кампанию, без проверки паузы.
+
+        Идемпотентна для одного периода активности: отмечает то же событие `winback`,
+        что и автоматический сервис, поэтому повторная команда и плановый тик не
+        создадут второй билет до следующего входа игрока.
+        """
+        moment = int(now if now is not None else time.time())
+        if amount <= 0 or ttl_seconds <= 0:
+            raise ValueError("amount и ttl_seconds должны быть положительными")
+
+        async with self.transaction() as conn:
+            user = await (
+                await conn.execute("SELECT last_seen_at FROM users WHERE user_id = ?", (user_id,))
+            ).fetchone()
+            if user is None:
+                return None, "not_found"
+            last_seen = int(user["last_seen_at"] or 0)
+            if last_seen <= 0:
+                return None, "no_activity"
+
+            previous = await (
+                await conn.execute(
+                    "SELECT 1 FROM events WHERE user_id = ? AND name = 'winback' "
+                    "AND payload = ? LIMIT 1",
+                    (user_id, str(last_seen)),
+                )
+            ).fetchone()
+            if previous is not None:
+                return None, "already_granted"
+
+            active_freebet = await (
+                await conn.execute(
+                    "SELECT 1 FROM tickets WHERE user_id = ? AND kind = 'single' "
+                    "AND used_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
+                    (user_id, moment),
+                )
+            ).fetchone()
+            if active_freebet is not None:
+                return None, "active_ticket"
+
+            created = await conn.execute(
+                """
+                INSERT INTO tickets (user_id, amount, source, kind, created_at, expires_at)
+                VALUES (?, ?, 'возврат (админ)', 'single', ?, ?) RETURNING id
+                """,
+                (user_id, int(amount), moment, moment + ttl_seconds),
+            )
+            row = await created.fetchone()
+            await conn.execute(
+                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, 'winback', ?, ?)",
+                (user_id, str(last_seen), moment),
+            )
+            return (int(row["id"]) if row else int(created.lastrowid or 0)), "granted"
 
     async def users_to_winback(self, now: int, absent_days: int = 3, limit: int = 500) -> list[Any]:
         """Игроки с тишиной от `absent_days` дней, не получавшие бонус в эту тишину.
@@ -1157,8 +1265,10 @@ class Database:
         played = await self._fetchone(
             "SELECT (SELECT COUNT(*) FROM bets WHERE user_id = ?)"
             " + (SELECT COUNT(*) FROM expresses WHERE user_id = ?)"
-            " + (SELECT COUNT(*) FROM casino_bets WHERE user_id = ?) AS acts",
-            (invited_id, invited_id, invited_id),
+            " + (SELECT COUNT(*) FROM casino_bets WHERE user_id = ?)"
+            " + (SELECT COUNT(*) FROM ledger WHERE user_id = ?"
+            " AND reason LIKE 'ставка%') AS acts",
+            (invited_id, invited_id, invited_id, invited_id),
         )
         if played is not None and int(played["acts"] or 0) > 0:
             return False, "Приглашение работает только до первой ставки"
@@ -1232,6 +1342,11 @@ class Database:
                 raise InvalidBet("Матч уже начался — продать нельзя")
             if str(bet["market"]) != "match":
                 raise InvalidBet("Продать можно только ставку на исход матча")
+            ticket = await (
+                await conn.execute("SELECT 1 FROM tickets WHERE bet_id = ? LIMIT 1", (bet_id,))
+            ).fetchone()
+            if ticket is not None:
+                raise InvalidBet("Ставку, оплаченную фрибетом, продать нельзя")
 
             refund = round(int(bet["amount"]) * rate)
             await conn.execute(

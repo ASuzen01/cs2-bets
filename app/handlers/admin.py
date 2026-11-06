@@ -4,6 +4,7 @@
 У админа остаются только служебные команды и подтверждение исходов:
 
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
+    /winback 123456789     — вручную выдать фрибет 300 на 24 часа
     /players               — список игроков с id, чтобы знать кому начислять
     /maps                  — карты, которые не удалось рассчитать автоматически
     /cleanup [часов]       — рассчитать зависшие матчи, остальные отменить с возвратом
@@ -34,6 +35,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
 from app.db.database import BACKUP_TABLES, BackupError
+from app.services import winback
 from app.services.backup import (
     BackupService,
     decode,
@@ -133,6 +135,63 @@ async def cmd_grant(message: Message, command: CommandObject, db: Database) -> N
     await message.reply(
         f"Начислено {texts.money(amount)} игроку <b>{name}</b> (<code>{user_id}</code>).\n"
         f"Его баланс: <b>{texts.money(balance)}</b>"
+    )
+
+
+@router.message(Command("winback"))
+async def cmd_winback(message: Message, command: CommandObject, db: Database) -> None:
+    """Вручную выдать адресный фрибет, минуя только условие трёх дней."""
+    args = (command.args or "").split()
+    if len(args) != 1 or not args[0].isdigit():
+        await message.reply(
+            "Формат: <code>/winback 5004062791</code> — выдать игроку фрибет 300 на 24 часа."
+        )
+        return
+
+    user_id = int(args[0])
+    if user_id <= 0 or user_id > 2**63 - 1:
+        await message.reply("Укажи корректный положительный Telegram ID.")
+        return
+
+    user = await db.find_user(str(user_id))
+    if user is None:
+        await message.reply(f"Игрок <code>{user_id}</code> не найден в базе.")
+        return
+
+    amount = winback.freebet_amount()
+    ticket_id, status = await db.grant_manual_winback_ticket(
+        user_id, amount, ttl_seconds=winback.TTL_HOURS * 3600
+    )
+    if status != "granted" or ticket_id is None:
+        messages = {
+            "already_granted": "Фрибет уже выдавался за текущий период активности; повторно не начисляю.",
+            "active_ticket": "У игрока уже есть действующий неиспользованный билет-ординар.",
+            "no_activity": "В базе нет отметки о входе игрока — фрибет не выдан.",
+            "not_found": "Игрок не найден в базе.",
+        }
+        await message.reply(messages.get(status, "Не удалось выдать фрибет."))
+        return
+
+    try:
+        await callback_bot(message).send_message(
+            user_id,
+            f"Тебе зачислен фрибет {amount} монет! Он доступен в профиле и действует "
+            f"{winback.TTL_HOURS} часа. Поставь его целиком на любой ординар в линии.\n\n"
+            "виртуальные монеты · без реальных ставок",
+            reply_markup=keyboards.app_kb(),
+        )
+    except Exception as exc:
+        log.warning("Фрибет #%s выдан игроку %s, но сообщение не отправлено: %s",
+                    ticket_id, user_id, exc)
+        await message.reply(
+            f"Фрибет {amount} выдан (билет #{ticket_id}), но сообщение отправить не удалось."
+        )
+        return
+
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else "игрок")
+    await message.reply(
+        f"Фрибет {amount} на 24 часа выдан игроку {name} (<code>{user_id}</code>), "
+        f"билет #{ticket_id}. Уведомление отправлено."
     )
 
 

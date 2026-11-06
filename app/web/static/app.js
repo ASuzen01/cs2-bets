@@ -2762,30 +2762,30 @@
       claimBonus();
       return;
     }
-    state.teaseTaps += 1;
     haptic();
-    if (state.teaseTaps >= (state.bonus.wheel.tease_taps || 10)) {
-      state.teaseTaps = 0;
-      claimTease();
-      return;
-    }
-    if (state.teaseTaps === 1) {
-      // первый тап в ожидании: человек должен понять, что кнопка живая, и когда ждать
-      toast(`Бонус уже получен — следующий через ${waitText(state.bonus.daily.wait_seconds)}`);
-    }
+    tapTease();
   }
 
-  async function claimTease() {
+  async function tapTease() {
     try {
       const data = await api("/api/tease", { method: "POST" });
+      state.teaseTaps = Number(data.progress || 0);
       if (data.claimed) {
+        state.teaseTaps = 0;
         setBalance(data.balance);
         haptic("ok");
         toast("заебал, лови полтос на ход ноги 🩴", "ok");
         state.bonus.tease.available = false;
         state.bonus.tease.wait_seconds = data.wait_seconds || 24 * 3600;
-      } else {
+      } else if (data.wait_seconds) {
+        state.teaseTaps = 0;
         toast(`Уже получал сегодня. Следующий через ${waitText(data.wait_seconds)}`, "bad");
+      } else if (state.teaseTaps === 1) {
+        // Сервер подтвердил первый тап и сам хранит оставшийся прогресс.
+        toast(`Бонус уже получен — следующий через ${waitText(state.bonus.daily.wait_seconds)}`);
+      } else {
+        const left = Math.max(0, Number(data.target || 10) - state.teaseTaps);
+        toast(`Ещё ${left} нажатий для пасхалки`);
       }
       renderBonus();
     } catch (err) {

@@ -134,6 +134,13 @@ async def test_paid_wheel_charges_and_pays(db: Database) -> None:
     assert ok is True and balance == 1000        # пустой сектор: минус сотка
 
 
+def test_wheel_default_rng_uses_cryptographic_randomness(monkeypatch) -> None:
+    from app.services import bonus
+
+    monkeypatch.setattr(bonus.secrets, "randbelow", lambda upper: upper - 1)
+    assert bonus.spin((10, 20, 30)) == (2, 30)
+
+
 async def test_paid_wheel_requires_money(db: Database) -> None:
     ok, _, balance = await db.claim_paid_wheel(1, 5000, WHEEL_JACKPOT)
     assert ok is False
@@ -147,11 +154,25 @@ async def test_paid_wheel_does_not_use_free_spin(db: Database) -> None:
     assert state["wheel"]["wait_seconds"] == 0
 
 
-async def test_tease_once_per_day(db: Database) -> None:
-    ok, _, balance = await db.claim_tease(1, TEASE_PRIZE, 24 * 3600)
-    assert ok is True and balance == 1050
-    again, wait, _ = await db.claim_tease(1, TEASE_PRIZE, 24 * 3600)
-    assert again is False and wait > 0
+async def test_tease_requires_daily_claim_and_ten_server_taps(db: Database) -> None:
+    daily, _, balance = await db.daily_bonus(1, 250, 24 * 3600)
+    assert daily is True and balance == 1250
+
+    for index in range(9):
+        claimed, wait, balance, progress = await db.tap_tease(
+            1, TEASE_PRIZE, 24 * 3600, daily_cooldown=24 * 3600
+        )
+        assert claimed is False and wait == 0 and progress == index + 1
+        assert balance == 1250
+    claimed, wait, balance, progress = await db.tap_tease(
+        1, TEASE_PRIZE, 24 * 3600, daily_cooldown=24 * 3600
+    )
+    assert claimed is True and wait == 0 and progress == 0 and balance == 1300
+
+    again, wait, balance, progress = await db.tap_tease(
+        1, TEASE_PRIZE, 24 * 3600, daily_cooldown=24 * 3600
+    )
+    assert again is False and wait > 0 and balance == 1300 and progress == 0
 
 
 async def test_bonus_state_reports_windows(db: Database) -> None:

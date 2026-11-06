@@ -836,11 +836,15 @@ async def api_stats(request: web.Request) -> web.Response:
 
 
 async def api_tease(request: web.Request) -> web.Response:
-    """Пасхалка: десять нажатий на бонус — полтос на ход ноги."""
+    """Одно нажатие на бонус; сервер сам считает десять нажатий и выдаёт приз."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
-    claimed, wait_seconds, balance = await db.claim_tease(
-        user_id, TEASE_PRIZE, settings.tease_cooldown_hours * 3600
+    claimed, wait_seconds, balance, progress = await db.tap_tease(
+        user_id,
+        TEASE_PRIZE,
+        settings.tease_cooldown_hours * 3600,
+        daily_cooldown=settings.bonus_cooldown_hours * 3600,
+        target=TEASE_TAPS,
     )
     return web.json_response(
         {
@@ -848,6 +852,8 @@ async def api_tease(request: web.Request) -> web.Response:
             "claimed": claimed,
             "amount": TEASE_PRIZE if claimed else 0,
             "wait_seconds": wait_seconds,
+            "progress": progress,
+            "target": TEASE_TAPS,
             "balance": balance,
         }
     )

@@ -33,7 +33,9 @@ async def _seed(db: Database) -> None:
     )
     await db.place_map_bet(int(card["id"]), 2, None, "b", 100)
     await db.claim_wheel(1, 200, 24 * 3600)
-    await db.claim_tease(1, 50, 24 * 3600)
+    await db.daily_bonus(1, 250, 24 * 3600)
+    for _ in range(10):
+        await db.tap_tease(1, 50, 24 * 3600, daily_cooldown=24 * 3600)
     await db.add_ticket(1, 100, kind="express")
     await db.set_meta("last_sync_at", "1780000000")
 

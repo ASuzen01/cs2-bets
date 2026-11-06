@@ -302,3 +302,48 @@ async def test_existing_live_single_ticket_blocks_another_grant(db: Database) ->
     assert await winback.notify_once(bot, db) == 0
     assert bot.sent == []
     assert len(await db.tickets(USER["id"])) == 1
+
+
+async def test_admin_winback_grants_to_recent_user_and_suppresses_auto_grant(db: Database) -> None:
+    now = int(time.time())
+
+    ticket_id, status = await db.grant_manual_winback_ticket(
+        USER["id"], 300, now=now, ttl_seconds=24 * 3600
+    )
+
+    assert status == "granted"
+    assert ticket_id is not None
+    tickets = await db.tickets(USER["id"], kind="single")
+    assert len(tickets) == 1
+    assert int(tickets[0]["amount"]) == 300
+    assert str(tickets[0]["source"]) == "возврат (админ)"
+    assert int(tickets[0]["expires_at"]) - int(tickets[0]["created_at"]) == 24 * 3600
+
+    # Админская выдача отмечена как winback за этот период: автоцикл не продублирует её.
+    assert await db.users_to_winback(now + 4 * 86400) == []
+
+
+async def test_admin_winback_is_idempotent_for_same_activity_period(db: Database) -> None:
+    now = int(time.time())
+    ticket_id, status = await db.grant_manual_winback_ticket(USER["id"], 300, now=now)
+    assert status == "granted"
+    assert ticket_id is not None
+
+    await db._write("UPDATE tickets SET used_at = ? WHERE id = ?", (now + 1, ticket_id))
+    second_id, second_status = await db.grant_manual_winback_ticket(
+        USER["id"], 300, now=now + 2
+    )
+
+    assert second_id is None
+    assert second_status == "already_granted"
+    assert len(await db.tickets(USER["id"], kind="single")) == 0
+
+
+async def test_admin_winback_does_not_stack_an_active_single_ticket(db: Database) -> None:
+    await db.add_ticket(USER["id"], 300, "предыдущий бонус", kind="single", ttl_seconds=24 * 3600)
+
+    ticket_id, status = await db.grant_manual_winback_ticket(USER["id"], 300)
+
+    assert ticket_id is None
+    assert status == "active_ticket"
+    assert len(await db.tickets(USER["id"], kind="single")) == 1

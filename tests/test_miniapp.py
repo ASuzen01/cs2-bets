@@ -447,3 +447,74 @@ async def test_unexpected_errors_do_not_leak_exception_details(
     assert response.status == 500
     assert "secret backend detail" not in body
     assert "Внутренняя ошибка" in (await response.json())["error"]
+
+
+async def test_ticket_funded_bet_cannot_be_cashed_out(
+    client: TestClient, match, db: Database
+) -> None:
+    ticket_id = await db.add_ticket(
+        USER["id"], 300, "возврат", kind="single", ttl_seconds=86400
+    )
+    before = await db.get_balance(USER["id"])
+    placed = await client.post(
+        "/api/bet",
+        json={
+            "match_id": int(match["id"]), "side": "a", "amount": 300,
+            "ticket_id": ticket_id, "token": "ticket-cashout-check",
+        },
+    )
+    assert placed.status == 200
+    assert (await placed.json())["balance"] == before
+
+    bets = await db.user_bets_all(USER["id"])
+    cashout = await client.post("/api/cashout", json={"bet_id": int(bets[0]["id"])})
+    payload = await cashout.json()
+
+    assert cashout.status == 400
+    assert "фрибетом" in payload["error"].lower()
+    assert await db.get_balance(USER["id"]) == before
+    refreshed = await db.user_bets_all(USER["id"])
+    assert refreshed[0]["cashed_out"] == 0
+
+
+async def test_referral_cannot_be_attached_after_active_ladder_wager(
+    client: TestClient, db: Database
+) -> None:
+    inviter_id = 779
+    await db.upsert_user(inviter_id, "inviter", "Пригласивший")
+    start = await client.post("/api/ladder/start", json={"amount": 10})
+    assert start.status == 200
+
+    attached = await client.post("/api/referral", json={"code": f"ref_{inviter_id}"})
+    payload = await attached.json()
+
+    assert attached.status == 400
+    assert "первой ставки" in payload["error"].lower()
+    assert await db._fetchone(
+        "SELECT 1 FROM referrals WHERE invited_id = ?", (USER["id"],)
+    ) is None
+
+
+async def test_tease_requires_daily_bonus_and_ten_server_taps(
+    client: TestClient, db: Database
+) -> None:
+    bypass = await client.post("/api/tease")
+    assert bypass.status == 400
+    assert await db.get_balance(USER["id"]) == 1000
+
+    daily = await client.post("/api/bonus")
+    assert (await daily.json())["received"] is True
+    first = await client.post("/api/tease")
+    first_payload = await first.json()
+    assert first_payload["claimed"] is False
+    assert first_payload["progress"] == 1
+
+    for _ in range(8):
+        response = await client.post("/api/tease")
+        assert (await response.json())["claimed"] is False
+    final = await client.post("/api/tease")
+    final_payload = await final.json()
+
+    assert final_payload["claimed"] is True
+    assert final_payload["amount"] == 50
+    assert await db.get_balance(USER["id"]) == 1000 + settings.daily_bonus + 50
