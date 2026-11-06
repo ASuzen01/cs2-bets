@@ -3673,7 +3673,47 @@
   function crashReadout() {
     const game = state.crash;
     if (!game || game.status !== "flying") return 1;
-    return Math.floor(Math.exp(0.16 * Math.max(0, Date.now() / 1000 - Number(game.started_at))) * 100) / 100;
+    const elapsed = Math.max(0, Date.now() / 1000 - Number(game.started_at));
+    const raw = elapsed >= Math.log(1_000_000) / 0.16 ? 1_000_000 : Math.exp(0.16 * elapsed);
+    return Math.floor(raw * 100) / 100;
+  }
+
+  function crashFlightScene(withPlane) {
+    const svg = svgNode("svg", {
+      class: "crash-flight-svg", viewBox: "0 0 360 220", preserveAspectRatio: "none",
+      "aria-hidden": "true",
+    });
+    const defs = svgNode("defs");
+    const gradient = svgNode("linearGradient", { id: "crash-flying-plane-g", x1: "0", y1: "0", x2: "1", y2: "1" });
+    gradient.append(
+      svgNode("stop", { offset: "0", "stop-color": "#fff3d1" }),
+      svgNode("stop", { offset: ".55", "stop-color": "#d7c18b" }),
+      svgNode("stop", { offset: "1", "stop-color": "#9a7942" })
+    );
+    defs.append(gradient);
+    svg.append(defs);
+    const pathData = "M30 187 C74 184 76 151 119 153 C163 155 164 122 207 123 C249 124 250 87 289 86 C316 85 322 52 344 28";
+    svg.append(svgNode("path", { d: pathData, class: "crash-trajectory" }));
+    const progressPath = svgNode("path", {
+      d: pathData, class: "crash-trajectory-progress", id: "crashTrajectoryProgress",
+      pathLength: "100", "stroke-dasharray": "100", "stroke-dashoffset": "100",
+    });
+    svg.append(progressPath);
+    if (withPlane) {
+      const plane = svgNode("g", { id: "crashPlane", class: "crash-plane-svg" });
+      plane.append(
+        svgNode("path", {
+          d: "M-22-.8 Q-15-1.5-8-3 L1-5 6-14 Q7-16 9-14 L6-3 18-1.2 Q22 0 18 1.2L6 3 9 14Q7 16 6 14L1 5-8 3Q-15 1.5-22 .8Z",
+          fill: "url(#crash-flying-plane-g)", stroke: "#fff0c7", "stroke-width": ".9",
+        }),
+        svgNode("path", { d: "M-17 0H16", fill: "none", stroke: "#fff8e7", "stroke-width": ".7", opacity: ".8" }),
+        svgNode("path", { d: "M8-1.7Q12 0 8 1.7L4 1 5-1Z", fill: "#33414a", stroke: "#ddc99a", "stroke-width": ".55" }),
+        svgNode("rect", { x: "-1.5", y: "-10.5", width: "4", height: "5", rx: "1.7", fill: "#6d695a", stroke: "#e8d5a5", "stroke-width": ".55" }),
+        svgNode("rect", { x: "-1.5", y: "5.5", width: "4", height: "5", rx: "1.7", fill: "#6d695a", stroke: "#e8d5a5", "stroke-width": ".55" })
+      );
+      svg.append(plane);
+    }
+    return svg;
   }
 
   function updateCrashFlight() {
@@ -3682,11 +3722,18 @@
     if (!game || game.status !== "flying" || !display) return;
     const value = crashReadout();
     display.textContent = `×${value.toFixed(2)}`;
+    const trajectory = $("#crashTrajectoryProgress");
     const plane = $("#crashPlane");
-    if (plane) {
-      const progress = Math.min(1, Math.log(Math.max(1, value)) / Math.log(25));
-      plane.style.left = `${8 + progress * 77}%`;
-      plane.style.bottom = `${12 + progress * 62}%`;
+    const path = $(".crash-trajectory");
+    if (trajectory && plane && path) {
+      const progress = Math.min(0.995, Math.max(0, Math.log(Math.max(1, value)) / Math.log(50)));
+      const length = path.getTotalLength();
+      const distance = length * progress;
+      const point = path.getPointAtLength(distance);
+      const next = path.getPointAtLength(Math.min(length, distance + 1.5));
+      const angle = Math.atan2(next.y - point.y, next.x - point.x) * 180 / Math.PI;
+      plane.setAttribute("transform", `translate(${point.x} ${point.y}) rotate(${angle}) scale(.58)`);
+      trajectory.style.strokeDashoffset = String(100 * (1 - progress));
     }
     const payout = $("#crashPotential");
     if (payout) payout.textContent = money(Math.floor(Number(game.stake) * value));
@@ -3740,20 +3787,15 @@
     const card = el("section", "crash-card" + (flying ? " in-flight" : ""));
     card.append(el("div", "crash-kicker", "КАССА · ИГРА НА ВЫЛЕТ"));
     card.append(el("h2", "crash-title", "Самолётик"));
-    card.append(el("p", "crash-copy", "Ракетка набирает высоту вместе с множителем. Забери выплату до того, как самолёт улетит."));
+    card.append(el("p", "crash-copy", "Множитель растёт, пока самолёт в полёте. Забери выплату до того, как он улетит."));
 
     const stage = el("div", "crash-stage" + (flying ? " live" : "") + (game && game.status === "crashed" ? " crashed" : ""));
     const sky = el("div", "crash-stars");
-    stage.append(sky);
-    const flightPath = el("div", "crash-path");
-    stage.append(flightPath);
+    stage.append(sky, crashFlightScene(flying));
     if (flying) {
       const multiplier = el("div", "crash-multiplier", `×${crashReadout().toFixed(2)}`);
       multiplier.id = "crashMultiplier";
       stage.append(multiplier);
-      const plane = el("div", "crash-plane", "✈");
-      plane.id = "crashPlane";
-      stage.append(plane);
       const timer = el("div", "crash-stage-caption", "ПОЛЁТ ИДЁТ · РЕШЕНИЕ ЗА ТОБОЙ");
       stage.append(timer);
     } else if (game && game.status === "crashed") {

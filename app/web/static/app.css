@@ -1105,11 +1105,13 @@ button:focus-visible{outline-color:#d6b66d}
 .crash-stage::before,.crash-stage::after{content:"";position:absolute;z-index:-1;border:1px solid rgba(210,190,132,.1);border-radius:50%;transform:rotate(-29deg)}
 .crash-stage::before{width:340px;height:120px;left:-58px;bottom:-74px}.crash-stage::after{width:390px;height:156px;left:-75px;bottom:-99px}
 .crash-stars{position:absolute;inset:0;opacity:.5;background-image:radial-gradient(circle at 14% 21%,#e5d6a4 0 1px,transparent 1.6px),radial-gradient(circle at 37% 44%,#ded3b5 0 1px,transparent 1.6px),radial-gradient(circle at 84% 18%,#e8d9ad 0 1.2px,transparent 1.8px),radial-gradient(circle at 58% 72%,#d5c9a5 0 1px,transparent 1.6px)}
-.crash-path{position:absolute;left:9%;right:8%;bottom:15%;height:57%;border-left:2px solid transparent;border-top:2px solid rgba(130,196,155,.72);border-radius:60% 0 0 0;transform:skewY(-34deg);filter:drop-shadow(0 0 7px rgba(116,205,151,.3));opacity:.8}
+.crash-flight-svg{position:absolute;inset:0;z-index:1;width:100%;height:100%;overflow:visible;pointer-events:none}
+.crash-trajectory{fill:none;stroke:rgba(130,196,155,.26);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.crash-trajectory-progress{fill:none;stroke:#83d0a8;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px rgba(116,205,151,.48))}
+.crash-plane-svg{filter:drop-shadow(0 2px 4px rgba(224,201,143,.62))}
 .crash-multiplier,.crash-result-x{position:absolute;left:0;right:0;top:32%;z-index:2;text-align:center;color:#f0d89b;font-family:Georgia,serif;font-size:clamp(42px,13vw,58px);font-weight:700;line-height:1;letter-spacing:-.04em;text-shadow:0 2px 20px rgba(232,202,134,.2);font-variant-numeric:tabular-nums}
 .crash-stage.live .crash-multiplier{animation:crashGlow 2s ease-in-out infinite alternate}
 @keyframes crashGlow{from{text-shadow:0 2px 12px rgba(232,202,134,.12)}to{text-shadow:0 2px 24px rgba(232,202,134,.38)}}
-.crash-plane{position:absolute;z-index:3;left:8%;bottom:12%;color:#f1dfb1;font-size:26px;line-height:1;filter:drop-shadow(0 3px 8px rgba(219,198,145,.4));transform:rotate(-22deg);transition:left .15s linear,bottom .15s linear}
 .crash-stage-caption{position:absolute;left:10px;right:10px;bottom:13px;text-align:center;color:#a89d7d;font-size:8px;font-weight:900;letter-spacing:.17em}
 .crash-idle-mark{position:absolute;left:0;right:0;top:27%;text-align:center;color:#d7c28d;font-size:39px;transform:rotate(-12deg);opacity:.82}
 .crash-idle-title,.crash-settled-label{position:absolute;left:0;right:0;top:54%;text-align:center;color:#d6c698;font-size:10px;font-weight:900;letter-spacing:.18em}
