@@ -123,3 +123,17 @@ async def test_empty_token_means_no_idempotency(db: Database) -> None:
     await db.place_bet(match_id, 1, None, "a", 100)
 
     assert await db.get_balance(1) == 800
+
+
+async def test_map_bet_is_idempotent(db: Database) -> None:
+    match = await _match(db, start_in=3600)
+    card, _ = await db.upsert_map(
+        match_id=int(match["id"]), fonbet_id=424_240, map_number=1, odds_a=2.0, odds_b=2.0
+    )
+
+    first = await db.place_map_bet(int(card["id"]), 1, None, "a", 100, token="map-once")
+    repeat = await db.place_map_bet(int(card["id"]), 1, None, "a", 100, token="map-once")
+
+    assert first == repeat == (900, 2.0)
+    assert await db.get_balance(1) == 900
+    assert len(await db.user_bets_all(1)) == 1

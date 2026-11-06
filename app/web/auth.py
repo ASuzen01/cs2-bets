@@ -66,10 +66,23 @@ async def auth_middleware(request: web.Request, handler):
     return await handler(request)
 
 
+def _metrics_route(request: web.Request) -> str:
+    """Low-cardinality route label; never put attacker-controlled URLs in metrics."""
+    if getattr(request.match_info, "http_exception", None) is not None:
+        return "unmatched"
+    route = request.match_info.route
+    resource = getattr(route, "resource", None)
+    canonical = getattr(resource, "canonical", None)
+    if isinstance(canonical, str) and canonical.startswith("/"):
+        return canonical
+    return "unmatched"
+
+
 @web.middleware
 async def json_error_middleware(request: web.Request, handler):
     """Единый формат ошибок: игровые — 400, остальные — 500 без падения сервера."""
-    metrics.count_request(request.path)
+    route_label = _metrics_route(request)
+    metrics.count_request(route_label)
     try:
         response = await handler(request)
     except web.HTTPException:
@@ -77,12 +90,12 @@ async def json_error_middleware(request: web.Request, handler):
     except BettingError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
     except Exception as exc:
-        metrics.count_error(request.path)
-        log.exception("Ошибка мини-приложения на %s", request.path)
-        await _alert(request.app, request.path, exc)
-        return web.json_response({"ok": False, "error": f"Внутренняя ошибка: {exc}"}, status=500)
+        metrics.count_error(route_label)
+        log.exception("Ошибка мини-приложения на %s", route_label)
+        await _alert(request.app, route_label, exc)
+        return web.json_response({"ok": False, "error": "Внутренняя ошибка. Попробуйте позже."}, status=500)
     if isinstance(response, web.Response) and response.status >= 500:
-        metrics.count_error(request.path)
+        metrics.count_error(route_label)
     return response
 
 

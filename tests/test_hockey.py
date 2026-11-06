@@ -211,6 +211,21 @@ async def test_bet_on_regulation_and_money_flow(db: Database) -> None:
     assert await db.get_balance(1) == 1320
 
 
+async def test_hockey_bet_is_idempotent(db: Database) -> None:
+    match = await _hockey_match(db)
+
+    first = await db.place_hockey_bet(
+        int(match["id"]), 1, None, "reg", "x", 100, token="hockey-once"
+    )
+    repeat = await db.place_hockey_bet(
+        int(match["id"]), 1, None, "reg", "x", 100, token="hockey-once"
+    )
+
+    assert first == repeat == (900, 4.2)
+    assert await db.get_balance(1) == 900
+    assert len(await db.user_bets_all(1)) == 1
+
+
 async def test_final_bet_wins_when_team_wins_in_overtime(db: Database) -> None:
     """Ставка «победа в матче» на команду, которая выиграла только в овертайме."""
     match = await _hockey_match(db)

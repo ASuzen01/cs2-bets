@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from app.db import Database, InsufficientFunds
@@ -45,6 +47,34 @@ ROULETTE_SELECTIONS = [
     "straight:17",
     "straight:36",
 ]
+
+
+async def test_legacy_casino_table_gets_result_json_migration(tmp_path) -> None:
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE casino_bets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                game TEXT NOT NULL,
+                selection TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                odds REAL NOT NULL,
+                outcome TEXT NOT NULL,
+                win INTEGER NOT NULL,
+                payout INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )"""
+        )
+
+    db = Database(path)
+    await db.connect()
+    try:
+        columns = await db.conn.table_columns("casino_bets")
+        assert "result_json" in columns
+    finally:
+        await db.close()
 
 
 def _roulette_expectation(selection: str) -> float:

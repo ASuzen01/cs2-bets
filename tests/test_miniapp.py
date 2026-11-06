@@ -9,6 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from app.config import settings
 from app.db import Database
+from app.services import games
 from app.services.miniapp import AuthError, sign_init_data, validate_init_data
 from app.web.server import build_app
 
@@ -344,3 +345,105 @@ async def test_active_bets_include_football(client: TestClient, match, db: Datab
     assert len(payload["bets"]) == 2
     # и исход CS2, и рынок футбола подписаны по-человечески
     assert {b["label"] for b in payload["bets"]} == {"Aurora", "ТБ 2.5"}
+
+
+async def test_map_bet_retry_with_same_token_charges_once(
+    client: TestClient, match, db: Database
+) -> None:
+    card, _ = await db.upsert_map(
+        match_id=int(match["id"]), fonbet_id=55_555, map_number=1, odds_a=2.0, odds_b=2.0
+    )
+    body = {
+        "match_id": int(match["id"]), "market": "map", "map_id": int(card["id"]),
+        "side": "a", "amount": 100, "token": "map-api-once",
+    }
+
+    first = await client.post("/api/bet", json=body)
+    repeat = await client.post("/api/bet", json=body)
+
+    assert first.status == repeat.status == 200
+    assert (await first.json())["balance"] == 900
+    assert (await repeat.json())["balance"] == 900
+    assert await db.get_balance(USER["id"]) == 900
+    assert len(await db.user_bets_all(USER["id"])) == 1
+
+
+async def test_football_first_bet_pays_referral_and_retry_is_idempotent(
+    client: TestClient, db: Database
+) -> None:
+    inviter_id = 778
+    await db.upsert_user(inviter_id, "inviter", "Пригласивший")
+    attached, error = await db.attach_referral(USER["id"], inviter_id)
+    assert attached and not error
+    football, _ = await db.upsert_match(
+        fonbet_id=558,
+        tournament="Лига Чемпионов УЕФА. Общий этап",
+        team_a="Лейпциг",
+        team_b="Манчестер Сити",
+        start_time=int(time.time()) + 3600,
+        odds_a=5.3,
+        odds_x=4.9,
+        odds_b=1.53,
+        sport="football",
+    )
+    body = {
+        "match_id": int(football["id"]), "side": "f:total:over:2.5",
+        "amount": 100, "token": "football-api-once",
+    }
+
+    first = await client.post("/api/bet", json=body)
+    repeat = await client.post("/api/bet", json=body)
+
+    assert first.status == repeat.status == 200
+    assert isinstance((await first.json())["new_achievements"], list)
+    assert len(await db.user_bets_all(USER["id"])) == 1
+    assert await db.get_balance(USER["id"]) == 1000 - 100 + settings.referral_welcome
+    assert await db.get_balance(inviter_id) == 1000 + settings.referral_bonus
+    referral = await db._fetchone("SELECT paid_at FROM referrals WHERE invited_id = ?", (USER["id"],))
+    assert referral["paid_at"] is not None
+
+
+async def test_casino_retry_returns_original_random_result(
+    client: TestClient, db: Database, monkeypatch
+) -> None:
+    outcomes = iter((0, 1))
+    monkeypatch.setattr(games, "spin_roulette", lambda: next(outcomes))
+    body = {"game": "roulette", "selection": "red", "amount": 100, "token": "roulette-once"}
+
+    first = await client.post("/api/casino/play", json=body)
+    repeat = await client.post("/api/casino/play", json=body)
+    first_payload, repeat_payload = await first.json(), await repeat.json()
+
+    assert first_payload["number"] == repeat_payload["number"] == 0
+    assert first_payload["win"] == repeat_payload["win"] is False
+    assert first_payload["payout"] == repeat_payload["payout"] == 0
+    assert await db.get_balance(USER["id"]) == 900
+    assert len(await db.casino_history(USER["id"])) == 1
+
+
+async def test_oversized_integer_is_rejected_as_client_error(
+    client: TestClient, match
+) -> None:
+    response = await client.post(
+        "/api/bet",
+        json={"match_id": int(match["id"]), "side": "a", "amount": 10**100},
+    )
+    assert response.status == 400
+    assert "SQLite" not in (await response.text())
+
+
+async def test_unexpected_errors_do_not_leak_exception_details(
+    client: TestClient, match, db: Database, monkeypatch
+) -> None:
+    async def fail(*args, **kwargs):
+        raise RuntimeError("secret backend detail")
+
+    monkeypatch.setattr(db, "place_bet", fail)
+    response = await client.post(
+        "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 100}
+    )
+    body = await response.text()
+
+    assert response.status == 500
+    assert "secret backend detail" not in body
+    assert "Внутренняя ошибка" in (await response.json())["error"]

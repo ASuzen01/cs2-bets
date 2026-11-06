@@ -303,6 +303,21 @@ async def test_football_markets_visible_and_bettable(db) -> None:
     assert _add_match_dupe == match_id
 
 
+async def test_football_bet_is_idempotent(db: Database) -> None:
+    match_id = await _add_match(db)
+
+    first = await db.place_football_bet(
+        match_id, 1, None, "total", "over:2.5", 100, token="football-once"
+    )
+    repeat = await db.place_football_bet(
+        match_id, 1, None, "total", "over:2.5", 100, token="football-once"
+    )
+
+    assert first == repeat
+    assert await db.get_balance(1) == 900
+    assert len(await db.user_bets_all(1)) == 1
+
+
 async def test_football_settlement_pays_winners_and_refunds_void(db) -> None:
     match_id = await _add_match(db)
 

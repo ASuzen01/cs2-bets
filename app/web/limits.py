@@ -92,6 +92,11 @@ class Metrics:
     def count_bonus(self) -> None:
         self.bonuses += 1
 
+    @staticmethod
+    def _label(value: str) -> str:
+        """Escape a Prometheus text-format label value."""
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
     def text(self) -> str:
         """Формат Prometheus-подобный: читается глазами и парсится мониторингом."""
         lines = [
@@ -108,9 +113,9 @@ class Metrics:
             f"app_bonuses_total {self.bonuses}",
         ]
         for path, count in sorted(self.by_path.items()):
-            lines.append(f'app_requests_by_path_total{{path="{path}"}} {count}')
+            lines.append(f'app_requests_by_path_total{{path="{self._label(path)}"}} {count}')
         for path, count in sorted(self.errors_by_path.items()):
-            lines.append(f'app_errors_by_path_total{{path="{path}"}} {count}')
+            lines.append(f'app_errors_by_path_total{{path="{self._label(path)}"}} {count}')
         return "\n".join(lines) + "\n"
 
 

@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import Database
 from app.db.database import bonus_amount
 from app.services.quests import by_code, day_number, quests_of_day
-from app.web.limits import RateLimiter, metrics
+from app.web.limits import Metrics, RateLimiter, metrics
 from app.web.server import build_app
 
 USER = {"id": 777, "first_name": "Антон", "username": "sap"}
@@ -234,6 +234,20 @@ async def test_metrics_and_health(client: TestClient) -> None:
     assert health["db"] == "ok"
     assert "feed_stale" in health
     assert metrics.requests > 0
+
+
+async def test_metrics_aggregate_unmatched_paths(client: TestClient) -> None:
+    attacker_paths = [f"/api/not-a-route-{index}" for index in range(6)]
+    for path in attacker_paths:
+        response = await client.get(path)
+        assert response.status == 404
+
+    assert all(path not in metrics.by_path for path in attacker_paths)
+    assert metrics.by_path["unmatched"] >= len(attacker_paths)
+
+    body = await (await client.get("/metrics")).text()
+    assert all(path not in body for path in attacker_paths)
+    assert Metrics._label('quote"\\line\nnext') == 'quote\\"\\\\line\\nnext'
 
 
 async def test_quests_and_stats_endpoints(client: TestClient, db: Database) -> None:

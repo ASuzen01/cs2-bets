@@ -62,6 +62,7 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("matches", "reg_b", "ALTER TABLE matches ADD COLUMN reg_b INTEGER"),
     # продажа ставки до старта: признак, что деньги уже вернулись
     ("bets", "cashed_out", "ALTER TABLE bets ADD COLUMN cashed_out INTEGER NOT NULL DEFAULT 0"),
+    ("casino_bets", "result_json", "ALTER TABLE casino_bets ADD COLUMN result_json TEXT"),
 )
 
 
@@ -1280,6 +1281,7 @@ class Database:
         won: bool,
         payout: int,
         token: str | None = None,
+        response: dict[str, Any] | None = None,
     ) -> tuple[int, int]:
         """Проводит раунд рулетки/костей: списывает ставку, пишет историю, платит выигрыш.
 
@@ -1317,8 +1319,9 @@ class Database:
             inserted = await conn.execute(
                 """
                 INSERT INTO casino_bets
-                    (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (user_id, game, selection, label, amount, odds, outcome, win, payout,
+                     result_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
@@ -1330,6 +1333,8 @@ class Database:
                     outcome,
                     1 if won else 0,
                     payout,
+                    json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+                    if response is not None else None,
                     now,
                 ),
             )
@@ -2067,6 +2072,20 @@ class Database:
             (user_id, limit),
         )
 
+    async def casino_round_response(self, user_id: int, round_id: int) -> dict[str, Any] | None:
+        """Полный исход обычного казино-раунда для идемпотентного HTTP-повтора."""
+        row = await self._fetchone(
+            "SELECT result_json FROM casino_bets WHERE id = ? AND user_id = ?",
+            (round_id, user_id),
+        )
+        if row is None or not row["result_json"]:
+            return None
+        try:
+            result = json.loads(str(row["result_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return result if isinstance(result, dict) else None
+
     async def casino_summary(self, user_id: int) -> Any:
         """Сводка по играм: раундов, поставлено, выиграно, чистый результат."""
         return await self._fetchone(
@@ -2677,7 +2696,7 @@ class Database:
 
     async def place_map_bet(
         self, map_id: int, user_id: int, chat_id: int | None, side: str, amount: int,
-        *, ticket_id: int | None = None,
+        *, token: str | None = None, ticket_id: int | None = None,
     ) -> tuple[int, float]:
         """Ставка на победителя конкретной карты. Возвращает (новый баланс, кэф)."""
         if side not in ("a", "b", "x"):
@@ -2685,11 +2704,15 @@ class Database:
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
+        tap = self._clean_token(token)
         now = int(time.time())
-        ticket = None
-        if ticket_id:
-            ticket = await self._claim_freebet(int(ticket_id), user_id, amount, "single")
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "bet", tap, now) is not None:
+                return await self._repeat_bet(conn, user_id, "bet", tap, "bets")
+            ticket = (
+                await self._claim_freebet(int(ticket_id), user_id, amount, "single")
+                if ticket_id else None
+            )
             async with conn.execute("SELECT * FROM match_maps WHERE id = ?", (map_id,)) as cur:
                 card = await cur.fetchone()
             if card is None:
@@ -2725,6 +2748,7 @@ class Database:
             )
             created = await placed.fetchone()
             bet_id = int(created["id"]) if created else int(placed.lastrowid or 0)
+            await self._remember_token(conn, user_id, "bet", tap, bet_id)
             await self._settle_single_ledger(
                 conn, user_id, bet_id, amount,
                 f"карта {int(card['map_number'])} · {match_tag(match)}", now, ticket,
@@ -2902,6 +2926,7 @@ class Database:
         param: str,
         amount: int,
         *,
+        token: str | None = None,
         ticket_id: int | None = None,
     ) -> tuple[int, float]:
         """Ставка на рынок футбольного матча (тотал, точный счёт, форы и т.д.).
@@ -2914,11 +2939,15 @@ class Database:
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
+        tap = self._clean_token(token)
         now = int(time.time())
-        ticket = None
-        if ticket_id:
-            ticket = await self._claim_freebet(int(ticket_id), user_id, amount, "single")
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "bet", tap, now) is not None:
+                return await self._repeat_bet(conn, user_id, "bet", tap, "bets")
+            ticket = (
+                await self._claim_freebet(int(ticket_id), user_id, amount, "single")
+                if ticket_id else None
+            )
             async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
                 match = await cur.fetchone()
             if match is None:
@@ -2945,6 +2974,7 @@ class Database:
             )
             created = await placed.fetchone()
             bet_id = int(created["id"]) if created else int(placed.lastrowid or 0)
+            await self._remember_token(conn, user_id, "bet", tap, bet_id)
             await self._settle_single_ledger(
                 conn, user_id, bet_id, amount,
                 f"{market['label']} · {match_tag(match)}", now, ticket,
@@ -3066,6 +3096,7 @@ class Database:
         param: str,
         amount: int,
         *,
+        token: str | None = None,
         ticket_id: int | None = None,
     ) -> tuple[int, float]:
         """Ставка на рынок хоккейного матча (основное время, победа в матче, тотал)."""
@@ -3074,12 +3105,15 @@ class Database:
         if amount <= 0:
             raise InvalidBet("Сумма должна быть положительной")
 
-        ticket = None
-        if ticket_id:
-            ticket = await self._claim_freebet(int(ticket_id), user_id, amount, "single")
-
+        tap = self._clean_token(token)
         now = int(time.time())
         async with self.transaction() as conn:
+            if await self._claim_token(conn, user_id, "bet", tap, now) is not None:
+                return await self._repeat_bet(conn, user_id, "bet", tap, "bets")
+            ticket = (
+                await self._claim_freebet(int(ticket_id), user_id, amount, "single")
+                if ticket_id else None
+            )
             async with conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)) as cur:
                 match = await cur.fetchone()
             if match is None:
@@ -3106,6 +3140,7 @@ class Database:
             )
             created = await placed.fetchone()
             bet_id = int(created["id"]) if created else int(placed.lastrowid or 0)
+            await self._remember_token(conn, user_id, "bet", tap, bet_id)
             from app.services.hockey import market_label
 
             await self._settle_single_ledger(
