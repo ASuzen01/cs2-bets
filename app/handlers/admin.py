@@ -4,7 +4,12 @@
 У админа остаются только служебные команды и подтверждение исходов:
 
     /grant 123456789 500   — начислить монеты (можно /grant @ник 500)
-    /winback 123456789     — вручную выдать фрибет 300 на 24 часа
+    /freebet 123456789 500 — выдать фрибет заданного номинала на 24 часа
+    /version               — версия, коммит, uptime и backend
+    /services              — фоновые задачи и состояние синхронизации
+    /player 123456789      — профиль и последние операции игрока
+    /bettrace 42           — трассировка ставки, экспресса или казино
+    /feed                  — статус спортивной линии
     /players               — список игроков с id, чтобы знать кому начислять
     /maps                  — карты, которые не удалось рассчитать автоматически
     /cleanup [часов]       — рассчитать зависшие матчи, остальные отменить с возвратом
@@ -22,7 +27,10 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
+import os
+import platform
 import time
 from io import BytesIO
 from typing import Any
@@ -35,7 +43,7 @@ from app import keyboards, texts
 from app.config import settings
 from app.db import BettingError, Database
 from app.db.database import BACKUP_TABLES, BackupError
-from app.services import winback
+from app.services import matchnotify, reminders, winback
 from app.services.backup import (
     BackupService,
     decode,
@@ -50,6 +58,7 @@ from app.services.recheck import recheck_recent, report_text
 from app.services.sync import series_from_maps
 
 log = logging.getLogger(__name__)
+MODULE_STARTED_AT = int(time.time())
 
 router = Router(name="admin")
 
@@ -138,35 +147,44 @@ async def cmd_grant(message: Message, command: CommandObject, db: Database) -> N
     )
 
 
-@router.message(Command("winback"))
-async def cmd_winback(message: Message, command: CommandObject, db: Database) -> None:
-    """Вручную выдать адресный фрибет, минуя только условие трёх дней."""
+@router.message(Command("freebet"))
+async def cmd_freebet(message: Message, command: CommandObject, db: Database) -> None:
+    """Выдать игроку адресный фрибет любого поддерживаемого номинала."""
     args = (command.args or "").split()
-    if len(args) != 1 or not args[0].isdigit():
+    if len(args) != 2 or not all(token.isdigit() for token in args):
         await message.reply(
-            "Формат: <code>/winback 5004062791</code> — выдать игроку фрибет 300 на 24 часа."
+            "Формат: <code>/freebet ID СУММА</code>, например "
+            "<code>/freebet 5004062791 750</code>. Срок действия — 24 часа."
         )
         return
 
-    user_id = int(args[0])
+    user_id, amount = map(int, args)
     if user_id <= 0 or user_id > 2**63 - 1:
         await message.reply("Укажи корректный положительный Telegram ID.")
+        return
+    if amount <= 0 or amount > 2**31 - 1:
+        await message.reply("Сумма должна быть от 1 до 2 147 483 647 монет.")
         return
 
     user = await db.find_user(str(user_id))
     if user is None:
         await message.reply(f"Игрок <code>{user_id}</code> не найден в базе.")
         return
+    if message.from_user is None:
+        await message.reply("Не удалось определить администратора; фрибет не выдан.")
+        return
 
-    amount = winback.freebet_amount()
-    ticket_id, status = await db.grant_manual_winback_ticket(
-        user_id, amount, ttl_seconds=winback.TTL_HOURS * 3600
+    request_key = f"{message.from_user.id}:{message.chat.id}:{message.message_id}:{amount}"
+    ticket_id, status = await db.grant_admin_freebet(
+        user_id,
+        amount,
+        request_key,
+        ttl_seconds=winback.TTL_HOURS * 3600,
     )
     if status != "granted" or ticket_id is None:
         messages = {
-            "already_granted": "Фрибет уже выдавался за текущий период активности; повторно не начисляю.",
-            "active_ticket": "У игрока уже есть действующий неиспользованный билет-ординар.",
-            "no_activity": "В базе нет отметки о входе игрока — фрибет не выдан.",
+            "duplicate": "Эта команда уже обработана; повторно фрибет не выдаю.",
+            "active_ticket": "У игрока уже есть активный неиспользованный билет-ординар.",
             "not_found": "Игрок не найден в базе.",
         }
         await message.reply(messages.get(status, "Не удалось выдать фрибет."))
@@ -175,7 +193,7 @@ async def cmd_winback(message: Message, command: CommandObject, db: Database) ->
     try:
         await callback_bot(message).send_message(
             user_id,
-            f"Тебе зачислен фрибет {amount} монет! Он доступен в профиле и действует "
+            f"Тебе выдан фрибет {amount} монет! Он доступен в профиле и действует "
             f"{winback.TTL_HOURS} часа. Поставь его целиком на любой ординар в линии.\n\n"
             "виртуальные монеты · без реальных ставок",
             reply_markup=keyboards.app_kb(),
@@ -184,14 +202,14 @@ async def cmd_winback(message: Message, command: CommandObject, db: Database) ->
         log.warning("Фрибет #%s выдан игроку %s, но сообщение не отправлено: %s",
                     ticket_id, user_id, exc)
         await message.reply(
-            f"Фрибет {amount} выдан (билет #{ticket_id}), но сообщение отправить не удалось."
+            f"Фрибет {amount} выдан (билет #{ticket_id}), но уведомление отправить не удалось."
         )
         return
 
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else "игрок")
     await message.reply(
-        f"Фрибет {amount} на 24 часа выдан игроку {name} (<code>{user_id}</code>), "
-        f"билет #{ticket_id}. Уведомление отправлено."
+        f"Фрибет {amount} на 24 часа выдан игроку {html.escape(str(name))} "
+        f"(<code>{user_id}</code>), билет #{ticket_id}. Уведомление отправлено."
     )
 
 
@@ -453,6 +471,218 @@ async def on_map_confirm(callback: CallbackQuery, db: Database) -> None:
         f"Выплачено: {texts.money(int(result['paid']))} · ставок: {result['bets']}"
     )
     await callback.answer("Готово")
+
+
+def _admin_time(value: Any) -> str:
+    if not value:
+        return "—"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return "неизвестно"
+
+
+@router.message(Command("version"))
+async def cmd_version(message: Message, db: Database) -> None:
+    """Короткая версия сборки и backend базы, без секретной конфигурации."""
+    commit = (os.getenv("RENDER_GIT_COMMIT") or "local")[:12]
+    backend = html.escape(str(getattr(db.conn, "name", "unknown")))
+    uptime = max(0, int(time.time()) - MODULE_STARTED_AT)
+    hours, remainder = divmod(uptime, 3600)
+    minutes = remainder // 60
+    await message.answer(
+        f"<b>Версия приложения</b>\n"
+        f"Коммит: <code>{html.escape(commit)}</code>\n"
+        f"Режим: <code>{html.escape(settings.run_mode)}</code> · "
+        f"Python: <code>{platform.python_version()}</code>\n"
+        f"База: <code>{backend}</code> · uptime: {hours} ч {minutes} мин"
+    )
+
+
+@router.message(Command("services"))
+async def cmd_services(message: Message, syncer: Any, recheck: Any = None) -> None:
+    """Состояние синхронизации и фоновых циклов (read-only)."""
+    now = int(time.time())
+    sync_at = int(getattr(syncer, "last_sync_at", 0) or 0)
+    sync_error = getattr(syncer, "last_error", None)
+    sync_line = (
+        f"• линия: последняя синхронизация {_admin_time(sync_at)}"
+        + (f", {max(0, now - sync_at)} сек назад" if sync_at else "")
+        + (f"; ошибка: {html.escape(str(sync_error)[:180])}" if sync_error else "")
+    )
+    lines = ["<b>Фоновые сервисы</b>", sync_line]
+
+    services = [
+        ("перепроверка", recheck.stats if recheck is not None else None),
+        ("winback", winback.stats()),
+        ("напоминания", reminders.stats()),
+        ("уведомления о старте", matchnotify.stats()),
+    ]
+    for name, stats in services:
+        if stats is None:
+            lines.append(f"• {name}: не запущен")
+            continue
+        state = "включён" if stats.get("enabled", True) else "выключен"
+        last = _admin_time(stats.get("last_at"))
+        detail = f"; последний запуск {last}"
+        if stats.get("last_error"):
+            detail += f"; ошибка: {html.escape(str(stats['last_error'])[:180])}"
+        lines.append(f"• {name}: {state}{detail}")
+
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("feed"))
+async def cmd_feed(message: Message, db: Database, syncer: Any) -> None:
+    """Состояние последней загрузки линии и её счётчики."""
+    last_at = int(getattr(syncer, "last_sync_at", 0) or 0)
+    if not last_at:
+        raw = await db.get_meta("last_sync_at")
+        last_at = int(raw or 0)
+    age = max(0, int(time.time()) - last_at) if last_at else None
+    stats = getattr(syncer, "last_stats", None) or {}
+    error = getattr(syncer, "last_error", None)
+    stale = age is None or age > max(900, int(settings.sync_interval) * 20)
+    status = "ошибка" if error else "устаревшие данные" if stale else "OK"
+    lines = [
+        "<b>Спортивная линия</b>",
+        f"Статус: {status}",
+        f"Последний успех: {_admin_time(last_at)}",
+        f"Возраст данных: {f'{age} сек' if age is not None else 'неизвестен'}",
+        f"Интервал: {int(settings.sync_interval)} сек",
+    ]
+    if stats:
+        keys = ("fetched", "created", "updated", "football", "hockey", "closed", "settled", "awaiting")
+        lines.append("Счётчики: " + " · ".join(
+            f"{key}={int(stats[key])}" for key in keys if key in stats
+        ))
+    if error:
+        lines.append(f"Ошибка: {html.escape(str(error)[:240])}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("player"))
+async def cmd_player(message: Message, command: CommandObject, db: Database) -> None:
+    """Read-only сводка по игроку: профиль, ставки, билеты и последние события."""
+    args = (command.args or "").split()
+    if len(args) != 1 or not args[0].isdigit() or int(args[0]) <= 0:
+        await message.reply("Формат: <code>/player ID</code>")
+        return
+    user_id = int(args[0])
+    if user_id > 2**63 - 1:
+        await message.reply("Telegram ID слишком большой.")
+        return
+    user = await db.get_user(user_id)
+    if user is None:
+        await message.reply(f"Игрок <code>{user_id}</code> не найден.")
+        return
+
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else "без имени")
+    tickets = await db.tickets(user_id, limit=5)
+    active_bets = await db.user_active_bets(user_id)
+    active_expresses = await db.user_open_expresses(user_id)
+    history = await db.history(user_id, limit=5)
+    events = await db.user_recent_events(user_id, limit=5)
+    recent_bets = await db.user_bets_all(user_id, limit=3)
+    lines = [
+        f"<b>Игрок {html.escape(str(name))}</b> · <code>{user_id}</code>",
+        f"Баланс: {int(user['balance'])} · создан: {_admin_time(user['created_at'])}",
+        f"Последний вход: {_admin_time(user['last_seen_at'])}",
+        f"Активные ставки: {len(active_bets)} · экспрессы: {len(active_expresses)}",
+        "Билеты: " + ("; ".join(
+            f"#{int(t['id'])} {int(t['amount'])} ({html.escape(str(t['kind']))}, "
+            f"{html.escape(str(t['source']))}, до {_admin_time(t['expires_at'])})"
+            for t in tickets
+        ) if tickets else "нет"),
+    ]
+    if recent_bets:
+        lines.append("Последние ставки:")
+        lines.extend(
+            f"• #{int(row['id'])} {html.escape(str(row['team_a']))} — "
+            f"{html.escape(str(row['team_b']))}; {int(row['amount'])}, "
+            f"{html.escape(str(row['market']))}, статус "
+            f"{html.escape(str(row['match_status']))}, выплата "
+            f"{int(row['payout']) if row['payout'] is not None else '—'}"
+            for row in recent_bets
+        )
+    if history:
+        lines.append("Последние движения баланса:")
+        lines.extend(
+            f"• {int(row['delta']):+} · {html.escape(str(row['reason'])[:90])} · "
+            f"{_admin_time(row['created_at'])}"
+            for row in history
+        )
+    if events:
+        lines.append("Последние события:")
+        lines.extend(
+            f"• {html.escape(str(row['name']))}: {html.escape(str(row['payload'] or '')[:90])} · "
+            f"{_admin_time(row['created_at'])}"
+            for row in events
+        )
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("bettrace"))
+async def cmd_bettrace(message: Message, command: CommandObject, db: Database) -> None:
+    """Read-only trace ставки/экспресса/раунда казино по числовому ID."""
+    args = (command.args or "").split()
+    if len(args) != 1 or not args[0].isdigit() or int(args[0]) <= 0:
+        await message.reply("Формат: <code>/bettrace ID</code>")
+        return
+    bet_id = int(args[0])
+    if bet_id > 2**63 - 1:
+        await message.reply("ID слишком большой.")
+        return
+    traces = await db.trace_bet(bet_id)
+    if not traces:
+        await message.reply("Запись с таким ID не найдена.")
+        return
+
+    lines = [f"<b>Трассировка ID {int(args[0])}</b>"]
+    for trace in traces:
+        row = trace["row"]
+        if trace["kind"] == "single":
+            market = html.escape(str(row["market"]))
+            teams = html.escape(f"{row['team_a']} — {row['team_b']}")
+            state = "продана" if row["cashed_out"] else (
+                f"выплата {int(row['payout'])}" if row["payout"] is not None else "ожидает расчёта"
+            )
+            lines.extend([
+                f"<b>Ординар #{int(row['id'])}</b> · игрок <code>{int(row['user_id'])}</code>",
+                f"{teams} · рынок {market} · выбор {html.escape(str(row['side']))}",
+                f"Ставка {int(row['amount'])} · кэф {float(row['odds']):g} · статус "
+                f"{html.escape(str(row['match_status']))}/{state}",
+                f"Создана: {_admin_time(row['created_at'])}",
+            ])
+            if row["ticket_id"] is not None:
+                lines.append(
+                    f"Фрибет #{int(row['ticket_id'])}: {int(row['ticket_amount'])} "
+                    f"({html.escape(str(row['ticket_source']))}), использован "
+                    f"{_admin_time(row['ticket_used_at'])}"
+                )
+        elif trace["kind"] == "express":
+            lines.extend([
+                f"<b>Экспресс #{int(row['id'])}</b> · игрок <code>{int(row['user_id'])}</code>",
+                f"Ставка {int(row['stake'])} · кэф {float(row['odds']):g} · "
+                f"статус {html.escape(str(row['status']))} · выплата "
+                f"{int(row['payout']) if row['payout'] is not None else '—'}",
+            ])
+            for leg in trace["legs"][:8]:
+                lines.append(
+                    f"• {html.escape(str(leg['team_a']))} — {html.escape(str(leg['team_b']))}: "
+                    f"{html.escape(str(leg['side']))}, исход {html.escape(str(leg['result']))}"
+                )
+            if len(trace["legs"]) > 8:
+                lines.append(f"…ещё {len(trace['legs']) - 8} исходов")
+        else:
+            lines.extend([
+                f"<b>Казино #{int(row['id'])}</b> · игрок <code>{int(row['user_id'])}</code>",
+                f"Игра {html.escape(str(row['game']))} · {html.escape(str(row['label']))}",
+                f"Ставка {int(row['amount'])} · исход {html.escape(str(row['outcome']))} · "
+                f"выплата {int(row['payout'])}",
+                f"Создана: {_admin_time(row['created_at'])}",
+            ])
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("stats"))

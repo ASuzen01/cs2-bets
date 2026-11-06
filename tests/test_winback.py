@@ -304,45 +304,38 @@ async def test_existing_live_single_ticket_blocks_another_grant(db: Database) ->
     assert len(await db.tickets(USER["id"])) == 1
 
 
-async def test_admin_winback_grants_to_recent_user_and_suppresses_auto_grant(db: Database) -> None:
+async def test_admin_freebet_grants_arbitrary_amount_for_24_hours(db: Database) -> None:
     now = int(time.time())
-
-    ticket_id, status = await db.grant_manual_winback_ticket(
-        USER["id"], 300, now=now, ttl_seconds=24 * 3600
+    ticket_id, status = await db.grant_admin_freebet(
+        USER["id"], 12_345, "admin:1:100:200", now=now, ttl_seconds=24 * 3600
     )
 
     assert status == "granted"
     assert ticket_id is not None
     tickets = await db.tickets(USER["id"], kind="single")
     assert len(tickets) == 1
-    assert int(tickets[0]["amount"]) == 300
-    assert str(tickets[0]["source"]) == "возврат (админ)"
+    assert int(tickets[0]["amount"]) == 12_345
+    assert str(tickets[0]["source"]) == "админ"
     assert int(tickets[0]["expires_at"]) - int(tickets[0]["created_at"]) == 24 * 3600
-
-    # Админская выдача отмечена как winback за этот период: автоцикл не продублирует её.
-    assert await db.users_to_winback(now + 4 * 86400) == []
+    assert await db.has_event(USER["id"], "admin_freebet", "admin:1:100:200")
 
 
-async def test_admin_winback_is_idempotent_for_same_activity_period(db: Database) -> None:
-    now = int(time.time())
-    ticket_id, status = await db.grant_manual_winback_ticket(USER["id"], 300, now=now)
-    assert status == "granted"
-    assert ticket_id is not None
+async def test_admin_freebet_is_idempotent_for_same_command(db: Database) -> None:
+    request_key = "admin:1:100:201"
+    first_id, first_status = await db.grant_admin_freebet(USER["id"], 777, request_key)
+    second_id, second_status = await db.grant_admin_freebet(USER["id"], 777, request_key)
 
-    await db._write("UPDATE tickets SET used_at = ? WHERE id = ?", (now + 1, ticket_id))
-    second_id, second_status = await db.grant_manual_winback_ticket(
-        USER["id"], 300, now=now + 2
-    )
-
+    assert first_status == "granted"
+    assert first_id is not None
+    assert second_status == "duplicate"
     assert second_id is None
-    assert second_status == "already_granted"
-    assert len(await db.tickets(USER["id"], kind="single")) == 0
+    assert len(await db.tickets(USER["id"], kind="single")) == 1
 
 
-async def test_admin_winback_does_not_stack_an_active_single_ticket(db: Database) -> None:
+async def test_admin_freebet_does_not_stack_active_single_ticket(db: Database) -> None:
     await db.add_ticket(USER["id"], 300, "предыдущий бонус", kind="single", ttl_seconds=24 * 3600)
 
-    ticket_id, status = await db.grant_manual_winback_ticket(USER["id"], 300)
+    ticket_id, status = await db.grant_admin_freebet(USER["id"], 900, "admin:1:100:202")
 
     assert ticket_id is None
     assert status == "active_ticket"

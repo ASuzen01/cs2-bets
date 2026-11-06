@@ -968,60 +968,64 @@ class Database:
             )
             return int(row["id"]) if row else int(created.lastrowid or 0)
 
-    async def grant_manual_winback_ticket(
-        self, user_id: int, amount: int, now: int | None = None, ttl_seconds: int = 86400
+    async def grant_admin_freebet(
+        self,
+        user_id: int,
+        amount: int,
+        request_key: str,
+        now: int | None = None,
+        ttl_seconds: int = 86400,
     ) -> tuple[int | None, str]:
-        """Админская выдача фрибета в текущую winback-кампанию, без проверки паузы.
+        """Выдать адресный фрибет администратором, атомарно и с защитой от повтора.
 
-        Идемпотентна для одного периода активности: отмечает то же событие `winback`,
-        что и автоматический сервис, поэтому повторная команда и плановый тик не
-        создадут второй билет до следующего входа игрока.
+        `request_key` идентифицирует Telegram-команду. Повторная доставка одного
+        апдейта не создаст второй билет; активные single-билеты не суммируются.
         """
         moment = int(now if now is not None else time.time())
-        if amount <= 0 or ttl_seconds <= 0:
-            raise ValueError("amount и ttl_seconds должны быть положительными")
+        if amount <= 0 or amount > 2**31 - 1 or ttl_seconds <= 0:
+            raise ValueError("amount должен быть в диапазоне int32, ttl_seconds — положительным")
+        key = request_key[:200]
+        if not key:
+            raise ValueError("request_key обязателен")
 
         async with self.transaction() as conn:
             user = await (
-                await conn.execute("SELECT last_seen_at FROM users WHERE user_id = ?", (user_id,))
+                await conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
             ).fetchone()
             if user is None:
                 return None, "not_found"
-            last_seen = int(user["last_seen_at"] or 0)
-            if last_seen <= 0:
-                return None, "no_activity"
 
             previous = await (
                 await conn.execute(
-                    "SELECT 1 FROM events WHERE user_id = ? AND name = 'winback' "
+                    "SELECT 1 FROM events WHERE user_id = ? AND name = 'admin_freebet' "
                     "AND payload = ? LIMIT 1",
-                    (user_id, str(last_seen)),
+                    (user_id, key),
                 )
             ).fetchone()
             if previous is not None:
-                return None, "already_granted"
+                return None, "duplicate"
 
-            active_freebet = await (
+            active_ticket = await (
                 await conn.execute(
                     "SELECT 1 FROM tickets WHERE user_id = ? AND kind = 'single' "
                     "AND used_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
                     (user_id, moment),
                 )
             ).fetchone()
-            if active_freebet is not None:
+            if active_ticket is not None:
                 return None, "active_ticket"
 
             created = await conn.execute(
                 """
                 INSERT INTO tickets (user_id, amount, source, kind, created_at, expires_at)
-                VALUES (?, ?, 'возврат (админ)', 'single', ?, ?) RETURNING id
+                VALUES (?, ?, 'админ', 'single', ?, ?) RETURNING id
                 """,
                 (user_id, int(amount), moment, moment + ttl_seconds),
             )
             row = await created.fetchone()
             await conn.execute(
-                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, 'winback', ?, ?)",
-                (user_id, str(last_seen), moment),
+                "INSERT INTO events (user_id, name, payload, created_at) VALUES (?, 'admin_freebet', ?, ?)",
+                (user_id, key, moment),
             )
             return (int(row["id"]) if row else int(created.lastrowid or 0)), "granted"
 
@@ -2430,6 +2434,13 @@ class Database:
             (user_id, limit),
         )
 
+    async def user_recent_events(self, user_id: int, limit: int = 10) -> list[Any]:
+        return await self._fetchall(
+            "SELECT name, payload, created_at FROM events WHERE user_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, max(1, min(int(limit), 50))),
+        )
+
     async def add_coins(self, user_id: int, amount: int, reason: str) -> int:
         async with self.transaction() as conn:
             await conn.execute(
@@ -3707,6 +3718,61 @@ class Database:
             """,
             tuple(int(item) for item in express_ids),
         )
+
+    async def trace_bet(self, bet_id: int) -> list[dict[str, Any]]:
+        """Read-only trace for sports singles/maps, expresses and casino rounds."""
+        traces: list[dict[str, Any]] = []
+        single = await self._fetchone(
+            """
+            SELECT b.id, b.user_id, b.match_id, b.market, b.side, b.amount, b.odds,
+                   b.payout, b.cashed_out, b.created_at,
+                   m.tournament, m.team_a, m.team_b, m.status AS match_status,
+                   m.winner AS match_winner, m.start_time,
+                   mm.map_number, mm.status AS map_status, mm.winner AS map_winner,
+                   t.id AS ticket_id, t.amount AS ticket_amount,
+                   t.source AS ticket_source, t.used_at AS ticket_used_at
+            FROM bets b
+            JOIN matches m ON m.id = b.match_id
+            LEFT JOIN match_maps mm ON mm.id = b.map_id
+            LEFT JOIN tickets t ON t.id = (
+                SELECT MIN(t2.id) FROM tickets t2 WHERE t2.bet_id = b.id
+            )
+            WHERE b.id = ?
+            """,
+            (bet_id,),
+        )
+        if single is not None:
+            traces.append({"kind": "single", "row": dict(single)})
+
+        express = await self._fetchone(
+            "SELECT id, user_id, stake, odds, status, payout, created_at, settled_at "
+            "FROM expresses WHERE id = ?",
+            (bet_id,),
+        )
+        if express is not None:
+            legs = await self._fetchall(
+                """
+                SELECT i.match_id, i.side, i.odds, i.result,
+                       m.tournament, m.team_a, m.team_b, m.status AS match_status,
+                       m.winner AS match_winner
+                FROM express_items i JOIN matches m ON m.id = i.match_id
+                WHERE i.express_id = ? ORDER BY i.id
+                """,
+                (bet_id,),
+            )
+            traces.append({"kind": "express", "row": dict(express), "legs": [dict(x) for x in legs]})
+
+        casino = await self._fetchone(
+            """
+            SELECT id, user_id, game, selection, label, amount, odds, outcome, win,
+                   payout, created_at
+            FROM casino_bets WHERE id = ?
+            """,
+            (bet_id,),
+        )
+        if casino is not None:
+            traces.append({"kind": "casino", "row": dict(casino)})
+        return traces
 
     async def settle_match(
         self, match_id: int, winner: str, source: str = "manual"
