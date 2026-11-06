@@ -3,12 +3,14 @@
     --text:#f2eee4; --muted:#99968d; --accent:#d6b66d; --accent-soft:#342d20;
     --ok:#78c49a; --warn:#d9b75e; --bad:#d47b76; --line:#302a20;
     --radius:18px; --tabbar:66px;
+    --app-safe-top:max(env(safe-area-inset-top,0px),var(--tg-content-safe-area-inset-top,0px));
+    --app-safe-bottom:max(env(safe-area-inset-bottom,0px),var(--tg-content-safe-area-inset-bottom,0px));
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     font-size:15px;line-height:1.45;overscroll-behavior-y:contain}
-  body{padding-bottom:calc(var(--tabbar) + 12px)}
+  body{padding-top:var(--app-safe-top);padding-bottom:calc(var(--tabbar) + 12px + var(--app-safe-bottom))}
   button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 
   header{position:relative;display:flex;align-items:center;gap:10px;
@@ -268,7 +270,7 @@
   .btn.ghost{background:var(--card2);color:var(--text);border:1px solid #26374a;box-shadow:none}
   .btn.small{padding:10px;font-size:13.5px;width:auto;flex:1}
 
-  .cartbar{position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar) + 10px);z-index:6;
+  .cartbar{position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar) + var(--app-safe-bottom) + 10px);z-index:6;
     display:none;align-items:center;gap:10px;background:linear-gradient(180deg,#20344a,#1a2a3d);
     border:1px solid #2d4b69;border-radius:14px;padding:10px 12px;box-shadow:0 10px 26px rgba(0,0,0,.42)}
   .cartbar.show{display:flex}
@@ -276,7 +278,8 @@
   .cartbar .grow b{font-size:13px;display:block}
   .cartbar .grow span{font-size:11.5px;color:#9fd0ff}
 
-  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:7;display:flex;height:var(--tabbar);
+  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:7;display:flex;
+    height:calc(var(--tabbar) + var(--app-safe-bottom));padding-bottom:var(--app-safe-bottom);
     background:rgba(16,24,33,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
   nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:3px;font-size:10.5px;color:var(--muted)}
@@ -290,7 +293,7 @@
   .sheet-wrap.show{display:block}
   .sheet{position:absolute;left:0;right:0;bottom:0;max-width:560px;margin:0 auto;
     background:var(--bg2);border-radius:20px 20px 0 0;border-top:1px solid #2a3a4c;
-    padding:16px 16px calc(18px + env(safe-area-inset-bottom));animation:up .2s ease}
+    padding:16px 16px calc(18px + var(--app-safe-bottom));animation:up .2s ease}
   @keyframes up{from{transform:translateY(14px);opacity:.6}to{transform:none;opacity:1}}
   .sheet h3{margin:0 0 2px;font-size:16px}
   .sheet .sub{color:var(--muted);font-size:12.5px;margin-bottom:14px}
@@ -312,8 +315,8 @@
   .summary b{color:#fff}
   .summary .big{font-size:19px;color:#8ecbff;font-weight:800}
 
-  body.has-cart .toast{bottom:calc(var(--tabbar) + 88px)}
-  body.has-cart{padding-bottom:calc(var(--tabbar) + 74px)}
+  body.has-cart .toast{bottom:calc(var(--tabbar) + var(--app-safe-bottom) + 88px)}
+  body.has-cart{padding-bottom:calc(var(--tabbar) + 74px + var(--app-safe-bottom))}
   .btn.bonus.waiting{background:linear-gradient(180deg,#39424f,#333c48);color:#9fb3c8;
     box-shadow:none}
   /* ---- задания дня ---- */
@@ -354,7 +357,7 @@
   /* топ: собственная строка видна, даже если она одна такая */
   .rowcard.me{background:#1b2a1f;border-color:#23452c}
 
-  .toast{position:fixed;left:50%;transform:translate(-50%,20px);bottom:calc(var(--tabbar) + 26px);z-index:30;
+  .toast{position:fixed;left:50%;transform:translate(-50%,20px);bottom:calc(var(--tabbar) + var(--app-safe-bottom) + 26px);z-index:30;
     background:#1d2b3a;border:1px solid #2c4257;color:#eaf0f6;padding:11px 16px;border-radius:12px;
     font-size:13.5px;max-width:82vw;text-align:center;opacity:0;pointer-events:none;transition:.22s;
     line-height:1.35}

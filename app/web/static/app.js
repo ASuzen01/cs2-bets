@@ -275,6 +275,21 @@
     try {
       app.ready();
       app.expand();
+      const platform = String(app.platform || "").toLowerCase();
+      const isMobileTelegram = platform === "ios" || platform.startsWith("android");
+      if (isMobileTelegram && !app.isFullscreen && typeof app.isVersionAtLeast === "function"
+        && app.isVersionAtLeast("8.0") && typeof app.requestFullscreen === "function") {
+        const fallbackToExpanded = () => {
+          try { app.expand(); } catch (e) { /* полноэкранный режим недоступен */ }
+        };
+        if (typeof app.onEvent === "function") {
+          try { app.onEvent("fullscreenFailed", fallbackToExpanded); } catch (e) { /* событие не поддерживается */ }
+        }
+        try {
+          const request = app.requestFullscreen();
+          if (request && typeof request.catch === "function") request.catch(fallbackToExpanded);
+        } catch (e) { fallbackToExpanded(); }
+      }
       if (app.setHeaderColor) app.setHeaderColor("#0f1720");
       if (app.setBackgroundColor) app.setBackgroundColor("#0f1720");
       if (app.disableVerticalSwipes) app.disableVerticalSwipes();
@@ -5080,10 +5095,12 @@
       }
       const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
       const naturalTop = scrollY + spacer.getBoundingClientRect().top;
-      const fixed = naturalTop <= scrollY;
+      const safeTop = parseFloat(getComputedStyle(document.documentElement)
+        .getPropertyValue("--app-safe-top")) || 0;
+      const fixed = naturalTop - scrollY <= safeTop;
       dock.classList.toggle("is-fixed", fixed);
       if (fixed) {
-        dock.style.top = "0px";
+        dock.style.top = `${safeTop}px`;
         spacer.style.height = `${dock.offsetHeight}px`;
       } else {
         // У панели position:relative: ненулевой top сдвигает её и оставляет пустой отступ.
