@@ -66,12 +66,12 @@
     crashTicker: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over" },
-    casinoStake: { roulette: 50, dice: 50, plinko: 50 },
+    casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50 },
     plinkoRows: 12,
     plinkoRisk: "medium",
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
-    casinoResults: { roulette: null, dice: null, plinko: null },  // результат текущей мини-игры
+    casinoResults: { roulette: null, dice: null, plinko: null, slots: null },  // результаты мини-игр
     casinoToken: null,        // метка тапа текущего раунда (защита от двойного списания)
     recentNumbers: [],        // дорожка выпавших чисел
     rouletteAngle: 0,
@@ -3143,6 +3143,9 @@
         setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
       });
       if (state.casino && !(state.casinoStake.roulette > 0)) state.casinoStake.roulette = 50;
+      if (state.casino && Number(state.casino.slot_state && state.casino.slot_state.free_spins) > 0) {
+        state.casinoStake.slots = Number(state.casino.slot_state.spin_bet) || state.casinoStake.slots || 50;
+      }
       state.live = true;
 
       renderHeader();
@@ -3248,13 +3251,17 @@
       input.value = String(info.raw || info.min);
     }
 
+    const lockSlotStake = game === "slots"
+      && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
     document.querySelectorAll("#games .stake-chip").forEach((chip) => {
       chip.classList.toggle("active", Number(chip.dataset.stake) === info.raw);
+      chip.disabled = state.casinoBusy || lockSlotStake;
     });
     const minus = document.querySelector('#games .stake-step[data-step="-1"]');
-    if (minus) minus.disabled = state.casinoBusy || info.raw <= info.min;
+    if (minus) minus.disabled = state.casinoBusy || lockSlotStake || info.raw <= info.min;
     const plus = document.querySelector('#games .stake-step[data-step="1"]');
-    if (plus) plus.disabled = state.casinoBusy || info.raw >= info.max;
+    if (plus) plus.disabled = state.casinoBusy || lockSlotStake || info.raw >= info.max;
+    if (input) input.disabled = state.casinoBusy || lockSlotStake;
 
     const estimate = potential(game);
     const odds = estimate.odds;
@@ -3265,6 +3272,11 @@
       meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
       if (game === "plinko") {
         meta.append(el("span", null, `Ячейки: ×${estimate.minMultiplier.toFixed(2)}–×${estimate.maxMultiplier.toFixed(2)} · выплата зависит от траектории`));
+      } else if (game === "slots") {
+        const slotState = state.casino && state.casino.slot_state || { free_spins: 0 };
+        meta.append(el("span", null, Number(slotState.free_spins) > 0
+          ? `${slotState.free_spins} фри-спинов · ставка зафиксирована ${money(slotState.spin_bet)}`
+          : `Общая ставка за спин · ${state.casino.slots.ways} ways`));
       } else {
         const payout = odds ? roundPayout(info.raw || 0, odds) : null;
         meta.append(el("span", null,
@@ -3276,17 +3288,20 @@
 
     const play = $("#playBtn");
     if (play) {
-      const ok = stakeOk(game);
+      const freeSpins = game === "slots" && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
+      const ok = freeSpins || stakeOk(game);
       play.disabled = state.casinoBusy || !ok;
-      if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
+      if (freeSpins) play.textContent = `Крутить фри-спин · осталось ${state.casino.slot_state.free_spins}`;
+      else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
-      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : "Бросить кости") + " · " + money(info.raw);
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : "Бросить кости") + " · " + money(info.raw);
     }
   }
 
   function pickFor(game) {
     if (game === "plinko") return `${state.plinkoRows}:${state.plinkoRisk}`;
+    if (game === "slots") return "spin";
     if (state.casinoPick[game]) return state.casinoPick[game];
     return game === "roulette" ? "red" : "over";
   }
@@ -3534,6 +3549,9 @@
         minMultiplier: Math.min(...values), maxMultiplier: Math.max(...values),
       };
     }
+    if (game === "slots") {
+      return { label: "Слот-машина", odds: null, stake: stakeFor(game), payout: null, profit: null };
+    }
     const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
     const option = options.find((item) => item.code === pick);
     const odds = option ? Number(option.odds) : 0;
@@ -3598,6 +3616,9 @@
     if (result.game === "plinko") {
       return `Ячейка ${Number(result.slot) + 1} · ×${Number(result.multiplier).toFixed(2)}`;
     }
+    if (result.game === "slots") {
+      return result.outcome || (result.win_count ? `${result.win_count} выигрышных ways` : "Без выигрыша");
+    }
     return `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
   }
 
@@ -3620,7 +3641,9 @@
     line1.append(el("span", "big", what));
     const line2 = el("div", "line2", result.game === "plinko"
       ? `×${Number(result.multiplier).toFixed(2)} · выплата ${money(result.payout)} · результат ${moneySigned(result.payout - result.amount)}`
-      : result.win
+      : result.game === "slots"
+        ? `${result.free_spin ? "Фри-спин" : `Ставка ${money(result.spin_bet)}`} · выплата ${money(result.payout)}${result.awarded_free_spins ? ` · +${result.awarded_free_spins} фри-спинов` : ""}${result.free_spins_remaining ? ` · осталось ${result.free_spins_remaining}` : ""}`
+        : result.win
         ? `«${result.label}» зашла · выплата ${money(result.payout)} · чистая прибыль ${moneySigned(result.payout - result.amount)} (кэф ${Number(result.odds).toFixed(2)})`
         : `«${result.label}» не зашла: ${money(result.amount)} ушли банку`);
     box.append(line1, line2);
@@ -3655,17 +3678,22 @@
     }
     rows.slice(0, 8).forEach((row) => {
       const net = Number(row.payout) - Number(row.amount);
+      let slotResult = null;
+      if (row.game === "slots") {
+        try { slotResult = JSON.parse(row.outcome); } catch (_) { slotResult = null; }
+      }
       const line = el("div", "row " + (net > 0 ? "win" : net < 0 ? "lose" : "push"));
       const who = el("div", "who");
       who.append(document.createTextNode(row.label));
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
           : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
-            : row.game === "plinko" ? "плинко" : "кости"));
+            : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
-          : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
-            ? row.outcome : "сумма " + row.outcome;
+          : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
+            : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
+              ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
       const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
       line.append(who, tag, res);
@@ -3690,12 +3718,18 @@
         "«Меньше 6» — сумма 2–6, «больше 8» — сумма 8–12 (по ×2.29), точная сумма — от ×5.73 за семёрку до ×34.38 за дубль."
       ));
       box.append(el("span", "edge", "преимущество банка 4.5 %"));
-    } else {
+    } else if (game === "plinko") {
       box.append(el("b", null, "Плинко · шарик отскакивает по рядам штырьков. "));
       box.append(document.createTextNode(
         "Перед раундом выбери 8, 12 или 16 рядов и риск. Число шагов вправо определяет ячейку; чем реже ячейка, тем выше множитель. Выплата включает остаток ставки."
       ));
       box.append(el("span", "edge", "целевой RTP 95,5 % · округление монет может немного снизить фактическую отдачу"));
+    } else {
+      box.append(el("b", null, "Слот-машина · 5 барабанов, 3 ряда, 243 ways. "));
+      box.append(document.createTextNode(
+        "Общая ставка за спин распределяется между 243 ways; комбинации из 3–5 одинаковых символов считаются слева направо. Scatter на любых барабанах: 3 символа дают 10, 4 — 15, 5 и более — 20 фри-спинов. Фри-спины используют ту же ставку; повторного запуска бонуса во время фри-спинов нет."
+      ));
+      box.append(el("span", "edge", "целевой RTP 95,5 % с учётом фри-спинов · округление выплаты до целых монет"));
     }
     return box;
   }
@@ -4491,6 +4525,154 @@
     if (state.casinoBusy) lockTable(true);
   }
 
+  function slotSymbolIcon(config, code) {
+    const symbol = config.symbols.find((item) => item.code === code);
+    return symbol ? symbol.icon : "·";
+  }
+
+  function slotGridNode(config, result) {
+    const shell = el("div", "slot-machine-shell");
+    const frame = el("div", "slot-machine-frame");
+    const grid = el("div", "slot-grid");
+    grid.id = "slotGrid";
+    grid.setAttribute("role", "img");
+    grid.setAttribute("aria-label", "Слот-машина: 5 барабанов, 3 ряда");
+    const fallback = [
+      ["cherry", "lemon", "bell", "seven", "bar"],
+      ["lemon", "bell", "cherry", "bar", "diamond"],
+      ["bell", "cherry", "seven", "lemon", "bar"],
+    ];
+    const symbols = result && Array.isArray(result.grid) ? result.grid : fallback;
+    const hits = new Set((result && result.winning_cells || []).map((cell) => `${cell[0]}:${cell[1]}`));
+    for (let row = 0; row < config.rows; row += 1) {
+      for (let reel = 0; reel < config.reels; reel += 1) {
+        const code = symbols[row] && symbols[row][reel] || "cherry";
+        const cell = el("div", "slot-cell" + (hits.has(`${row}:${reel}`) ? " hit" : ""));
+        cell.dataset.row = String(row);
+        cell.dataset.reel = String(reel);
+        cell.dataset.symbol = code;
+        const icon = el("span", "slot-symbol", slotSymbolIcon(config, code));
+        if (code === "bar") icon.classList.add("bar-symbol");
+        if (code === "scatter") cell.classList.add("scatter-cell");
+        cell.append(icon);
+        grid.append(cell);
+      }
+    }
+    frame.append(grid);
+    shell.append(frame);
+    const labels = el("div", "slot-reel-labels");
+    for (let reel = 1; reel <= config.reels; reel += 1) labels.append(el("span", null, String(reel)));
+    shell.append(labels);
+    return shell;
+  }
+
+  async function animateSlots(result) {
+    const config = state.casino && state.casino.slots;
+    if (!config || !Array.isArray(result.grid)) return;
+    const symbols = config.symbols;
+    for (let reel = 0; reel < config.reels; reel += 1) {
+      for (let turn = 0; turn < 5; turn += 1) {
+        for (let row = 0; row < config.rows; row += 1) {
+          const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+          if (!cell) return;
+          const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+          cell.dataset.symbol = symbol.code;
+          cell.classList.add("rolling");
+          cell.classList.remove("hit", "scatter-cell");
+          const icon = cell.querySelector(".slot-symbol");
+          if (icon) {
+            icon.textContent = symbol.icon;
+            icon.classList.toggle("bar-symbol", symbol.code === "bar");
+          }
+          cell.classList.toggle("scatter-cell", symbol.code === "scatter");
+        }
+        await pause(58 + reel * 9);
+      }
+      for (let row = 0; row < config.rows; row += 1) {
+        const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+        const code = result.grid[row][reel];
+        const symbol = symbols.find((item) => item.code === code);
+        if (!cell || !symbol) continue;
+        cell.dataset.symbol = code;
+        cell.classList.remove("rolling");
+        cell.classList.toggle("scatter-cell", code === "scatter");
+        const icon = cell.querySelector(".slot-symbol");
+        if (icon) {
+          icon.textContent = symbol.icon;
+          icon.classList.toggle("bar-symbol", code === "bar");
+        }
+      }
+      haptic("light");
+      await pause(110 + reel * 24);
+    }
+    (result.winning_cells || []).forEach(([row, reel]) => {
+      const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+      if (cell) cell.classList.add("hit");
+    });
+    haptic(result.win || result.awarded_free_spins ? "ok" : "bad");
+  }
+
+  function slotPaytableNode(config) {
+    const details = el("details", "slot-paytable");
+    details.append(el("summary", null, "Таблица выплат · множители за way"));
+    const table = el("div", "slot-paytable-list");
+    config.symbols.filter((item) => item.code !== "scatter").forEach((symbol) => {
+      const row = el("div", "slot-paytable-row");
+      row.append(el("span", "slot-pay-symbol", symbol.icon + " " + symbol.name));
+      const pay = config.paytable[symbol.code];
+      row.append(el("span", "slot-pay-values", `×${Number(pay["3"]).toFixed(2)} · ×${Number(pay["4"]).toFixed(2)} · ×${Number(pay["5"]).toFixed(2)}`));
+      table.append(row);
+    });
+    details.append(table);
+    return details;
+  }
+
+  function renderSlots(host) {
+    host.textContent = "";
+    host.append(gameBackButton());
+    const config = state.casino && state.casino.slots;
+    if (!config) {
+      host.append(el("div", "skeleton"));
+      return;
+    }
+    const saved = state.casino.slot_state || { free_spins: 0, spin_bet: 0 };
+    const hasFreeSpins = Number(saved.free_spins) > 0;
+    if (hasFreeSpins && Number(saved.spin_bet) > 0) state.casinoStake.slots = Number(saved.spin_bet);
+    const result = state.casinoResults.slots;
+    const card = el("section", "slot-game-card");
+    card.append(el("div", "slot-kicker", "CASINO · 5 REELS · 243 WAYS"));
+    card.append(el("h2", "slot-title", "Слот-машина"));
+    card.append(el("p", "slot-copy", "Собирай одинаковые символы слева направо. Все 243 ways участвуют в каждом спине; ставка указана за весь спин."));
+    card.append(slotGridNode(config, result));
+
+    const status = el("div", "slot-bonus-status" + (hasFreeSpins ? " active" : ""));
+    status.id = "slotBonusStatus";
+    status.textContent = hasFreeSpins
+      ? `✦ ФРИ-СПИНЫ · ${saved.free_spins} осталось · ставка ${money(saved.spin_bet)} зафиксирована`
+      : `SCATTER · 3 → 10 фри-спинов · 4 → 15 · 5+ → 20`;
+    card.append(status);
+    card.append(stakeRow("slots"));
+    if (hasFreeSpins) {
+      card.querySelectorAll(".stake-chip, .stake-step, #stakeInput").forEach((control) => { control.disabled = true; });
+    }
+
+    const meta = el("div", "bet-meta");
+    meta.id = "betMeta";
+    meta.append(el("span", null, `Ставка за весь спин: ${money(stakeFor("slots"))}`));
+    meta.append(el("span", null, `RTP ${Number(config.rtp).toFixed(1)}% · ${config.ways} ways · 3×5`));
+    card.append(meta);
+    const play = el("button", "btn play slot-spin-button");
+    play.id = "playBtn";
+    play.type = "button";
+    play.textContent = hasFreeSpins ? `КРУТИТЬ ФРИ-СПИН · ${saved.free_spins} ОСТАЛОСЬ` : `КРУТИТЬ · ${money(stakeFor("slots"))}`;
+    play.disabled = state.casinoBusy || (!hasFreeSpins && !stakeOk("slots"));
+    card.append(play);
+    card.append(outcomeNode(), summaryNode(), historyNode(), slotPaytableNode(config), rulesNode("slots"));
+    host.append(card);
+    if (result) paintOutcome(result);
+    if (state.casinoBusy) lockTable(true);
+  }
+
   function renderGames() {
     const host = $("#games");
     if (!host) return;
@@ -4534,6 +4716,10 @@
     }
     if (state.game === "plinko") {
       renderPlinko(host);
+      return;
+    }
+    if (state.game === "slots") {
+      renderSlots(host);
       return;
     }
 
@@ -4686,10 +4872,15 @@
     const play = $("#playBtn");
     if (play) {
       play.disabled = busy;
-      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : "Бросаем…";
+      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : "Бросаем…";
     }
     document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
-      .forEach((node) => { node.disabled = busy; });
+      .forEach((node) => {
+        const lockedSlotWager = !busy && state.game === "slots"
+          && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0
+          && Boolean(node.closest(".stake-block"));
+        node.disabled = busy || lockedSlotWager;
+      });
   }
 
   function refreshSide() {
@@ -4703,12 +4894,16 @@
   async function playCasinoRound() {
     if (state.casinoBusy || !state.casino || !state.user) return;
     const game = state.game;
+    const slotState = state.casino && state.casino.slot_state || { free_spins: 0, spin_bet: 0 };
+    const usingSlotFreeSpin = game === "slots" && Number(slotState.free_spins) > 0;
     const selection = pickFor(game);
-    const amount = Math.round(Number(state.casinoStake[game]) || 0);
+    const amount = usingSlotFreeSpin
+      ? Number(slotState.spin_bet)
+      : Math.round(Number(state.casinoStake[game]) || 0);
     const info = stakeState(game);
-    if (info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return; }
-    if (info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return; }
-    if (!canBet() || amount > balance()) {
+    if (!usingSlotFreeSpin && info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return; }
+    if (!usingSlotFreeSpin && info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return; }
+    if (!usingSlotFreeSpin && (!canBet() || amount > balance())) {
       haptic("bad");
       openNoCoinsSheet(minBet());
       return;
@@ -4732,20 +4927,29 @@
       if (state.game === game) {
         if (game === "roulette") await spinRouletteTo(data.number);
         else if (game === "plinko") await animatePlinko(data);
+        else if (game === "slots") await animateSlots(data);
         else await rollDiceTo(data.dice);
       }
 
+      const roundAmount = Number(data.amount ?? amount);
+      if (game === "slots") {
+        state.casino.slot_state = {
+          free_spins: Number(data.free_spins_remaining) || 0,
+          spin_bet: Number(data.free_spin_bet) || 0,
+        };
+      }
       setBalance(data.balance);
       state.casinoResults[game] = data;
       const onScreen = state.tab === "games" && state.game === game;
-      if (onScreen) paintOutcome(data, { pop: true });
-      else {
+      if (onScreen) {
+        if (game !== "slots") paintOutcome(data, { pop: true });
+      } else {
         // результат некуда рисовать — говорим тостом, но именно про эту игру
-        const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : "Кости";
+        const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : game === "slots" ? "Слот-машина" : "Кости";
         toast(`${name} · ${outcomeText(data)} · ` +
           (data.win
-            ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - amount)}`
-            : `проигрыш ${money(amount)}`), data.win ? "ok" : "bad");
+            ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`
+            : `проигрыш ${money(roundAmount)}`), data.win ? "ok" : "bad");
       }
       haptic(data.win ? "ok" : "bad");
 
@@ -4760,25 +4964,26 @@
       // сводку и историю ведём локально, чтобы не перерисовывать колесо
       const summary = state.casino.summary;
       summary.rounds += 1;
-      summary.staked += amount;
+      summary.staked += roundAmount;
       summary.paid += data.payout;
-      summary.net += data.payout - amount;
+      summary.net += data.payout - roundAmount;
       if (data.win) summary.wins += 1;
       state.casino.history = [{
         id: data.round,
         game,
         label: data.label,
-        amount,
+        amount: roundAmount,
         odds: data.odds,
-        outcome: String(data.outcome),
+        outcome: game === "slots" ? JSON.stringify(data) : String(data.outcome),
         win: Boolean(data.win),
         payout: data.payout,
         at: Math.floor(Date.now() / 1000),
       }].concat(state.casino.history || []).slice(0, 12);
 
       if (data.win) {
-        toast(`Выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - amount)}`, "ok");
+        toast(`Выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`, "ok");
       }
+      if (onScreen && game === "slots") renderSlots($("#games"));
     } catch (err) {
       toast(err.message, "bad");
     } finally {

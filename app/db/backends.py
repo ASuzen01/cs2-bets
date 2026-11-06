@@ -169,6 +169,14 @@ CREATE TABLE IF NOT EXISTS casino_bets (
 );
 CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
 
+-- незавершённые фри-спины и их зафиксированная ставка хранятся на сервере
+CREATE TABLE IF NOT EXISTS slot_states (
+    user_id     INTEGER PRIMARY KEY,
+    free_spins  INTEGER NOT NULL DEFAULT 0,
+    spin_bet    INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL
+);
+
 -- активная партия «Лесенки»: скрытое окно хранится только на сервере
 CREATE TABLE IF NOT EXISTS ladder_games (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

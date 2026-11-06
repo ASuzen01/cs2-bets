@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -77,6 +77,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "wheel_spins",
     "tease_claims",
     "casino_bets",
+    "slot_states",
     "ladder_games",
     "blackjack_games",
     "crash_games",
@@ -111,6 +112,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("wheel_spins", "user_id"),
     ("tease_claims", "user_id"),
     ("casino_bets", "user_id"),
+    ("slot_states", "user_id"),
     ("ladder_games", "user_id"),
     ("blackjack_games", "user_id"),
     ("crash_games", "user_id"),
@@ -1334,6 +1336,136 @@ class Database:
             round_id = int(inserted.lastrowid or 0)
             await self._remember_token(conn, user_id, "casino", tap, round_id)
             return await self._balance_in(conn, user_id), round_id
+
+    async def slot_state(self, user_id: int) -> dict[str, int]:
+        """Saved free spins and their locked total-spin wager."""
+        row = await self._fetchone(
+            "SELECT free_spins, spin_bet FROM slot_states WHERE user_id = ?",
+            (user_id,),
+        )
+        if row is None:
+            return {"free_spins": 0, "spin_bet": 0}
+        return {"free_spins": int(row["free_spins"]), "spin_bet": int(row["spin_bet"])}
+
+    async def play_slot(
+        self,
+        user_id: int,
+        amount: int,
+        *,
+        spin: Callable[[int, bool], dict[str, Any]],
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Commit one paid/free slot spin, balance, result, and bonus state atomically."""
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+        tap = self._clean_token(token)
+        now = int(time.time())
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "slot", tap, now)
+            if duplicate is not None:
+                previous = duplicate or await self._previous_id(conn, user_id, "slot", tap)
+                row = await (
+                    await conn.execute(
+                        "SELECT outcome FROM casino_bets WHERE id = ? AND user_id = ? AND game = 'slots'",
+                        (previous, user_id),
+                    )
+                ).fetchone()
+                if row is None:
+                    raise InvalidBet("Этот спин уже обработан")
+                previous_result = json.loads(str(row["outcome"]))
+                previous_result["round"] = previous
+                previous_result["balance"] = await self._balance_in(conn, user_id)
+                return previous_result
+
+            saved = await (
+                await conn.execute(
+                    "SELECT free_spins, spin_bet FROM slot_states WHERE user_id = ?",
+                    (user_id,),
+                )
+            ).fetchone()
+            available_free_spins = int(saved["free_spins"]) if saved is not None else 0
+            is_free = available_free_spins > 0
+            wager = int(saved["spin_bet"]) if is_free and saved is not None else int(amount)
+            if wager <= 0:
+                raise InvalidBet("Ставка для фри-спина не найдена")
+
+            if not is_free:
+                cur = await conn.execute(
+                    "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                    (wager, user_id, wager),
+                )
+                if cur.rowcount == 0:
+                    raise InsufficientFunds("Недостаточно монет на балансе")
+                await self._ledger(conn, user_id, -wager, "ставка · слот-машина", now)
+                await self._bump_quest(conn, user_id, "casino", now)
+
+            result = spin(wager, is_free)
+            payout = int(result.get("payout", 0))
+            if payout < 0:
+                raise InvalidBet("Выплата не может быть отрицательной")
+            awarded = int(result.get("awarded_free_spins", 0)) if not is_free else 0
+            remaining = max(0, available_free_spins - 1) if is_free else awarded
+            stored_bet = wager if remaining else 0
+            round_amount = 0 if is_free else wager
+            label = "Слот-машина · фри-спин" if is_free else "Слот-машина · платный спин"
+            response = {
+                **result,
+                "game": "slots",
+                "selection": "free_spin" if is_free else "paid_spin",
+                "label": label,
+                "amount": round_amount,
+                "spin_bet": wager,
+                "odds": round(payout / wager, 4) if wager else 0.0,
+                "win": payout > 0 if is_free else payout > wager,
+                "free_spin": is_free,
+                "free_spins_remaining": remaining,
+                "free_spin_bet": stored_bet,
+            }
+
+            if payout:
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (payout, user_id),
+                )
+                await self._ledger(
+                    conn,
+                    user_id,
+                    payout,
+                    "выплата · слот-машина · фри-спин" if is_free else "выигрыш · слот-машина",
+                    now,
+                )
+
+            await conn.execute(
+                """INSERT INTO slot_states (user_id, free_spins, spin_bet, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                     free_spins = excluded.free_spins,
+                     spin_bet = excluded.spin_bet,
+                     updated_at = excluded.updated_at""",
+                (user_id, remaining, stored_bet, now),
+            )
+            outcome_json = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+            inserted = await conn.execute(
+                """INSERT INTO casino_bets
+                   (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+                   VALUES (?, 'slots', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    response["selection"],
+                    label,
+                    round_amount,
+                    response["odds"],
+                    outcome_json,
+                    1 if response["win"] else 0,
+                    payout,
+                    now,
+                ),
+            )
+            round_id = int(inserted.lastrowid or 0)
+            await self._remember_token(conn, user_id, "slot", tap, round_id)
+            response["round"] = round_id
+            response["balance"] = await self._balance_in(conn, user_id)
+            return response
 
     @staticmethod
     def _blackjack_payload(game_id: int, state: dict[str, Any], balance: int) -> dict[str, Any]:

@@ -22,7 +22,7 @@ from aiohttp import web
 from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
-from app.services import achievements, games
+from app.services import achievements, games, slot_machine
 from app.services import blackjack as blackjack_game
 from app.services import crash as crash_game
 from app.services import ladder as ladder_game
@@ -929,6 +929,8 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
             "dice": games.game_options("dice"),
         },
         "plinko": games.plinko_config(),
+        "slots": slot_machine.slot_config(),
+        "slot_state": await db.slot_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
         "max_bet": CASINO_MAX_BET,
@@ -966,7 +968,7 @@ async def api_casino_state(request: web.Request) -> web.Response:
 
 
 async def api_casino_play(request: web.Request) -> web.Response:
-    """Раунд рулетки, костей или Плинко.
+    """Раунд рулетки, костей, Плинко или слот-машины.
 
     Клиент присылает игру, выбор и сумму. Исход бросает сервер (`services.games`),
     клиент получает его уже готовым и только доигрывает анимацию до нужного числа.
@@ -979,7 +981,7 @@ async def api_casino_play(request: web.Request) -> web.Response:
     selection = str(body.get("selection") or "").strip().lower()
     amount = _as_int(body.get("amount"))
 
-    if game not in ("roulette", "dice", "plinko"):
+    if game not in ("roulette", "dice", "plinko", "slots"):
         return _bad("Такой игры нет")
     if amount < settings.min_bet:
         return _bad(f"Минимальная ставка — {settings.min_bet} 🪙")
@@ -989,6 +991,21 @@ async def api_casino_play(request: web.Request) -> web.Response:
         return _bad("Выбери, на что ставишь")
 
     metrics.count_casino()
+    if game == "slots":
+        try:
+            result = await db.play_slot(
+                user_id,
+                amount,
+                spin=lambda wager, free: slot_machine.spin(wager, free_spin=free),
+                token=body.get("token"),
+            )
+        except InsufficientFunds:
+            return _bad("Недостаточно монет на балансе")
+        except InvalidBet as exc:
+            return _bad(str(exc))
+        await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
+        return web.json_response({"ok": True, **result})
+
     try:
         result = games.play(game, selection, amount)
     except ValueError as exc:
