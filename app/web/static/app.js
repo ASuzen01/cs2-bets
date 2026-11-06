@@ -3273,25 +3273,21 @@
     if (input) input.disabled = state.casinoBusy || lockSlotStake;
 
     const estimate = potential(game);
-    const odds = estimate.odds;
     const meta = $("#betMeta");
     if (meta) {
       meta.textContent = "";
       meta.classList.toggle("warn", !stakeOk(game));
-      meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
       if (game === "plinko") {
+        meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
         meta.append(el("span", null, `Ячейки: ×${estimate.minMultiplier.toFixed(2)}–×${estimate.maxMultiplier.toFixed(2)} · выплата зависит от траектории`));
       } else if (game === "slots") {
         const slotState = state.casino && state.casino.slot_state || { free_spins: 0 };
+        meta.append(el("span", null, "Ставка: " + money(info.raw || 0)));
         meta.append(el("span", null, Number(slotState.free_spins) > 0
           ? `${slotState.free_spins} фри-спинов · ставка зафиксирована ${money(slotState.spin_bet)}`
           : `Общая ставка за спин · ${state.casino.slots.ways} ways`));
       } else {
-        const payout = odds ? roundPayout(info.raw || 0, odds) : null;
-        meta.append(el("span", null,
-          "кэф ×" + (odds ? odds.toFixed(2) : "—") + " · выплата " +
-          (payout === null ? "—" : money(payout)) + " · чистая прибыль " +
-          (payout === null ? "—" : moneySigned(payout - (info.raw || 0)))));
+        fillBetMeta(meta, game, info.raw || 0);
       }
     }
 
@@ -3458,12 +3454,68 @@
     const groups = [];
     options.forEach((option) => {
       if (String(option.code).indexOf("straight:") === 0) return;   // числа живут в отдельной сетке
+      if (game === "roulette" && option.code === "zero") return;  // зеро уже выбирается кнопкой 0 в сетке
       const name = option.group || "Ставки";
       let bucket = groups.find((item) => item.name === name);
       if (!bucket) { bucket = { name, items: [] }; groups.push(bucket); }
       bucket.items.push(option);
     });
     return groups;
+  }
+
+  function rouletteGroupHint(name) {
+    return ({
+      "Числа": "Выигрыш только если выпадет именно выбранный номер.",
+      "Цвет": "Угадай цвет лунки. Ноль зелёный и не считается красным или чёрным.",
+      "Чёт/нечет": "Угадай чётность числа. Ноль проигрывает обеим ставкам.",
+      "Половина": "Выбери диапазон 1–18 или 19–36. Ноль не входит ни в один.",
+      "Дюжина": "Выбери один диапазон из 12 чисел; ноль не входит.",
+      "Колонка": "1-я: 1, 4, 7…34 · 2-я: 2, 5, 8…35 · 3-я: 3, 6, 9…36. Ноль не входит.",
+
+    })[name] || "Выбери, какой результат должен выпасть.";
+  }
+
+  function selectedBetDescription(game) {
+    const pick = pickFor(game);
+    if (game === "roulette") {
+      const descriptions = {
+        red: "красное число (0 не подходит)",
+        black: "чёрное число (0 не подходит)",
+        even: "чётное число 1–36 (0 проигрывает)",
+        odd: "нечётное число 1–36 (0 проигрывает)",
+        low: "число 1–18 (0 проигрывает)",
+        high: "число 19–36 (0 проигрывает)",
+        "dozen:1": "дюжина 1–12",
+        "dozen:2": "дюжина 13–24",
+        "dozen:3": "дюжина 25–36",
+        "column:1": "1-я колонка: 1, 4, 7…34",
+        "column:2": "2-я колонка: 2, 5, 8…35",
+        "column:3": "3-я колонка: 3, 6, 9…36",
+        zero: "зелёный 0",
+      };
+      if (pick.startsWith("straight:")) return `точное число ${pick.split(":")[1]}`;
+      return descriptions[pick] || "выбранная ставка";
+    }
+    if (game === "dice") {
+      if (pick === "under") return "сумма двух кубиков 2–6";
+      if (pick === "over") return "сумма двух кубиков 8–12";
+      if (pick.startsWith("exact:")) return `точная сумма двух кубиков — ${pick.split(":")[1]}`;
+    }
+    const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
+    const option = options.find((item) => item.code === pick);
+    return option ? `исход «${option.label}»` : "выбранный исход";
+  }
+
+  function fillBetMeta(meta, game, amount) {
+    const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
+    const option = options.find((item) => item.code === pickFor(game));
+    const odds = option ? Number(option.odds) : 0;
+    const payout = odds ? roundPayout(amount, odds) : null;
+    meta.append(el("span", "bet-meaning",
+      `Выбрано: ${selectedBetDescription(game)} · ставка ${money(amount)}`));
+    meta.append(el("span", "bet-return", payout === null
+      ? "Выигрыш зависит от выпавшего результата."
+      : `При выигрыше выплата ${money(payout)} всего (ставка включена) · чистая прибыль ${moneySigned(payout - amount)} · коэффициент ×${odds.toFixed(2)}`));
   }
 
   function betChip(option, active) {
@@ -5056,19 +5108,22 @@
     host.append(tableHead(game));
     host.append(outcomeNode());
 
-    const field = el("div", "casino-field");
+    const field = el("div", "casino-field" + (game === "roulette" ? " roulette-field" : ""));
     if (game === "roulette") {
-      const numbers = el("div", "bet-group");
+      const numbers = el("div", "bet-group roulette-bet-group");
       numbers.append(el("h4", null, "Точное число"));
+      numbers.append(el("p", "bet-hint", rouletteGroupHint("Числа")));
       numbers.append(numberBoard(pick));
       field.append(numbers);
     }
     optionGroups(game).forEach((group) => {
-      const block = el("div", "bet-group");
+      const block = el("div", "bet-group" + (game === "roulette" ? " roulette-bet-group" : ""));
       block.append(el("h4", null, group.name));
+      if (game === "roulette") block.append(el("p", "bet-hint", rouletteGroupHint(group.name)));
       const grid = el("div", "bet-grid");
       // длинные подписи («Меньше 7 (2–6)», «Ровно 12») не влезают в строку с кэфом
-      if (group.items.some((option) => String(option.label).length > 7)) grid.classList.add("stack");
+      if (game === "roulette") grid.classList.add("roulette-bet-options");
+      else if (group.items.some((option) => String(option.label).length > 7)) grid.classList.add("stack");
       group.items.forEach((option) => grid.append(betChip(option, option.code === pick)));
       block.append(grid);
       field.append(block);
@@ -5080,11 +5135,8 @@
     const info = potential(game);
     const meta = el("div", "bet-meta");
     meta.id = "betMeta";
-    meta.append(el("span", null, "Ставка: " + money(info.stake)));
-    meta.append(el("span", null,
-      "кэф ×" + (info.odds ? info.odds.toFixed(2) : "—") + " · выплата " +
-      (info.payout === null ? "—" : money(info.payout)) + " · чистая прибыль " +
-      (info.profit === null ? "—" : moneySigned(info.profit))));
+    meta.classList.toggle("warn", !stakeOk(game));
+    fillBetMeta(meta, game, stakeState(game).raw || 0);
     host.append(meta);
 
     const play = el("button", "btn play");
