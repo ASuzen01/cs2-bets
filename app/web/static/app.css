@@ -578,7 +578,23 @@
   .casino-dock-bet-selection{min-width:0;color:#f0e4c4;font-size:12px;font-weight:800;line-height:1.2;
     display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
   .casino-dock-bet-amount{grid-column:2;grid-row:2;color:#efd28d;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .casino-play-dock .roulette-wrap{width:min(62vw,220px)}
+  .casino-play-dock .roulette-wrap{width:min(50vw,180px)}
+  body.roulette-spinning{overflow:hidden}
+  body.roulette-spinning #casinoPlayDock{position:fixed!important;inset:0!important;z-index:30;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;transform:none!important;
+    width:100vw;max-width:none;height:100dvh;max-height:100dvh;margin:0;overflow:hidden;
+    padding:calc(var(--app-safe-top) + 12px) var(--app-safe-right) calc(var(--app-safe-bottom) + 12px) var(--app-safe-left);
+    border:0;background:radial-gradient(ellipse at 50% 46%,#17212c 0,#090b0e 72%);box-shadow:none;backdrop-filter:none;touch-action:none}
+  body.roulette-spinning #casinoPlayDock .game-back,
+  body.roulette-spinning #casinoPlayDock .casino-outcome,
+  body.roulette-spinning #casinoPlayDock .casino-dock-bet,
+  body.roulette-spinning #casinoPlayDock #playBtn{display:none!important}
+  body.roulette-spinning #casinoPlayDock .casino-panel{display:grid;place-items:center;width:100%;max-width:none;
+    min-height:0;margin:0;padding:0;border:0;background:transparent;box-shadow:none;overflow:visible}
+  body.roulette-spinning #casinoPlayDock .felt-glow,
+  body.roulette-spinning #casinoPlayDock .numstrip{display:none}
+  body.roulette-spinning #casinoPlayDock .roulette-wrap{width:min(92vw,430px,
+    calc(100dvh - var(--app-safe-top) - var(--app-safe-bottom) - 48px));margin:0;transition:width .22s ease}
   .casino-play-dock .dice-stage{min-height:132px}
   .casino-play-dock .dice-wrap{padding:8px 0 26px}
   .casino-play-dock .casino-outcome{margin:0 0 6px}

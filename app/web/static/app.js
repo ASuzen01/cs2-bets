@@ -5156,6 +5156,7 @@
   function syncCasinoDockSpacer() {
     const dock = $("#casinoPlayDock");
     const spacer = $("#casinoDockSpacer");
+    if (document.body.classList.contains("roulette-spinning")) return;
     if (dock && spacer && dock.classList.contains("is-fixed")) {
       spacer.style.height = `${dock.offsetHeight}px`;
     }
@@ -5170,6 +5171,7 @@
         clearCasinoDockTracking();
         return;
       }
+      if (document.body.classList.contains("roulette-spinning")) return;
       const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
       const naturalTop = scrollY + spacer.getBoundingClientRect().top;
       const safeTop = parseFloat(getComputedStyle(document.documentElement)
@@ -5443,6 +5445,8 @@
     }
 
     state.casinoBusy = true;
+    const showRouletteSpin = game === "roulette" && state.tab === "games" && state.game === "roulette";
+    if (showRouletteSpin) document.body.classList.add("roulette-spinning");
     state.casinoToken = state.casinoToken || newToken();
     const token = state.casinoToken;
     state.casinoResults[game] = null;
@@ -5523,6 +5527,8 @@
       toast(err.message, "bad");
       return false;
     } finally {
+      document.body.classList.remove("roulette-spinning");
+      if (state.casinoDockScrollHandler) state.casinoDockScrollHandler();
       state.casinoBusy = false;
       lockTable(false);
       refreshSide();
