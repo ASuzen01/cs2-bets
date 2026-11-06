@@ -172,8 +172,11 @@ async def test_dump_logged_and_throttled(db) -> None:
     assert int(last["size_bytes"]) > 0
 
 
-async def test_auto_backup_respects_interval(db) -> None:
+async def test_auto_backup_respects_interval(db, monkeypatch) -> None:
+    from app.config import settings
     from app.services.backup import BackupService
+
+    monkeypatch.setattr(settings, "admin_ids", "123")
 
     class NullBot:
         async def send_document(self, **kwargs):
@@ -190,10 +193,12 @@ def test_encode_is_compact_gzip() -> None:
     assert decode(blob)["counts"] == {"users": 1}
 
 
-async def test_hourly_backup_fires_after_interval(db) -> None:
+async def test_hourly_backup_fires_after_interval(db, monkeypatch) -> None:
     """Копии раз в час: через 61 минуту сервис снимает новую."""
     from app.config import settings
     from app.services.backup import BackupService
+
+    monkeypatch.setattr(settings, "admin_ids", "123")
 
     class NullBot:
         async def send_document(self, **kwargs):
