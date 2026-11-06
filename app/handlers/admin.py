@@ -9,6 +9,7 @@
     /version               — версия, коммит, uptime и backend
     /services              — фоновые задачи и состояние синхронизации
     /player 123456789      — профиль и последние операции игрока
+    /player_stats 123456789 — оборот, выплаты, ROI и winrate игрока
     /bettrace 42           — трассировка ставки, экспресса или казино
     /feed                  — статус спортивной линии
     /players               — список игроков с id, чтобы знать кому начислять
@@ -748,6 +749,58 @@ async def cmd_player(
     await _send_player_diagnostics(message, db, user_id)
 
 
+async def _send_player_stats(message: Message, db: Database, user_id: int) -> None:
+    user = await db.get_user(user_id)
+    if user is None:
+        await message.answer(f"Игрок <code>{user_id}</code> не найден.")
+        return
+
+    stats = await db.player_stats(user_id)
+    active_bets = await db.user_active_bets(user_id)
+    active_expresses = await db.user_open_expresses(user_id)
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else "без имени")
+    staked = int(stats["staked"])
+    returned = int(stats["returned"])
+    net = returned - staked
+    net_text = ("+" if net >= 0 else "−") + texts.money(abs(net))
+    tournament = str(stats["favourite_tournament"] or "нет данных")
+
+    lines = [
+        f"<b>Статистика игрока {html.escape(str(name))}</b> · <code>{user_id}</code>",
+        f"Баланс: {texts.money(int(user['balance']))}",
+        f"Спорт: {int(stats['bets'])} ставок/экспрессов · рассчитано {int(stats['settled'])} · "
+        f"выиграно {int(stats['won'])} · winrate {int(stats['winrate'])}%",
+        f"Открыто: {len(active_bets)} ставок · {len(active_expresses)} экспрессов",
+        f"Общий оборот (спорт + казино): поставлено {texts.money(staked)}, "
+        f"возвращено {texts.money(returned)}",
+        f"Итог: <b>{net_text}</b> · ROI {int(stats['roi'])}%",
+        f"Казино: {int(stats['casino_rounds'])} раундов · результат "
+        f"{('+' if int(stats['casino_net']) >= 0 else '−')}{texts.money(abs(int(stats['casino_net'])))}",
+        f"Крупнейшая спортивная выплата: {texts.money(int(stats['biggest_win']))}",
+        f"Частый турнир: {html.escape(tournament)}",
+    ]
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("player_stats"))
+async def cmd_player_stats(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
+    """Сводная статистика игрока: /player_stats ID или выбор из списка."""
+    args = (command.args or "").split()
+    if not args:
+        await _begin_player_flow(message, state, db, "player_stats")
+        return
+    if len(args) != 1 or not args[0].isdigit() or int(args[0]) <= 0:
+        await message.reply("Формат: <code>/player_stats ID</code> или выберите игрока из списка.")
+        return
+    user_id = int(args[0])
+    if user_id > 2**63 - 1:
+        await message.reply("Telegram ID слишком большой.")
+        return
+    await _send_player_stats(message, db, user_id)
+
+
 async def _continue_admin_player_flow(
     message: Message, state: FSMContext, db: Database, user: Any
 ) -> None:
@@ -756,6 +809,9 @@ async def _continue_admin_player_flow(
     if action == "player":
         await state.clear()
         await _send_player_diagnostics(message, db, int(user["user_id"]))
+    elif action == "player_stats":
+        await state.clear()
+        await _send_player_stats(message, db, int(user["user_id"]))
     elif action in ("grant", "freebet", "freebet_express"):
         await _begin_amount_flow(message, state, str(action), user)
     else:

@@ -84,6 +84,42 @@ async def test_freebet_command_flow_prompts_to_choose_player_and_amount(db: Data
     assert "Введите сумму" in message.answers[-1][0]
 
 
+async def test_player_stats_summary_includes_roi_winrate_and_open_counts(db: Database) -> None:
+    from app.handlers.admin import _send_player_stats
+
+    match = await make_match(db, 99000, 0)
+    match_id = int(match["id"])
+    await db.place_bet(match_id, USER_ID, None, "a", 100)
+    await db.place_bet(match_id, USER_ID, None, "b", 50)
+    await db.set_status(match_id, "live")
+    await db.settle_match(match_id, "a")
+
+    message = FakeMessage()
+    await _send_player_stats(message, db, USER_ID)
+
+    text = message.answers[-1][0]
+    assert "Статистика игрока Debug User" in text
+    assert "рассчитано 2" in text and "выиграно 1" in text and "winrate 50%" in text
+    assert "Открыто: 0 ставок · 0 экспрессов" in text
+    assert "ROI 20%" in text
+    assert "поставлено 150" in text and "возвращено 180" in text
+    assert "Крупнейшая спортивная выплата: 180" in text
+
+
+async def test_player_stats_picker_flow_shows_selected_player(db: Database) -> None:
+    from app.handlers.admin import _continue_admin_player_flow
+
+    message = FakeMessage()
+    state = FakeState()
+    await state.update_data(action="player_stats")
+    user = await db.get_user(USER_ID)
+
+    await _continue_admin_player_flow(message, state, db, user)
+
+    assert state.data == {}
+    assert "Статистика игрока Debug User" in message.answers[-1][0]
+
+
 async def test_trace_single_includes_ticket_and_match(db: Database) -> None:
     match = await make_match(db, 99001, 1)
     ticket_id = await db.add_ticket(USER_ID, 321, "админ", kind="single", ttl_seconds=86400)
@@ -153,6 +189,6 @@ def test_admin_menu_lists_registered_diagnostics_and_no_old_winback_command() ->
     assert {
         "results", "maps", "hockey", "cleanup", "recount", "recheck", "players",
         "stats", "grant", "freebet", "freebet_express", "best", "backup", "version", "services",
-        "player", "bettrace", "feed",
+        "player", "player_stats", "bettrace", "feed",
     } <= names
     assert "winback" not in names

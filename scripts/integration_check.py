@@ -173,6 +173,9 @@ async def check(bot, db, dp) -> None:
     await dp.feed_update(bot, message_update(2, "/help"))
     assert "Экспресс" in sent[-1], sent[-1][:80]  # /help теперь только про экспрессы
 
+    await dp.feed_update(bot, message_update(6, "/player_stats 777", user_id=777))
+    assert "Статистика игрока Антон" in sent[-1] and "ROI" in sent[-1], sent[-1]
+
     await dp.feed_update(bot, message_update(3, "привет, как поставить?"))
     assert "приложении" in sent[-1], sent[-1][:80]
 
