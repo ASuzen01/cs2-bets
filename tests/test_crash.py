@@ -20,6 +20,18 @@ def test_crash_distribution_endpoints_and_multiplier() -> None:
     assert crash.payout(50, 2.39) == 119
 
 
+def test_crash_probability_buckets_match_the_distribution() -> None:
+    # RNG uses every integer in [0, 1_000_000) with equal probability.
+    # Monotone boundary checks pin the exact counts in the x1.00 and below-x2 buckets.
+    assert crash.crash_point(54_455) == 1.00
+    assert crash.crash_point(54_456) == 1.01
+    assert crash.crash_point(522_499) == 1.99
+    assert crash.crash_point(522_500) == 2.00
+    assert pytest.approx(0.054456) == 54_456 / 1_000_000  # exactly x1.00
+    assert pytest.approx(0.5225) == 522_500 / 1_000_000  # x1.00 through x1.99
+    assert pytest.approx(crash.RTP) == 477_500 / 1_000_000 * 2  # reaches x2.00
+
+
 def test_crash_minimum_stake_without_maximum() -> None:
     assert crash.validate_stake(10) == 10
     assert crash.validate_stake(5_000) == 5_000

@@ -28,8 +28,9 @@ def validate_stake(amount: int) -> int:
 def crash_point(random_value: int | None = None) -> float:
     """Return a server-only crash point with P(crash >= x) ≈ RTP / x.
 
-    There is a 4.5% instant-crash atom at ×1.00. The distribution is rounded
-down to hundredths and capped only at an astronomically rare tail.
+    After clamping and rounding down to hundredths, 5.4456% of outcomes are
+    exactly ×1.00 (the unrounded theoretical atom is about 4.5%). The tail is
+    capped only at an astronomically rare multiplier.
     """
     value = secrets.randbelow(_SCALE) if random_value is None else int(random_value)
     if not 0 <= value < _SCALE:
