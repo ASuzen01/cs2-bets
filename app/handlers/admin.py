@@ -37,7 +37,10 @@ from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app import keyboards, texts
 from app.config import settings
@@ -63,10 +66,62 @@ MODULE_STARTED_AT = int(time.time())
 router = Router(name="admin")
 
 
+class AdminPlayerFlow(StatesGroup):
+    waiting_player = State()
+    waiting_manual_id = State()
+    waiting_amount = State()
+
+
 def callback_bot(message: Message) -> Bot:
     """Бот из апдейта — нужен для уведомлений игрокам."""
     assert message.bot is not None
     return message.bot
+
+
+def _player_picker_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for row in rows:
+        user_id = int(row["user_id"])
+        name = str(row["full_name"] or (f"@{row['username']}" if row["username"] else "игрок"))
+        label = f"{user_id} · {name}"
+        builder.button(text=label[:64], callback_data=f"admin_flow:player:{user_id}")
+    builder.button(text="Ввести ID вручную", callback_data="admin_flow:manual")
+    builder.button(text="Отмена", callback_data="admin_flow:cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _cancel_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Отмена", callback_data="admin_flow:cancel")
+    return builder.as_markup()
+
+
+async def _begin_player_flow(
+    message: Message, state: FSMContext, db: Database, action: str
+) -> None:
+    await state.clear()
+    await state.update_data(action=action)
+    await state.set_state(AdminPlayerFlow.waiting_player)
+    rows = await db.recent_users(limit=12)
+    await message.answer(
+        "Выберите игрока по ID или введите ID вручную:",
+        reply_markup=_player_picker_keyboard(rows),
+    )
+
+
+async def _begin_amount_flow(
+    message: Message, state: FSMContext, action: str, user: Any
+) -> None:
+    await state.clear()
+    await state.update_data(action=action, target_user_id=int(user["user_id"]))
+    await state.set_state(AdminPlayerFlow.waiting_amount)
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else "игрок")
+    await message.answer(
+        f"Игрок: {html.escape(str(name))} (<code>{int(user['user_id'])}</code>). "
+        "Введите сумму монет:",
+        reply_markup=_cancel_keyboard(),
+    )
 
 
 class IsAdmin(BaseFilter):
@@ -115,65 +170,23 @@ async def cmd_best(message: Message, command: CommandObject, db: Database) -> No
     await message.answer_photo(photo, caption=caption)
 
 
-@router.message(Command("grant"))
-async def cmd_grant(message: Message, command: CommandObject, db: Database) -> None:
-    """Начислить монеты: /grant 123456789 500, /grant @nick 500 или /grant nick 500."""
-    tokens = (command.args or "").split()
-    amount_token = tokens[-1] if tokens else ""
-    if len(tokens) != 2 or not amount_token.lstrip("-").isdigit():
-        await message.reply(
-            "Формат: <code>/grant 123456789 500</code> — id игрока и сумма.\n"
-            "Можно и по нику: <code>/grant @nick 500</code>.\n"
-            "Список игроков с id: /players"
-        )
-        return
-
-    ident, amount = tokens[0], int(amount_token)
-    user = await db.find_user(ident)
-    if user is None:
-        await message.reply(
-            f"Игрок <code>{ident}</code> не найден в базе.\n"
-            "Пусть друг откроет приложение через бота — тогда он появится в списке /players. "
-            "Свой id он может узнать командой /me."
-        )
-        return
-
+async def _apply_coin_grant(message: Message, db: Database, user: Any, amount: int) -> None:
     user_id = int(user["user_id"])
     balance = await db.add_coins(user_id, amount, "начисление админом")
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else f"id{user_id}")
     await message.reply(
-        f"Начислено {texts.money(amount)} игроку <b>{name}</b> (<code>{user_id}</code>).\n"
-        f"Его баланс: <b>{texts.money(balance)}</b>"
+        f"Начислено {texts.money(amount)} игроку <b>{html.escape(str(name))}</b> "
+        f"(<code>{user_id}</code>).\nБаланс: <b>{texts.money(balance)}</b>"
     )
 
 
-@router.message(Command("freebet"))
-async def cmd_freebet(message: Message, command: CommandObject, db: Database) -> None:
-    """Выдать игроку адресный фрибет любого поддерживаемого номинала."""
-    args = (command.args or "").split()
-    if len(args) != 2 or not all(token.isdigit() for token in args):
-        await message.reply(
-            "Формат: <code>/freebet ID СУММА</code>, например "
-            "<code>/freebet 5004062791 750</code>. Срок действия — 24 часа."
-        )
-        return
-
-    user_id, amount = map(int, args)
-    if user_id <= 0 or user_id > 2**63 - 1:
-        await message.reply("Укажи корректный положительный Telegram ID.")
-        return
-    if amount <= 0 or amount > 2**31 - 1:
-        await message.reply("Сумма должна быть от 1 до 2 147 483 647 монет.")
-        return
-
-    user = await db.find_user(str(user_id))
-    if user is None:
-        await message.reply(f"Игрок <code>{user_id}</code> не найден в базе.")
-        return
+async def _apply_freebet(
+    message: Message, db: Database, user: Any, amount: int
+) -> None:
+    user_id = int(user["user_id"])
     if message.from_user is None:
         await message.reply("Не удалось определить администратора; фрибет не выдан.")
         return
-
     request_key = f"{message.from_user.id}:{message.chat.id}:{message.message_id}:{amount}"
     ticket_id, status = await db.grant_admin_freebet(
         user_id,
@@ -211,6 +224,72 @@ async def cmd_freebet(message: Message, command: CommandObject, db: Database) ->
         f"Фрибет {amount} на 24 часа выдан игроку {html.escape(str(name))} "
         f"(<code>{user_id}</code>), билет #{ticket_id}. Уведомление отправлено."
     )
+
+
+async def _resolve_amount_target(
+    message: Message, state: FSMContext, db: Database, action: str, ident: str
+) -> None:
+    user = await db.find_user(ident)
+    if user is None:
+        await message.reply(f"Игрок <code>{html.escape(ident)}</code> не найден. Выберите другого или начните команду заново.")
+        return
+    await _begin_amount_flow(message, state, action, user)
+
+
+@router.message(Command("grant"))
+async def cmd_grant(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
+    """Начислить монеты: выбор игрока и суммы либо /grant ID|ник СУММА."""
+    tokens = (command.args or "").split()
+    if not tokens:
+        await _begin_player_flow(message, state, db, "grant")
+        return
+    if len(tokens) not in (1, 2):
+        await message.reply("Формат: /grant — выбрать игрока и сумму; или /grant ID СУММА.")
+        return
+    if len(tokens) == 1:
+        await _resolve_amount_target(message, state, db, "grant", tokens[0])
+        return
+
+    if not tokens[1].lstrip("-").isdigit():
+        await message.reply("Сумма должна быть целым числом. Формат: /grant ID СУММА.")
+        return
+    user = await db.find_user(tokens[0])
+    if user is None:
+        await message.reply(f"Игрок <code>{html.escape(tokens[0])}</code> не найден.")
+        return
+    await _apply_coin_grant(message, db, user, int(tokens[1]))
+
+
+@router.message(Command("freebet"))
+async def cmd_freebet(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
+    """Админский фрибет: выбрать игрока и сумму либо /freebet ID СУММА."""
+    args = (command.args or "").split()
+    if not args:
+        await _begin_player_flow(message, state, db, "freebet")
+        return
+    if len(args) not in (1, 2) or not args[0].isdigit():
+        await message.reply("Формат: /freebet — выбрать игрока и сумму; или /freebet ID СУММА.")
+        return
+
+    user_id = int(args[0])
+    if user_id <= 0 or user_id > 2**63 - 1:
+        await message.reply("Укажи корректный положительный Telegram ID.")
+        return
+    user = await db.get_user(user_id)
+    if user is None:
+        await message.reply(f"Игрок <code>{user_id}</code> не найден.")
+        return
+    if len(args) == 1:
+        await _begin_amount_flow(message, state, "freebet", user)
+        return
+    if not args[1].isdigit() or not 1 <= int(args[1]) <= 2**31 - 1:
+        await message.reply("Сумма должна быть от 1 до 2 147 483 647 монет.")
+        return
+    await _apply_freebet(message, db, user, int(args[1]))
 
 
 @router.message(Command("players"))
@@ -561,20 +640,10 @@ async def cmd_feed(message: Message, db: Database, syncer: Any) -> None:
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("player"))
-async def cmd_player(message: Message, command: CommandObject, db: Database) -> None:
-    """Read-only сводка по игроку: профиль, ставки, билеты и последние события."""
-    args = (command.args or "").split()
-    if len(args) != 1 or not args[0].isdigit() or int(args[0]) <= 0:
-        await message.reply("Формат: <code>/player ID</code>")
-        return
-    user_id = int(args[0])
-    if user_id > 2**63 - 1:
-        await message.reply("Telegram ID слишком большой.")
-        return
+async def _send_player_diagnostics(message: Message, db: Database, user_id: int) -> None:
     user = await db.get_user(user_id)
     if user is None:
-        await message.reply(f"Игрок <code>{user_id}</code> не найден.")
+        await message.answer(f"Игрок <code>{user_id}</code> не найден.")
         return
 
     name = user["full_name"] or (f"@{user['username']}" if user["username"] else "без имени")
@@ -620,6 +689,128 @@ async def cmd_player(message: Message, command: CommandObject, db: Database) -> 
             for row in events
         )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("player"))
+async def cmd_player(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
+    """Read-only сводка по игроку; без ID предлагает выбрать игрока."""
+    args = (command.args or "").split()
+    if not args:
+        await _begin_player_flow(message, state, db, "player")
+        return
+    if len(args) != 1 or not args[0].isdigit() or int(args[0]) <= 0:
+        await message.reply("Формат: <code>/player ID</code> или выберите игрока из списка.")
+        return
+    user_id = int(args[0])
+    if user_id > 2**63 - 1:
+        await message.reply("Telegram ID слишком большой.")
+        return
+    await _send_player_diagnostics(message, db, user_id)
+
+
+async def _continue_admin_player_flow(
+    message: Message, state: FSMContext, db: Database, user: Any
+) -> None:
+    data = await state.get_data()
+    action = data.get("action")
+    if action == "player":
+        await state.clear()
+        await _send_player_diagnostics(message, db, int(user["user_id"]))
+    elif action in ("grant", "freebet"):
+        await _begin_amount_flow(message, state, str(action), user)
+    else:
+        await state.clear()
+        await message.answer("Сценарий устарел. Запустите команду ещё раз.")
+
+
+@router.callback_query(F.data.startswith("admin_flow:"))
+async def on_admin_player_flow(
+    callback: CallbackQuery, state: FSMContext, db: Database
+) -> None:
+    if callback.from_user is None or callback.from_user.id not in settings.admin_ids_set:
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+    if not isinstance(callback.message, Message):
+        await callback.answer("Сообщение со списком недоступно", show_alert=True)
+        return
+
+    action = str(callback.data or "").split(":", 2)
+    if len(action) < 2:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    choice = action[1]
+    current = await state.get_state()
+    if choice == "cancel":
+        await state.clear()
+        with contextlib.suppress(Exception):
+            await callback.message.edit_text("Действие отменено.", reply_markup=None)
+        await callback.answer("Отменено")
+        return
+    if current != AdminPlayerFlow.waiting_player.state:
+        await callback.answer("Список устарел — запустите команду заново.", show_alert=True)
+        return
+    if choice == "manual":
+        await state.set_state(AdminPlayerFlow.waiting_manual_id)
+        await callback.message.answer(
+            "Введите Telegram ID игрока:", reply_markup=_cancel_keyboard()
+        )
+        await callback.answer()
+        return
+    if choice != "player" or len(action) != 3 or not action[2].isdigit():
+        await callback.answer("Некорректный выбор", show_alert=True)
+        return
+
+    user_id = int(action[2])
+    user = await db.get_user(user_id)
+    if user is None:
+        await callback.answer("Игрок больше не найден", show_alert=True)
+        return
+    await callback.answer()
+    await _continue_admin_player_flow(callback.message, state, db, user)
+
+
+@router.message(AdminPlayerFlow.waiting_manual_id, F.text & ~F.text.startswith("/"))
+async def on_admin_manual_player_id(
+    message: Message, state: FSMContext, db: Database
+) -> None:
+    token = (message.text or "").strip()
+    if not token.isdigit() or not 0 < int(token) <= 2**63 - 1:
+        await message.reply("ID должен быть положительным числом.", reply_markup=_cancel_keyboard())
+        return
+    user = await db.get_user(int(token))
+    if user is None:
+        await message.reply("Игрок не найден. Введите другой ID или отмените действие.",
+                            reply_markup=_cancel_keyboard())
+        return
+    await _continue_admin_player_flow(message, state, db, user)
+
+
+@router.message(AdminPlayerFlow.waiting_amount, F.text & ~F.text.startswith("/"))
+async def on_admin_amount(
+    message: Message, state: FSMContext, db: Database
+) -> None:
+    token = (message.text or "").strip().replace(" ", "")
+    if not token.isdigit() or not 1 <= int(token) <= 2**31 - 1:
+        await message.reply("Введите целую сумму от 1 до 2 147 483 647.",
+                            reply_markup=_cancel_keyboard())
+        return
+    data = await state.get_data()
+    action = data.get("action")
+    user_id = int(data.get("target_user_id") or 0)
+    user = await db.get_user(user_id)
+    if user is None:
+        await state.clear()
+        await message.reply("Игрок больше не найден. Запустите команду заново.")
+        return
+    await state.clear()
+    if action == "grant":
+        await _apply_coin_grant(message, db, user, int(token))
+    elif action == "freebet":
+        await _apply_freebet(message, db, user, int(token))
+    else:
+        await message.reply("Сценарий устарел. Запустите команду заново.")
 
 
 @router.message(Command("bettrace"))
