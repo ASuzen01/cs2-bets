@@ -3371,6 +3371,7 @@
         fillBetMeta(meta, game, info.raw || 0);
       }
     }
+    updateCasinoDockBetSummary(game);
 
     const play = $("#playBtn");
     if (play) {
@@ -3585,6 +3586,17 @@
     const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
     const option = options.find((item) => item.code === pick);
     return option ? `исход «${option.label}»` : "выбранный исход";
+  }
+
+  function updateCasinoDockBetSummary(game) {
+    const summary = $("#casinoDockBetSummary");
+    if (!summary) return;
+    const info = stakeState(game);
+    summary.replaceChildren(
+      el("span", "casino-dock-bet-label", "Ставка в раунде"),
+      el("span", "casino-dock-bet-selection", selectedBetDescription(game)),
+      el("b", "casino-dock-bet-amount", money(info.raw || info.min)),
+    );
   }
 
   function fillBetMeta(meta, game, amount) {
@@ -5237,9 +5249,11 @@
     const fixedControls = game === "roulette" || game === "dice";
     const playDock = fixedControls ? el("div", "casino-play-dock") : null;
     const playDockSpacer = fixedControls ? el("div", "casino-play-dock-spacer") : null;
+    const dockBetSummary = fixedControls ? el("div", "casino-dock-bet") : null;
     if (playDock) {
       playDock.id = "casinoPlayDock";
       playDockSpacer.id = "casinoDockSpacer";
+      dockBetSummary.id = "casinoDockBetSummary";
       playDock.append(gameBackButton(), tableHead(game), outcomeNode());
       host.append(playDockSpacer, playDock);
     } else {
@@ -5281,8 +5295,10 @@
     play.id = "playBtn";
     play.type = "button";
     play.textContent = (game === "roulette" ? "Крутить колесо" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.stake);
-    if (playDock) playDock.append(play);
-    else host.append(play);
+    if (playDock) {
+      playDock.append(dockBetSummary, play);
+      updateCasinoDockBetSummary(game);
+    } else host.append(play);
 
     host.append(summaryNode());
     host.append(historyNode(), gameInfoNode(game));

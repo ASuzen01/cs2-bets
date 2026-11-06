@@ -13,6 +13,8 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     font-size:15px;line-height:1.45;overscroll-behavior-y:contain}
   body{padding:var(--app-safe-top) var(--app-safe-right) calc(var(--tabbar) + 12px + var(--app-safe-bottom)) var(--app-safe-left)}
+  #telegramSafeAreaShield{position:fixed;z-index:8;top:0;left:0;right:0;height:var(--app-safe-top);
+    background:var(--bg);pointer-events:none}
   button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 
   header{position:relative;display:flex;align-items:center;gap:10px;
@@ -569,7 +571,14 @@
   .casino-play-dock-spacer{height:0;pointer-events:none}
   .casino-play-dock .casino-panel{padding:7px 10px 8px;margin:0 0 6px}
   .casino-play-dock .game-back{width:auto;min-height:30px;padding:5px 11px;margin:0 auto 5px;font-size:12px}
-  .casino-play-dock .roulette-wrap{width:min(68vw,245px)}
+  .casino-dock-bet{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1px 9px;
+    min-height:40px;margin:0 0 6px;padding:5px 10px;border:1px solid rgba(214,182,109,.42);
+    border-left:3px solid #d6b66d;border-radius:11px;background:linear-gradient(145deg,#211d14,#15130f)}
+  .casino-dock-bet-label{grid-column:1/-1;color:#aa9a74;font-size:9px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+  .casino-dock-bet-selection{min-width:0;color:#f0e4c4;font-size:12px;font-weight:800;line-height:1.2;
+    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+  .casino-dock-bet-amount{grid-column:2;grid-row:2;color:#efd28d;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .casino-play-dock .roulette-wrap{width:min(62vw,220px)}
   .casino-play-dock .dice-stage{min-height:132px}
   .casino-play-dock .dice-wrap{padding:8px 0 26px}
   .casino-play-dock .casino-outcome{margin:0 0 6px}
