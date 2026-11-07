@@ -55,19 +55,22 @@ def test_payout_table_fixed_stakes_and_half_up_rounding() -> None:
 
 
 def test_questions_are_diverse_and_have_four_unique_options() -> None:
-    assert len(millionaire.QUESTIONS) == 30
+    assert len(millionaire.QUESTIONS) == 18_188
     assert len({item.id for item in millionaire.QUESTIONS}) == len(millionaire.QUESTIONS)
     for item in millionaire.QUESTIONS:
+        assert item.stage in range(1, 16)
         assert len(item.options) == 4
         assert len(set(item.options)) == 4
         assert 0 <= item.answer < 4
-    for band in ("easy", "medium", "hard"):
-        assert sum(item.band == band for item in millionaire.QUESTIONS) == 10
+    for stage in range(1, 16):
+        assert sum(item.stage == stage for item in millionaire.QUESTIONS) > 0
 
 
-def test_random_selection_is_fifteen_unique_questions_with_five_per_band() -> None:
+def test_random_selection_is_one_unique_question_for_each_of_fifteen_stages() -> None:
     ids = millionaire.pick_question_ids()
     assert len(ids) == len(set(ids)) == 15
+    stages = [millionaire.question(qid).stage for qid in ids]
+    assert stages == list(range(1, 16))
     bands = [millionaire.question(qid).band for qid in ids]
     assert bands.count("easy") == bands.count("medium") == bands.count("hard") == 5
 
