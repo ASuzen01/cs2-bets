@@ -2624,10 +2624,10 @@ class Database:
         )
 
     async def live_matches(self, limit: int = 40) -> list[Any]:
-        """Матчи, которые идут прямо сейчас или ждут подтверждения исхода."""
+        """Только матчи, которые идут прямо сейчас; ожидающие расчёта живут в админской очереди."""
         return await self._fetchall(
             """
-            SELECT * FROM matches WHERE status IN ('live', 'awaiting')
+            SELECT * FROM matches WHERE status = 'live'
             ORDER BY start_time DESC LIMIT ?
             """,
             (limit,),

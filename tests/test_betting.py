@@ -180,6 +180,9 @@ async def test_live_matches_list(db):
     live = await db.live_matches()
     assert [int(row["id"]) for row in live] == [int(match["id"])]
 
+    await db.set_status(int(match["id"]), "awaiting")
+    assert await db.live_matches() == []
+
 
 async def test_chat_autopost_toggle(db):
     await db.register_chat(-1001, "Друзья")
