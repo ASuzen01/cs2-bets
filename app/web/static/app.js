@@ -64,10 +64,6 @@
     crashBusy: false,
     crashPolling: false,
     crashTicker: null,
-    millionaire: null,
-    millionaireStake: 100,
-    millionaireBusy: false,
-    millionaireToken: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over", baccarat: "player" },
     casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50, baccarat: 50 },
@@ -3256,7 +3252,6 @@
       state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
       state.crash = data.crash || null;
-      state.millionaire = data.millionaire || null;
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
         setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
@@ -3277,7 +3272,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.millionaireBusy) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -3981,12 +3976,12 @@
         : row.game === "ladder" ? "лесенка"
           : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
             : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
-              : row.game === "baccarat" ? "баккара" : row.game === "millionaire" ? "миллионер" : "кости"));
+              : row.game === "baccarat" ? "баккара" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
           : row.game === "baccarat" ? (row.outcome === "tie" ? "ничья" : row.outcome === "player" ? "игрок" : "банкир")
             : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
-              : row.game === "ladder" || row.game === "blackjack" || row.game === "crash" || row.game === "millionaire"
+              : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
       const res = el("div", "res", (net > 0 ? "+" : net < 0 ? "−" : "") + money(Math.abs(net)));
@@ -4047,25 +4042,6 @@
       box.append(document.createTextNode("Выплата включает ставку и рассчитывается по множителю в момент успешного запроса на сервер. Если самолёт улетает раньше, ставка проигрывает. Каждый полёт независим; история не предсказывает следующий."));
       box.append(el("span", "edge", "теоретический RTP 95,5 % · округление выплаты вниз"));
       box.append(el("p", null, "Точка вылета генерируется сервером криптографически; сервер проверяет и фиксирует выплату. Интерфейс отображает ход полёта, но не выбирает исход."));
-    } else if (game === "millionaire") {
-      box.append(el("b", null, "Миллионер · 15 вопросов на общие знания. "));
-      box.append(document.createTextNode("Ставки: 10, 50, 100, 250, 500 или 1 000 монет. Выплаты валовые — уже включают возвращаемую ставку. Можно забрать сумму после любого правильного ответа."));
-      const rules = state.casino && state.casino.millionaire_rules;
-      const payouts = rules && Array.isArray(rules.payouts_for_100)
-        ? rules.payouts_for_100 : [100, 100, 100, 110, 120, 135, 150, 170, 190, 215, 245, 280, 320, 370, 430];
-      const table = el("table", "millionaire-payout-table");
-      const head = el("tr");
-      ["Верных", "Выплата при ставке 100"].forEach((title) => head.append(el("th", null, title)));
-      table.append(head);
-      payouts.forEach((amount, index) => {
-        const row = el("tr");
-        row.append(el("td", null, String(index + 1)));
-        row.append(el("td", null, money(amount) + (index === 4 || index === 9 ? " · контрольная" : "")));
-        table.append(row);
-      });
-      box.append(table);
-      box.append(el("p", null, "Для других ставок выплата масштабируется пропорционально и округляется до целой монеты по правилу half-up: половина округляется вверх. После 5 правильных ответов ошибка гарантирует 120% базовой ставки, после 10 — 215%; ошибка до первой контрольной суммы означает потерю ставки."));
-      box.append(el("p", null, "Порядок вопросов и проверка ответов находятся на сервере. Варианты ответа не раскрывают правильный до выбора; квесты казино за эту игру не продвигаются."));
     }
     if (game === "roulette") box.append(el("p", null, "Номер выбирается сервером криптографическим генератором из 0–36; колесо лишь анимирует уже выбранный результат."));
     if (game === "dice") box.append(el("p", null, "Оба кубика бросает сервер криптографическим генератором; анимация не влияет на результат."));
@@ -5263,132 +5239,6 @@
     update();
   }
 
-  function millionairePayout(stake, level) {
-    const table = state.casino && state.casino.millionaire_rules && state.casino.millionaire_rules.payouts_for_100;
-    const base = table && Number(table[level - 1]);
-    if (!base || level < 1 || level > 15) return 0;
-    return Math.floor((base * Number(stake) + 50) / 100);
-  }
-
-  function renderMillionaire(host) {
-    host.textContent = "";
-    host.append(gameBackButton());
-    const card = el("div", "card millionaire-card");
-    card.append(el("div", "millionaire-eyebrow", "ВИКТОРИНА · 15 ВОПРОСОВ"));
-    card.append(el("h2", "millionaire-title", "Кто хочет стать миллионером?"));
-    card.append(el("p", "millionaire-intro", "Общие знания. Одна фиксированная ставка, правильные ответы и контрольные суммы на 5-м и 10-м вопросах."));
-
-    const game = state.millionaire;
-    if (game && game.status === "active") {
-      const progress = el("div", "millionaire-progress");
-      for (let level = 1; level <= 15; level += 1) {
-        const step = el("span", "millionaire-step" + (level <= game.correct_count ? " done" : "") +
-          (level === game.current_level ? " current" : ""), String(level));
-        progress.append(step);
-      }
-      card.append(progress);
-      card.append(el("div", "millionaire-meta", `Ставка ${money(game.stake)} · верных ответов ${game.correct_count}/15`));
-      if (game.last_result) {
-        card.append(el("div", "millionaire-feedback good",
-          `Верно! Возврат сейчас — ${money(game.cashout_payout)}.`));
-      }
-      const q = game.question;
-      if (q) {
-        card.append(el("h3", "millionaire-question", `${q.level}. ${q.text}`));
-        const options = el("div", "millionaire-options");
-        q.options.forEach((option, index) => {
-          const button = el("button", "millionaire-answer", option);
-          button.type = "button";
-          button.dataset.millionaireAnswer = String(index);
-          button.disabled = state.millionaireBusy;
-          options.append(button);
-        });
-        card.append(options);
-        const miss = Number(game.checkpoint_payout) || 0;
-        card.append(el("div", "millionaire-footnote", miss
-          ? `Если ошибёшься сейчас, контрольная сумма вернёт ${money(miss)}.`
-          : "До первой контрольной суммы ошибка завершит игру без выплаты."));
-      }
-      if (game.cashout_payout !== null) {
-        const cashout = el("button", "btn millionaire-cashout",
-          `Забрать ${money(game.cashout_payout)}`);
-        cashout.type = "button";
-        cashout.dataset.millionaireAction = "cashout";
-        cashout.disabled = state.millionaireBusy;
-        card.append(cashout);
-      }
-    } else if (game) {
-      const last = game.last_result;
-      if (game.status === "lost") {
-        const message = game.payout > 0
-          ? `Неверный ответ. Контрольная сумма выплатила ${money(game.payout)}.`
-          : "Неверный ответ до контрольной суммы. Ставка потеряна.";
-        card.append(el("div", "millionaire-feedback " + (game.payout ? "good" : "bad"), message));
-      } else if (game.status === "cashed") {
-        card.append(el("div", "millionaire-feedback good", `Ты забрал ${money(game.payout)}.`));
-      } else if (game.status === "complete") {
-        card.append(el("div", "millionaire-feedback good", `15 из 15! Выплата ${money(game.payout)}.`));
-      }
-      if (last && !last.correct) {
-        card.append(el("div", "millionaire-footnote", `Правильный ответ: ${last.answer_text}`));
-      }
-      if (last) card.append(el("div", "millionaire-meta", `Верных ответов: ${game.correct_count}/15 · ставка ${money(game.stake)}`));
-    }
-
-    if (!game || game.status !== "active") {
-      const rules = state.casino && state.casino.millionaire_rules;
-      const stakes = rules && Array.isArray(rules.stakes) ? rules.stakes : [10, 50, 100, 250, 500, 1000];
-      const selected = stakes.includes(Number(state.millionaireStake))
-        ? Number(state.millionaireStake) : 100;
-      state.millionaireStake = selected;
-      const picker = el("div", "millionaire-stakes");
-      picker.append(el("span", null, "Ставка"));
-      stakes.forEach((stake) => {
-        const button = el("button", "millionaire-stake" + (stake === selected ? " active" : ""), money(stake));
-        button.type = "button";
-        button.dataset.millionaireStake = String(stake);
-        button.disabled = state.millionaireBusy || Number(state.user && state.user.balance) < stake;
-        picker.append(button);
-      });
-      card.append(picker);
-      const start = el("button", "btn millionaire-start", game ? "Новая игра" : "Начать игру");
-      start.type = "button";
-      start.dataset.millionaireAction = "start";
-      start.disabled = state.millionaireBusy || Number(state.user && state.user.balance) < selected;
-      card.append(start);
-      card.append(el("div", "millionaire-footnote", "Выплаты валовые и включают ставку. Ставка списывается при старте."));
-    }
-    card.append(gameInfoNode("millionaire"));
-    host.append(card);
-  }
-
-  async function millionaireRequest(action, answer) {
-    if (state.millionaireBusy) return;
-    state.millionaireBusy = true;
-    state.millionaireToken = state.millionaireToken || newToken();
-    const token = state.millionaireToken;
-    renderMillionaire($("#games"));
-    try {
-      let path = "/api/millionaire/" + action;
-      let body;
-      if (action === "start") body = { amount: Number(state.millionaireStake || 100), token };
-      else if (action === "answer") body = { game_id: Number(state.millionaire && state.millionaire.id), answer: Number(answer), token };
-      else body = { game_id: Number(state.millionaire && state.millionaire.id), token };
-      const data = await api(path, { method: "POST", body });
-      state.millionaireToken = null;
-      state.millionaire = data.game || null;
-      if (data.balance !== undefined && state.user) setBalance(Number(data.balance));
-      haptic(data.game && data.game.last_result && !data.game.last_result.correct ? "bad" : "ok");
-      renderMillionaire($("#games"));
-    } catch (err) {
-      toast(err.message, "bad");
-      renderMillionaire($("#games"));
-    } finally {
-      state.millionaireBusy = false;
-      if (state.game === "millionaire") renderMillionaire($("#games"));
-    }
-  }
-
   function renderGames() {
     clearCasinoDockTracking();
     const host = $("#games");
@@ -5424,10 +5274,6 @@
     }
     if (state.game === "crash") {
       renderCrash(host);
-      return;
-    }
-    if (state.game === "millionaire") {
-      renderMillionaire(host);
       return;
     }
     if (!state.casino) {
@@ -5743,7 +5589,7 @@
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.millionaireBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");
@@ -5768,7 +5614,7 @@
 
       if (node.dataset.backToGames !== undefined) {
         if (state.slotAutoRunning) stopSlotAutoSpin(true);
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.millionaireBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
           toast("Дождись конца хода", "bad");
           return;
         }
@@ -5779,21 +5625,6 @@
         return;
       }
 
-      if (node.dataset.millionaireStake) {
-        state.millionaireStake = Number(node.dataset.millionaireStake);
-        renderMillionaire(host);
-        return;
-      }
-      if (node.dataset.millionaireAction) {
-        const action = node.dataset.millionaireAction;
-        if (action === "start") millionaireRequest("start");
-        else if (action === "cashout") millionaireRequest("cashout");
-        return;
-      }
-      if (node.dataset.millionaireAnswer !== undefined) {
-        millionaireRequest("answer", Number(node.dataset.millionaireAnswer));
-        return;
-      }
       if (node.dataset.crashAction) {
         crashRequest(node.dataset.crashAction);
         return;

@@ -231,23 +231,6 @@ CREATE INDEX IF NOT EXISTS idx_crash_user ON crash_games(user_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_one_active ON crash_games(user_id)
     WHERE status = 'flying';
 
--- викторина «Миллионер»: вопросный набор и ответы хранятся сервером
-CREATE TABLE IF NOT EXISTS millionaire_games (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id            INTEGER NOT NULL,
-    stake              INTEGER NOT NULL,
-    question_ids_json  TEXT NOT NULL,
-    answers_json       TEXT NOT NULL DEFAULT '[]',
-    correct_count      INTEGER NOT NULL DEFAULT 0,
-    status             TEXT NOT NULL,
-    payout             INTEGER NOT NULL DEFAULT 0,
-    created_at         INTEGER NOT NULL,
-    updated_at         INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_millionaire_user ON millionaire_games(user_id, id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_millionaire_one_active ON millionaire_games(user_id)
-    WHERE status = 'active';
-
 -- задания дня: прогресс и награда, по строке на игрока в сутки
 CREATE TABLE IF NOT EXISTS quests (
     user_id    INTEGER NOT NULL,

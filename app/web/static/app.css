@@ -101,7 +101,6 @@
   .game-tile[data-game="plinko"]{--game-accent:#d9c17d;background:radial-gradient(ellipse at 50% 35%,#30423a,#151e29 72%)}
   .game-tile[data-game="slots"]{--game-accent:#e1c578;background:radial-gradient(ellipse at 50% 35%,#453925,#151e29 72%)}
   .game-tile[data-game="baccarat"]{--game-accent:#8dc7ad;background:radial-gradient(ellipse at 50% 35%,#284238,#151e29 72%)}
-  .game-tile[data-game="millionaire"]{--game-accent:#f0cf77;background:radial-gradient(ellipse at 50% 35%,#34455a,#151e29 72%)}
   @media (max-width:360px){
     #screen-games.catalog-mode{margin:-12px -12px 0;padding:18px 12px 24px}
     .game-menu{gap:9px}
@@ -1324,35 +1323,3 @@ button:focus-visible{outline-color:#d6b66d}
 .baccarat-table-result{position:absolute;right:14px;bottom:12px;left:14px;color:#9b9279;font-size:9px;font-weight:900;letter-spacing:.18em;text-align:center}
 .baccarat-table-result.show{color:#e4d39c;text-shadow:0 0 12px rgba(221,193,113,.25)}
 @media(max-width:360px){.baccarat-board{grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:3px;padding:14px 6px 39px}.baccarat-card{width:39px;height:63px;flex-basis:39px}.baccarat-cards{gap:3px}.baccarat-hand-heading{font-size:8px}.baccarat-vs{font-size:7px}}
-
-/* Millionaire quiz */
-.millionaire-card{overflow:hidden}
-.millionaire-eyebrow{margin-bottom:6px;color:#c7ad6b;font-size:9px;font-weight:900;letter-spacing:.18em}
-.millionaire-title{margin:0;color:#f1e4c3;font-size:22px;line-height:1.15}
-.millionaire-intro{margin:8px 0 15px;color:#9eabba;font-size:12px;line-height:1.5}
-.millionaire-progress{display:grid;grid-template-columns:repeat(15,minmax(0,1fr));gap:3px;margin:11px 0 8px}
-.millionaire-step{display:grid;place-items:center;min-width:0;height:22px;border:1px solid #344454;border-radius:6px;background:#17212b;color:#8392a1;font-size:8px;font-weight:800;font-variant-numeric:tabular-nums}
-.millionaire-step.done{border-color:#a88f51;background:rgba(176,145,71,.18);color:#f0d894}
-.millionaire-step.current{border-color:#e4c16f;background:linear-gradient(135deg,#8b6a31,#4c3c27);color:#fff2ca;box-shadow:0 0 12px rgba(215,177,91,.18)}
-.millionaire-meta{margin:9px 0;color:#c3b78e;font-size:11px;font-weight:750}
-.millionaire-question{margin:17px 0 12px;color:#f4f2ec;font-size:18px;line-height:1.35}
-.millionaire-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.millionaire-answer{min-height:54px;padding:10px;border:1px solid #394859;border-radius:12px;background:linear-gradient(145deg,#202c39,#17212b);color:#e7ecf1;font-size:12px;font-weight:700;line-height:1.35;text-align:left;transition:border-color .15s,background .15s}
-.millionaire-answer:active{border-color:#d1ae63;background:#2d3540}
-.millionaire-answer:disabled{opacity:.58}
-.millionaire-feedback{margin:12px 0;padding:12px;border:1px solid #43504e;border-radius:12px;font-size:13px;font-weight:800;line-height:1.4}
-.millionaire-feedback.good{border-color:rgba(137,189,146,.42);background:rgba(63,111,75,.16);color:#c3e1bf}
-.millionaire-feedback.bad{border-color:rgba(206,122,103,.42);background:rgba(130,55,48,.18);color:#edb1a3}
-.millionaire-footnote{margin:9px 0;color:#9aa5af;font-size:10px;line-height:1.45}
-.millionaire-stakes{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:14px 0 10px}
-.millionaire-stakes>span{width:100%;color:#b8c0c8;font-size:11px;font-weight:800}
-.millionaire-stake{min-width:52px;min-height:36px;padding:0 9px;border:1px solid #3e4a56;border-radius:9px;background:#19232d;color:#c5ced5;font-size:11px;font-weight:800}
-.millionaire-stake.active{border-color:#d3b464;background:rgba(181,146,63,.2);color:#f5dea0;box-shadow:inset 0 0 12px rgba(216,180,90,.08)}
-.millionaire-stake:disabled{opacity:.38}
-.millionaire-start,.millionaire-cashout{width:100%;min-height:46px;margin-top:7px;border:1px solid #b89a55;border-radius:12px;background:linear-gradient(130deg,#806231,#4e402a);color:#ffefbd;font-weight:900}
-.millionaire-start:disabled,.millionaire-cashout:disabled{opacity:.5}
-.millionaire-payout-table{width:100%;margin:11px 0;border-collapse:collapse;color:#c5ccd2;font-size:10px}
-.millionaire-payout-table th,.millionaire-payout-table td{padding:5px 7px;border-bottom:1px solid rgba(255,255,255,.07);text-align:left}
-.millionaire-payout-table th{color:#dcc887;font-size:9px;font-weight:850}
-.millionaire-payout-table tr:nth-child(6),.millionaire-payout-table tr:nth-child(11){background:rgba(197,160,80,.1);color:#efd995}
-@media(max-width:360px){.millionaire-title{font-size:20px}.millionaire-step{height:20px;font-size:7px}.millionaire-progress{gap:2px}.millionaire-answer{min-height:50px;padding:8px;font-size:11px}.millionaire-stake{min-width:47px}}
