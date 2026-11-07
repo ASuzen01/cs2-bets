@@ -22,7 +22,7 @@ from aiohttp import web
 from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
-from app.services import achievements, baccarat, games, slot_machine
+from app.services import achievements, baccarat, games, millionaire, slot_machine
 from app.services import blackjack as blackjack_game
 from app.services import crash as crash_game
 from app.services import ladder as ladder_game
@@ -111,6 +111,9 @@ def register_routes(
     app.router.add_post("/api/crash/start", api_crash_start)
     app.router.add_get("/api/crash/state", api_crash_state)
     app.router.add_post("/api/crash/cashout", api_crash_cashout)
+    app.router.add_post("/api/millionaire/start", api_millionaire_start)
+    app.router.add_post("/api/millionaire/answer", api_millionaire_answer)
+    app.router.add_post("/api/millionaire/cashout", api_millionaire_cashout)
     return app
 
 
@@ -300,6 +303,7 @@ async def api_state(request: web.Request) -> web.Response:
             "blackjack": await db.blackjack_state(user_id),
             "ladder": await db.ladder_state(user_id),
             "crash": await db.crash_state(user_id),
+            "millionaire": await db.millionaire_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -963,6 +967,11 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
         },
         "plinko": games.plinko_config(),
         "slots": slot_machine.slot_config(),
+        "millionaire_rules": {
+            "stakes": list(millionaire.STAKES),
+            "payouts_for_100": list(millionaire.BASE_PAYOUTS),
+            "checkpoints": list(millionaire.CHECKPOINT_LEVELS),
+        },
         "slot_state": await db.slot_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
@@ -1214,6 +1223,60 @@ async def api_crash_cashout(request: web.Request) -> web.Response:
     except InvalidBet as exc:
         return _bad(str(exc))
     return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_millionaire_start(request: web.Request) -> web.Response:
+    """Запускает викторину с одной из разрешённых фиксированных ставок."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    amount = _as_int(body.get("amount"))
+    try:
+        game = await db.start_millionaire(user_id, amount, str(body.get("token") or ""))
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_millionaire_answer(request: web.Request) -> web.Response:
+    """Проверяет выбранный вариант исключительно на сервере."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    raw_answer = body.get("answer")
+    if isinstance(raw_answer, bool):
+        return _bad("Выбери один из четырёх вариантов")
+    answer = _as_int(raw_answer)
+    if game_id <= 0:
+        return _bad("Партия «Миллионер» не найдена")
+    try:
+        game = await db.answer_millionaire(
+            user_id, game_id, answer, str(body.get("token") or "")
+        )
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_millionaire_cashout(request: web.Request) -> web.Response:
+    """Забирает текущую сумму; повторный запрос не создаёт повторную выплату."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    if game_id <= 0:
+        return _bad("Партия «Миллионер» не найдена")
+    try:
+        game = await db.cashout_millionaire(
+            user_id, game_id, str(body.get("token") or "")
+        )
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
 
 
 __all__ = ["DB_KEY", "STATIC_DIR", "USER_KEY", "build_app", "register_routes", "render_index"]
