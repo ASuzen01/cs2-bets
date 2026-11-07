@@ -6,11 +6,8 @@
 
 from __future__ import annotations
 
-import gzip
-import json
 import secrets
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Final
 
 STAKES: Final[tuple[int, ...]] = (10, 50, 100, 250, 500, 1000)
@@ -20,6 +17,7 @@ BASE_PAYOUTS: Final[tuple[int, ...]] = (
     100, 100, 100, 110, 120, 135, 150, 170, 190, 215, 245, 280, 320, 370, 430,
 )
 CHECKPOINT_LEVELS: Final[tuple[int, ...]] = (5, 10)
+QUESTIONS_PER_BAND: Final = 5
 TOTAL_QUESTIONS: Final = 15
 
 
@@ -30,10 +28,9 @@ class Question:
     prompt: str
     options: tuple[str, str, str, str]
     answer: int
-    stage: int | None = None
 
 
-_LEGACY_QUESTIONS: Final[tuple[Question, ...]] = (
+QUESTIONS: Final[tuple[Question, ...]] = (
     Question("e01", "easy", "Как называется столица Португалии?", ("Лиссабон", "Порту", "Брага", "Коимбра"), 0),
     Question("e02", "easy", "Какой газ обозначают формулой CO₂?", ("Кислород", "Углекислый газ", "Водород", "Азот"), 1),
     Question("e03", "easy", "Сколько сторон у треугольника?", ("Две", "Три", "Четыре", "Пять"), 1),
@@ -66,42 +63,10 @@ _LEGACY_QUESTIONS: Final[tuple[Question, ...]] = (
     Question("h10", "hard", "В каком году Плутон был переведён МАС в категорию карликовых планет?", ("1999", "2003", "2006", "2010"), 2),
 )
 
-_RELEASE_BANK: Final = (
-    Path(__file__).resolve().parents[2]
-    / "data" / "millionaire" / "releases" / "millionaire-questions-v0.1.2-beta.json.gz"
-)
-
-
-def _load_release_questions() -> tuple[Question, ...]:
-    with gzip.open(_RELEASE_BANK, "rt", encoding="utf-8") as stream:
-        payload = json.load(stream)
-    questions = tuple(
-        Question(
-            id=str(row["id"]),
-            band=str(row["difficulty"]),
-            prompt=str(row["text"]),
-            options=tuple(str(option) for option in row["options"]),
-            answer=int(row["answer"]),
-            stage=int(row["stage"]),
-        )
-        for row in payload["questions"]
-    )
-    if not questions:
-        raise RuntimeError("Millionaire release question bank is empty")
-    if len({question.id for question in questions}) != len(questions):
-        raise RuntimeError("Millionaire release contains duplicate question IDs")
-    missing_stages = [stage for stage in range(1, TOTAL_QUESTIONS + 1)
-                      if not any(question.stage == stage for question in questions)]
-    if missing_stages:
-        raise RuntimeError(f"Millionaire release has no questions for stages {missing_stages}")
-    return questions
-
-
-QUESTIONS: Final[tuple[Question, ...]] = _load_release_questions()
-_BY_ID: Final = {question.id: question for question in (*_LEGACY_QUESTIONS, *QUESTIONS)}
-_BY_STAGE: Final = {
-    stage: tuple(question.id for question in QUESTIONS if question.stage == stage)
-    for stage in range(1, TOTAL_QUESTIONS + 1)
+_BY_ID: Final = {question.id: question for question in QUESTIONS}
+_BY_BAND: Final = {
+    band: tuple(question.id for question in QUESTIONS if question.band == band)
+    for band in ("easy", "medium", "hard")
 }
 
 
@@ -127,9 +92,13 @@ def checkpoint_payout(stake: int, correct_count: int) -> int:
 
 
 def pick_question_ids() -> list[str]:
-    """Выбирает по одному вопросу для каждой из 15 номерных ступеней."""
+    """Случайно собирает 5 вопросов каждого уровня сложности без повторов."""
     rng = secrets.SystemRandom()
-    return [rng.choice(_BY_STAGE[stage]) for stage in range(1, TOTAL_QUESTIONS + 1)]
+    return (
+        rng.sample(_BY_BAND["easy"], QUESTIONS_PER_BAND)
+        + rng.sample(_BY_BAND["medium"], QUESTIONS_PER_BAND)
+        + rng.sample(_BY_BAND["hard"], QUESTIONS_PER_BAND)
+    )
 
 
 def question(question_id: str) -> Question:
