@@ -324,7 +324,10 @@ class Database:
                 try:
                     yield conn
                 except BaseException:
-                    await conn.rollback()
+                    try:
+                        await conn.rollback()
+                    except Exception:
+                        log.exception("Не удалось откатить транзакцию после ошибки")
                     raise
                 else:
                     await conn.commit()

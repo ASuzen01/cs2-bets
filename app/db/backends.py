@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -447,36 +448,79 @@ class PostgresBackend:
     name = "postgres"
     begin_sql = "BEGIN"
 
-    def __init__(self, conn: Any) -> None:  # psycopg.AsyncConnection
+    def __init__(self, conn: Any, *, dsn: str = "", schema: str = "") -> None:  # psycopg.AsyncConnection
         self._conn = conn
+        self._dsn = dsn
+        self._schema = schema
+        self._reconnect_lock = asyncio.Lock()
+        self._reconnects = 0
+        self._transaction_active = False
 
-    @classmethod
-    async def open(cls, dsn: str, *, schema: str = "") -> PostgresBackend:
+    @staticmethod
+    async def _open_connection(dsn: str, schema: str) -> Any:
         import psycopg
         from psycopg.rows import dict_row
 
         conn = await psycopg.AsyncConnection.connect(
-            dsn, autocommit=True, row_factory=dict_row, prepare_threshold=0
+            dsn, autocommit=True, row_factory=dict_row, prepare_threshold=0,
         )
         if schema:
-            # пулеры Neon не пропускают search_path в стартовых параметрах — задаём запросом
+            # Пулеры Neon не пропускают search_path в стартовых параметрах — задаём запросом.
             if not schema.replace("_", "").isalnum():
+                await conn.close()
                 raise ValueError(f"Недопустимое имя схемы: {schema}")
-            cur = conn.cursor()
             try:
-                await cur.execute(f'SET search_path TO "{schema}"')
-            finally:
-                await cur.close()
+                cur = conn.cursor()
+                try:
+                    await cur.execute(f'SET search_path TO "{schema}"')
+                finally:
+                    await cur.close()
+            except BaseException:
+                await conn.close()
+                raise
+        return conn
+
+    @classmethod
+    async def open(cls, dsn: str, *, schema: str = "") -> PostgresBackend:
+        conn = await cls._open_connection(dsn, schema)
         log.info("Подключился к Postgres")
-        return cls(conn)
+        return cls(conn, dsn=dsn, schema=schema)
+
+    async def _ensure_connected(self) -> None:
+        """Reconnect after Neon/pooler closes an idle socket.
+
+        This runs before a new statement only. A statement that fails mid-flight
+        is never replayed, so writes cannot be duplicated and an interrupted
+        transaction is surfaced to its caller.
+        """
+        if not getattr(self._conn, "closed", False):
+            return
+        if self._transaction_active:
+            raise RuntimeError("Postgres connection was lost during a transaction; refusing to replay it")
+        async with self._reconnect_lock:
+            if not getattr(self._conn, "closed", False):
+                return
+            if self._transaction_active:
+                raise RuntimeError("Postgres connection was lost during a transaction; refusing to replay it")
+            if not self._dsn:
+                raise RuntimeError("Postgres connection is closed and no DSN is available for reconnect")
+            self._conn = await self._open_connection(self._dsn, self._schema)
+            self._reconnects += 1
+            log.warning("Соединение Postgres было закрыто; подключение восстановлено (reconnects=%s)", self._reconnects)
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> Query:
         return Query(lambda: self._run(sql, params))
 
     async def _run(self, sql: str, params: Sequence[Any]) -> Rows:
+        await self._ensure_connected()
         cur = self._conn.cursor()
         try:
             await cur.execute(to_postgres_sql(sql), tuple(params))
+            command = sql.lstrip().split(None, 1)[0].upper() if sql.strip() else ""
+            if command == "BEGIN":
+                self._transaction_active = True
+            elif command in {"COMMIT", "ROLLBACK"}:
+                self._transaction_active = False
             rows = await cur.fetchall() if cur.description else []
             lastrowid = None
             if rows and isinstance(rows[0], dict) and "id" in rows[0] and len(rows[0]) == 1:
@@ -519,16 +563,18 @@ class PostgresBackend:
         ).fetchone() is not None
 
     async def commit(self) -> None:
+        # Do not hide a lost connection: transaction callers must not report
+        # success when the server did not acknowledge the commit.
         try:
             await self._conn.commit()
-        except Exception as exc:
-            log.debug("commit: %s", exc)
+        finally:
+            self._transaction_active = False
 
     async def rollback(self) -> None:
         try:
             await self._conn.rollback()
-        except Exception as exc:
-            log.debug("rollback: %s", exc)
+        finally:
+            self._transaction_active = False
 
     async def close(self) -> None:
         await self._conn.close()
