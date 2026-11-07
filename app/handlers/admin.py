@@ -10,6 +10,7 @@
     /services              — фоновые задачи и состояние синхронизации
     /player 123456789      — профиль и последние операции игрока
     /player_stats 123456789 — оборот, выплаты, ROI и winrate игрока
+    /notify 123456789 текст — отправить личное уведомление игроку
     /bettrace 42           — трассировка ставки, экспресса или казино
     /feed                  — статус спортивной линии
     /players               — список игроков с id, чтобы знать кому начислять
@@ -38,6 +39,7 @@ from io import BytesIO
 from typing import Any
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -348,6 +350,54 @@ async def cmd_players(message: Message, db: Database) -> None:
     lines.append("")
     lines.append("Начислить: <code>/grant 123456789 500</code>")
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("notify", "notify_player"))
+async def cmd_notify_player(
+    message: Message, command: CommandObject, db: Database
+) -> None:
+    """Send a plain-text personal notification: /notify ID|@username text."""
+    if not _private_admin_report_chat(message):
+        await message.reply("Отправлять личные уведомления можно только в личном чате с ботом.")
+        return
+
+    args = (command.args or "").strip()
+    ident, separator, text = args.partition(" ")
+    text = text.strip()
+    if not separator or not ident or not text:
+        await message.reply(
+            "Формат: <code>/notify ID|@username текст уведомления</code>\n"
+            "Пример: <code>/notify 752192302 Матч уже начался!</code>"
+        )
+        return
+
+    safe_text = html.escape(text)
+    if len(safe_text) > 3900:
+        await message.reply("Текст слишком длинный: максимум 3900 символов после обработки.")
+        return
+
+    user = await db.find_user(ident)
+    if user is None:
+        await message.reply(f"Игрок <code>{html.escape(ident)}</code> не найден.")
+        return
+
+    user_id = int(user["user_id"])
+    name = user["full_name"] or (f"@{user['username']}" if user["username"] else "игрок")
+    try:
+        await callback_bot(message).send_message(chat_id=user_id, text=safe_text)
+    except TelegramAPIError as exc:
+        log.warning("Admin notification to player %s failed: %s", user_id, exc)
+        await message.answer(
+            f"Telegram не доставил уведомление игроку {html.escape(str(name))} "
+            f"(<code>{user_id}</code>). Проверьте, не заблокировал ли он бота."
+        )
+        return
+
+    admin_id = int(message.from_user.id) if message.from_user is not None else 0
+    await db.log_event(user_id, "admin_notification", f"admin={admin_id}")
+    await message.answer(
+        f"Уведомление игроку {html.escape(str(name))} (<code>{user_id}</code>) отправлено."
+    )
 
 
 @router.message(Command("results"))
