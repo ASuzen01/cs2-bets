@@ -46,6 +46,7 @@ from app.services.recheck import (
     RecheckService,
 )
 from app.services.sync import MatchSyncer
+from app.services.telegram_sqlite import TelegramSQLiteSnapshot
 
 log = logging.getLogger(__name__)
 HEALTH_ALERTS: HealthAlertMonitor | None = None
@@ -498,7 +499,18 @@ def main() -> None:
     acquire_single_instance_lock()
 
     bot = create_bot()
-    db = Database(settings.db_file, start_balance=settings.start_balance, url=settings.database_url, schema=settings.database_schema)
+    telegram_snapshot = (
+        TelegramSQLiteSnapshot(bot, settings.telegram_db_chat_id)
+        if settings.telegram_db_chat_id
+        else None
+    )
+    db = Database(
+        settings.db_file,
+        start_balance=settings.start_balance,
+        url="" if telegram_snapshot else settings.database_url,
+        schema="" if telegram_snapshot else settings.database_schema,
+        telegram_snapshot=telegram_snapshot,
+    )
     syncer = MatchSyncer(bot, db)
     backup = BackupService(bot, db)
     recheck = RecheckService(bot, db)

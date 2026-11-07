@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     # Postgres/Neon. Если задан — используется он, иначе локальный SQLite из DB_PATH.
     database_url: str = ""
     database_schema: str = ""   # схема в Postgres (нужно только для тестов/мультибазы)
+    telegram_db_chat_id: int = 0  # приватный канал с закреплённым SQLite-снимком; 0 отключает режим
     redis_url: str = ""  # если задан, FSM-состояния живут в Redis (нужен aiogram[redis])
     throttle_seconds: float = 0.4
     drop_pending_updates: bool = False

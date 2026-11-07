@@ -189,10 +189,12 @@ class Database:
         start_balance: int = 1000,
         url: str = "",
         schema: str = "",
+        telegram_snapshot: Any | None = None,
     ) -> None:
         self._path = Path(path) if path else Path("data/bot.db")
         self._url = (url or "").strip()
         self._schema = (schema or "").strip()
+        self._telegram_snapshot = telegram_snapshot
         self.start_balance = start_balance
         self._backend: SQLiteBackend | PostgresBackend | None = None
         # одно соединение на процесс: записи сериализуем (см. transaction())
@@ -209,6 +211,8 @@ class Database:
         return self._backend
 
     async def connect(self) -> None:
+        if self._telegram_snapshot is not None and self._url.startswith(("postgres://", "postgresql://")):
+            raise RuntimeError("Telegram snapshot mode and PostgreSQL DATABASE_URL cannot be active together")
         if self._url.startswith(("postgres://", "postgresql://")):
             backend = await PostgresBackend.open(self._url, schema=self._schema)
             await backend.executescript(SCHEMA_POSTGRES)
@@ -217,6 +221,8 @@ class Database:
             self._backend = backend
             return
 
+        if self._telegram_snapshot is not None:
+            await self._telegram_snapshot.restore_to_path(self._path)
         backend = await SQLiteBackend.open(self._path)
         # миграция старой схемы (ручные матчи) — ДО создания индексов новой схемы
         if await self._has_incompatible_matches(backend):
@@ -225,6 +231,14 @@ class Database:
         await self._migrate(backend)
         await backend.commit()
         self._backend = backend
+        if self._telegram_snapshot is not None:
+            try:
+                await self._telegram_snapshot.persist_connection(backend._conn)
+                backend.set_commit_hook(self._telegram_snapshot.persist_connection)
+            except Exception:
+                await backend.close()
+                self._backend = None
+                raise
 
     @staticmethod
     async def _migrate(backend: SQLiteBackend | PostgresBackend) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -376,8 +376,15 @@ class SQLiteBackend:
     name = "sqlite"
     begin_sql = "BEGIN IMMEDIATE"
 
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        commit_hook: Callable[[aiosqlite.Connection], Awaitable[None]] | None = None,
+    ) -> None:
         self._conn = conn
+        self._commit_hook = commit_hook
+        self._durability_dirty = False
 
     @classmethod
     async def open(cls, path: str | Path) -> SQLiteBackend:
@@ -392,7 +399,23 @@ class SQLiteBackend:
     def execute(self, sql: str, params: Sequence[Any] = ()) -> Query:
         return Query(lambda: self._run(sql, params))
 
+    async def _sync_durable(self) -> None:
+        if self._commit_hook is None:
+            self._durability_dirty = False
+            return
+        try:
+            await self._commit_hook(self._conn)
+        except Exception:
+            self._durability_dirty = True
+            raise
+        self._durability_dirty = False
+
+    async def _ensure_durable(self) -> None:
+        if self._durability_dirty:
+            await self._sync_durable()
+
     async def _run(self, sql: str, params: Sequence[Any]) -> Rows:
+        await self._ensure_durable()
         cur = await self._conn.execute(sql, tuple(params))
         try:
             try:
@@ -416,8 +439,15 @@ class SQLiteBackend:
         ) as cur:
             return await cur.fetchone() is not None
 
+    def set_commit_hook(
+        self, hook: Callable[[aiosqlite.Connection], Awaitable[None]] | None
+    ) -> None:
+        self._commit_hook = hook
+
     async def commit(self) -> None:
         await self._conn.commit()
+        if self._commit_hook is not None:
+            await self._sync_durable()
 
     async def rollback(self) -> None:
         await self._conn.rollback()
