@@ -15,7 +15,7 @@ async def db(tmp_path):
     await database.close()
 
 
-async def test_miniapp_line_payload_batches_maps_and_caches_reads(db: Database) -> None:
+async def test_miniapp_line_payload_batches_map_query_and_stays_fresh(db: Database) -> None:
     match, _ = await db.upsert_match(
         fonbet_id=80_001,
         tournament="IEM",
@@ -53,15 +53,9 @@ async def test_miniapp_line_payload_batches_maps_and_caches_reads(db: Database) 
     db.open_matches = open_matches
     db.live_matches = live_matches
     db.maps_for_matches = maps_for_matches
-    server._line_cache_db_id = 0
-    server._line_cache_expires_at = 0.0
-    server._line_cache_payload = {}
-
     first = await server._miniapp_lines(db)
-    second = await server._miniapp_lines(db)
 
     assert calls == {"open": 3, "live": 1, "maps": 1}
-    assert first == second
     assert first["matches"][0]["id"] == int(match["id"])
     assert first["matches"][0]["maps"][0]["number"] == 1
 

@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -173,44 +172,24 @@ async def health(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-# The public line changes on the syncer's 45-second tick, not on every page view.
-# Cache serialized line payloads briefly to avoid repeating eight SELECTs per user.
-_LINE_CACHE_TTL_SECONDS = 3.0
-_line_cache_lock = asyncio.Lock()
-_line_cache_db_id = 0
-_line_cache_expires_at = 0.0
-_line_cache_payload: dict[str, list[dict[str, Any]]] = {}
-
-
 async def _miniapp_lines(db: Database) -> dict[str, list[dict[str, Any]]]:
-    """Return CS2/live/football/hockey lines with one batched maps query."""
-    global _line_cache_db_id, _line_cache_expires_at, _line_cache_payload
+    """Load all public line groups and their maps with one maps query.
 
-    now = time.monotonic()
-    if _line_cache_db_id == id(db) and now < _line_cache_expires_at:
-        return _line_cache_payload
-
-    async with _line_cache_lock:
-        now = time.monotonic()
-        if _line_cache_db_id == id(db) and now < _line_cache_expires_at:
-            return _line_cache_payload
-
-        rows_by_kind = {
-            "matches": await db.open_matches(limit=60, sport="cs2"),
-            "live": await db.live_matches(limit=40),
-            "football": await db.open_matches(limit=200, sport="football"),
-            "hockey": await db.open_matches(limit=120, sport="hockey"),
-        }
-        all_rows = [row for rows in rows_by_kind.values() for row in rows]
-        maps = await db.maps_for_matches([int(row["id"]) for row in all_rows])
-        payload = {
-            kind: [match_payload(row, maps.get(int(row["id"]), [])) for row in rows]
-            for kind, rows in rows_by_kind.items()
-        }
-        _line_cache_db_id = id(db)
-        _line_cache_payload = payload
-        _line_cache_expires_at = time.monotonic() + _LINE_CACHE_TTL_SECONDS
-        return payload
+    Do not cache across requests: admin actions and tests may insert or change a
+    match between two API calls, and the mini-app should observe it immediately.
+    """
+    rows_by_kind = {
+        "matches": await db.open_matches(limit=60, sport="cs2"),
+        "live": await db.live_matches(limit=40),
+        "football": await db.open_matches(limit=200, sport="football"),
+        "hockey": await db.open_matches(limit=120, sport="hockey"),
+    }
+    all_rows = [row for rows in rows_by_kind.values() for row in rows]
+    maps = await db.maps_for_matches([int(row["id"]) for row in all_rows])
+    return {
+        kind: [match_payload(row, maps.get(int(row["id"]), [])) for row in rows]
+        for kind, rows in rows_by_kind.items()
+    }
 
 
 # ------------------------------------------------------------------ интерфейс
