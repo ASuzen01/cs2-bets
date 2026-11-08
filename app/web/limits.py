@@ -83,6 +83,9 @@ class Metrics:
         self.rejected = 0
         self.by_path: dict[str, int] = defaultdict(int)
         self.errors_by_path: dict[str, int] = defaultdict(int)
+        self.duration_count: dict[str, int] = defaultdict(int)
+        self.duration_sum: dict[str, float] = defaultdict(float)
+        self.duration_max: dict[str, float] = defaultdict(float)
         self.bets = 0
         self.express = 0
         self.casino = 0
@@ -95,6 +98,12 @@ class Metrics:
     def count_error(self, path: str) -> None:
         self.errors += 1
         self.errors_by_path[path] += 1
+
+    def observe_request_duration(self, path: str, seconds: float) -> None:
+        duration = max(0.0, float(seconds))
+        self.duration_count[path] += 1
+        self.duration_sum[path] += duration
+        self.duration_max[path] = max(self.duration_max[path], duration)
 
     def count_bet(self) -> None:
         self.bets += 1
@@ -132,6 +141,17 @@ class Metrics:
             lines.append(f'app_requests_by_path_total{{path="{self._label(path)}"}} {count}')
         for path, count in sorted(self.errors_by_path.items()):
             lines.append(f'app_errors_by_path_total{{path="{self._label(path)}"}} {count}')
+        for path, count in sorted(self.duration_count.items()):
+            label = self._label(path)
+            lines.append(f'app_request_duration_seconds_count{{path="{label}"}} {count}')
+            lines.append(
+                f'app_request_duration_seconds_sum{{path="{label}"}} '
+                f'{self.duration_sum[path]:.6f}'
+            )
+            lines.append(
+                f'app_request_duration_seconds_max{{path="{label}"}} '
+                f'{self.duration_max[path]:.6f}'
+            )
         return "\n".join(lines) + "\n"
 
 

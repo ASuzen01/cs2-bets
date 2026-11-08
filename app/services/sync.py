@@ -14,6 +14,11 @@ from aiogram.exceptions import TelegramAPIError
 from app import keyboards, texts
 from app.config import settings
 from app.db import Database
+from app.services.bulk_sync import (
+    bulk_upsert_maps,
+    bulk_upsert_matches,
+    load_matches_by_fonbet_ids,
+)
 from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
 from app.services.cs2_settle import settle_from_feed
@@ -158,6 +163,7 @@ class MatchSyncer:
 
     # ----------------------------------------------------------------- tick
     async def tick(self) -> dict[str, Any]:
+        started_at = time.perf_counter()
         packet = await self.client.fetch_packet()
         matches = self.client.parse(packet)
         maps_by_parent = parse_maps(packet, self.client)
@@ -194,6 +200,7 @@ class MatchSyncer:
         await self._settle_football(football, stats)
         await self._settle_hockey(hockey, stats)
         await self._close_stale(stats)
+        stats["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
 
         self.last_sync_at = int(time.time())
         try:
@@ -238,63 +245,164 @@ class MatchSyncer:
         now = int(time.time())
         horizon = now + settings.autopost_horizon_hours * 3600
         chats = await self.db.list_autopost_chats() if settings.autopost_matches else []
-        posted = 0
 
-        for match in matches:
-            tracked = await self.db.match_by_fonbet(match.event_id)
+        # One read for the whole line, instead of one read before each upsert.
+        unique_matches = list({match.event_id: match for match in matches}.values())
+        existing = await load_matches_by_fonbet_ids(
+            self.db, [match.event_id for match in unique_matches]
+        )
+        eligible: list[tuple[FonbetMatch, bool]] = []
+        payloads: list[dict[str, Any]] = []
+        for match in unique_matches:
+            tracked = existing.get(match.event_id)
             old_line = bool(match.start_time) and match.start_time < now - 6 * 3600
-            # старую линию не берём, но матч, который уже у нас висит незакрытым,
-            # обязаны довести до результата — иначе он уйдёт в отмену
+            # Keep the existing rule: ignore old feed events unless we already
+            # have an unsettled match that must be tracked to completion.
             if old_line and (
                 tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting")
             ):
                 continue
-            # live-матч без кэфов всё равно нужен: у него есть счёт по картам,
-            # а кэфы Fonbet иногда снимает по ходу игры — тогда оставляем прошлые
             odds_missing = match.odds_a is None or match.odds_b is None
             if odds_missing and tracked is None:
-                continue          # в линии матч без кэфов никому не нужен
+                continue
             odds_a, odds_b = (None, None) if odds_missing else self._prepare_odds(match)
-            row, created = await self.db.upsert_match(
-                fonbet_id=match.event_id,
-                tournament=match.tournament,
-                team_a=match.team_a,
-                team_b=match.team_b,
-                start_time=match.start_time,
-                odds_a=odds_a,
-                odds_b=odds_b,
-                score_a=match.score_a,   # счёт по картам: нужен для live-табло
-                score_b=match.score_b,
+            eligible.append((match, odds_missing))
+            payloads.append(
+                {
+                    "fonbet_id": match.event_id,
+                    "tournament": match.tournament,
+                    "team_a": match.team_a,
+                    "team_b": match.team_b,
+                    "start_time": match.start_time,
+                    "sport": "cs2",
+                    "odds_a": odds_a,
+                    "odds_x": None,
+                    "odds_b": odds_b,
+                    "score_a": match.score_a,
+                    "score_b": match.score_b,
+                }
             )
-            await self._store_maps(row, match.event_id, maps_by_parent)
 
-            if created:
-                stats["created"] += 1
-                should_post = (
-                    not odds_missing
-                    and posted < settings.autopost_limit
-                    and match.start_time <= horizon
+        rows, created_ids = await bulk_upsert_matches(self.db, payloads, existing=existing)
+        map_payloads: list[dict[str, Any]] = []
+        for match, _ in eligible:
+            row = rows.get(match.event_id)
+            if row is None:
+                continue
+            for card in maps_by_parent.get(match.event_id, []):
+                map_payloads.append(
+                    {
+                        "match_id": int(row["id"]),
+                        "fonbet_id": card.event_id,
+                        "map_number": card.map_number,
+                        "odds_a": card.odds_a,
+                        "odds_b": card.odds_b,
+                        "score_a": card.score_a,
+                        "score_b": card.score_b,
+                    }
                 )
-                if should_post and chats:
-                    posted += 1
-                    await self._post_card(row, chats)
-            else:
-                stats["updated"] += 1
+        await bulk_upsert_maps(self.db, map_payloads)
 
-    async def _store_maps(
-        self, row: Any, fonbet_id: int, maps_by_parent: dict[int, list[FonbetMap]]
-    ) -> None:
-        """Кэфы на победителя каждой карты («1-я карта», «2-я карта»…)."""
-        for card in maps_by_parent.get(fonbet_id, []):
-            await self.db.upsert_map(
-                match_id=int(row["id"]),
-                fonbet_id=card.event_id,
-                map_number=card.map_number,
-                odds_a=card.odds_a,
-                odds_b=card.odds_b,
-                score_a=card.score_a,
-                score_b=card.score_b,
+        posted = 0
+        for match, odds_missing in eligible:
+            row = rows.get(match.event_id)
+            if row is None:
+                continue
+            if match.event_id not in created_ids:
+                stats["updated"] += 1
+                continue
+
+            stats["created"] += 1
+            should_post = (
+                not odds_missing
+                and posted < settings.autopost_limit
+                and match.start_time <= horizon
             )
+            if should_post and chats:
+                posted += 1
+                await self._post_card(row, chats)
+
+    async def _store_football(self, matches: list[FootballMatch], stats: dict[str, Any]) -> None:
+        """Batch-write football odds without changing how eligible events are chosen."""
+        now = int(time.time())
+        eligible = list(
+            {
+                match.event_id: match
+                for match in matches
+                if match.has_result_odds
+            }.values()
+        )
+        existing = await load_matches_by_fonbet_ids(
+            self.db, [match.event_id for match in eligible]
+        )
+        payloads: list[dict[str, Any]] = []
+        for match in eligible:
+            tracked = existing.get(match.event_id)
+            if (
+                match.start_time
+                and match.start_time < now - 6 * 3600
+                and (tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"))
+            ):
+                continue
+            odds_1, odds_x, odds_2 = self._prepare_three_way(match)
+            payloads.append(
+                {
+                    "fonbet_id": match.event_id,
+                    "tournament": match.tournament,
+                    "team_a": match.team_a,
+                    "team_b": match.team_b,
+                    "start_time": match.start_time,
+                    "sport": "football",
+                    "odds_a": odds_1,
+                    "odds_x": odds_x,
+                    "odds_b": odds_2,
+                    "score_a": match.score_a,
+                    "score_b": match.score_b,
+                }
+            )
+        _, created_ids = await bulk_upsert_matches(self.db, payloads, existing=existing)
+        stats["football_created"] += len(created_ids)
+
+    async def _store_hockey(self, matches: list[HockeyMatch], stats: dict[str, Any]) -> None:
+        """Batch-write hockey odds without changing how eligible events are chosen."""
+        now = int(time.time())
+        eligible = list(
+            {
+                match.event_id: match
+                for match in matches
+                if match.has_result_odds
+            }.values()
+        )
+        existing = await load_matches_by_fonbet_ids(
+            self.db, [match.event_id for match in eligible]
+        )
+        payloads: list[dict[str, Any]] = []
+        for match in eligible:
+            tracked = existing.get(match.event_id)
+            if (
+                match.start_time
+                and match.start_time < now - 6 * 3600
+                and (tracked is None or str(tracked["status"]) not in ("open", "live", "awaiting"))
+            ):
+                continue
+            odds_1, odds_x, odds_2 = self._prepare_three_way(match)
+            payloads.append(
+                {
+                    "fonbet_id": match.event_id,
+                    "tournament": match.tournament,
+                    "team_a": match.team_a,
+                    "team_b": match.team_b,
+                    "start_time": match.start_time,
+                    "sport": "hockey",
+                    "odds_a": odds_1,
+                    "odds_x": odds_x,
+                    "odds_b": odds_2,
+                    "score_a": match.score_a,
+                    "score_b": match.score_b,
+                }
+            )
+        _, created_ids = await bulk_upsert_matches(self.db, payloads, existing=existing)
+        stats["hockey_created"] += len(created_ids)
 
     async def _settle_maps(self, maps_by_parent: dict[int, list[FonbetMap]], stats: dict) -> None:
         """Раскладываем ставки по картам, как только карта доиграна.
@@ -311,15 +419,28 @@ class MatchSyncer:
         for row in await self.db.maps_by_status(["open", "live"]):
             card = by_event.get(int(row["fonbet_id"]))
             if card is not None and card.score_a is not None and card.score_b is not None:
-                await self.db.upsert_map(
-                    match_id=int(row["match_id"]),
-                    fonbet_id=card.event_id,
-                    map_number=card.map_number,
-                    odds_a=card.odds_a,
-                    odds_b=card.odds_b,
-                    score_a=card.score_a,
-                    score_b=card.score_b,
+                # _store has already batch-upserted the feed. Keep this fallback
+                # for callers that run settlement without a preceding line write,
+                # but avoid a duplicate DB write during the normal tick.
+                changed = any(
+                    current != incoming
+                    for current, incoming in (
+                        (row["odds_a"], card.odds_a if card.odds_a is not None else row["odds_a"]),
+                        (row["odds_b"], card.odds_b if card.odds_b is not None else row["odds_b"]),
+                        (row["score_a"], card.score_a),
+                        (row["score_b"], card.score_b),
+                    )
                 )
+                if changed:
+                    await self.db.upsert_map(
+                        match_id=int(row["match_id"]),
+                        fonbet_id=card.event_id,
+                        map_number=card.map_number,
+                        odds_a=card.odds_a,
+                        odds_b=card.odds_b,
+                        score_a=card.score_a,
+                        score_b=card.score_b,
+                    )
 
             # счёт берём самый свежий: из линии, а если карта оттуда ушла — из базы
             score_a = card.score_a if card is not None and card.score_a is not None else row["score_a"]

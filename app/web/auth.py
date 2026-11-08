@@ -80,23 +80,29 @@ def _metrics_route(request: web.Request) -> str:
 
 @web.middleware
 async def json_error_middleware(request: web.Request, handler):
-    """Единый формат ошибок: игровые — 400, остальные — 500 без падения сервера."""
+    """Единый формат ошибок и длительности по маршрутам для диагностики."""
     route_label = _metrics_route(request)
     metrics.count_request(route_label)
+    started_at = time.perf_counter()
     try:
-        response = await handler(request)
-    except web.HTTPException:
-        raise
-    except BettingError as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=400)
-    except Exception as exc:
-        metrics.count_error(route_label)
-        log.exception("Ошибка мини-приложения на %s", route_label)
-        await _alert(request.app, route_label, exc)
-        return web.json_response({"ok": False, "error": "Внутренняя ошибка. Попробуйте позже."}, status=500)
-    if isinstance(response, web.Response) and response.status >= 500:
-        metrics.count_error(route_label)
-    return response
+        try:
+            response = await handler(request)
+        except web.HTTPException:
+            raise
+        except BettingError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            metrics.count_error(route_label)
+            log.exception("Ошибка мини-приложения на %s", route_label)
+            await _alert(request.app, route_label, exc)
+            return web.json_response(
+                {"ok": False, "error": "Внутренняя ошибка. Попробуйте позже."}, status=500
+            )
+        if isinstance(response, web.Response) and response.status >= 500:
+            metrics.count_error(route_label)
+        return response
+    finally:
+        metrics.observe_request_duration(route_label, time.perf_counter() - started_at)
 
 
 async def _alert(app: web.Application, path: str, exc: Exception) -> None:
