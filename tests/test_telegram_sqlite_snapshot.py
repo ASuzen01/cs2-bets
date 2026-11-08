@@ -117,6 +117,36 @@ async def test_commit_snapshot_edits_existing_pinned_document(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_live_database_snapshot_uses_separate_connection(tmp_path: Path) -> None:
+    source = tmp_path / "source.sqlite"
+    compressed = _sqlite_blob(source)
+    bot = FakeBot(compressed)
+    bot.chat = _fake_chat(compressed)
+    store = TelegramSQLiteSnapshot(bot, -1001234567890)
+    local = tmp_path / "live.sqlite"
+    await store.restore_to_path(local)
+    backend = await SQLiteBackend.open(local)
+
+    async def forbidden_connection_backup(*_args, **_kwargs):
+        raise AssertionError("snapshot must not occupy the app SQLite worker")
+
+    backend._conn.backup = forbidden_connection_backup
+    try:
+        await backend.execute("INSERT INTO users VALUES (2)")
+        await backend.commit()
+        await store.persist_connection(backend._conn)
+        rows = await backend.execute("SELECT count(*) AS n FROM users")
+        assert (await rows.fetchone())["n"] == 2
+
+        updated_path = tmp_path / "updated.sqlite"
+        updated_path.write_bytes(gzip.decompress(bot.edited_media.media.data))
+        with sqlite3.connect(updated_path) as verify:
+            assert verify.execute("SELECT count(*) FROM users").fetchone()[0] == 2
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
 async def test_commit_does_not_wait_for_telegram_and_coalesces_pending_snapshots(tmp_path: Path) -> None:
     backend = await SQLiteBackend.open(tmp_path / "async-backup.db")
     await backend.executescript("CREATE TABLE values_table (value INTEGER)")

@@ -39,6 +39,7 @@ class TelegramSQLiteSnapshot:
         self.bot = bot
         self.chat_id = int(chat_id)
         self._message_id: int | None = None
+        self._database_path: Path | None = None
         self._write_lock = asyncio.Lock()
         self._pending_connection: Any | None = None
         self._snapshot_task: asyncio.Task[None] | None = None
@@ -146,6 +147,7 @@ class TelegramSQLiteSnapshot:
             os.replace(temp_path, target)
         finally:
             temp_path.unlink(missing_ok=True)
+        self._database_path = target
         self._last_sha256 = digest
         self._last_snapshot_bytes = len(compressed)
         self._last_attempt_at = self._last_success_at = int(time.time())
@@ -201,6 +203,17 @@ class TelegramSQLiteSnapshot:
             self._last_success_at = int(time.time())
             self._last_error = None
 
+    @staticmethod
+    def _backup_local_database(source_path: Path, target_path: Path) -> None:
+        """Copy a consistent SQLite snapshot without occupying aiosqlite's worker."""
+        source = sqlite3.connect(source_path, timeout=5)
+        target = sqlite3.connect(target_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+
     async def _persist_connection(self, connection: Any) -> None:
         """Create a consistent SQLite backup and replace the pinned document."""
         async with self._write_lock:
@@ -210,11 +223,20 @@ class TelegramSQLiteSnapshot:
             # retry_after when its per-chat rate limit is reached.
             with tempfile.TemporaryDirectory(prefix="telegram-sqlite-") as td:
                 db_path = Path(td) / "snapshot.sqlite"
-                target = sqlite3.connect(db_path)
-                try:
-                    await connection.backup(target)
-                finally:
-                    target.close()
+                if self._database_path is not None:
+                    # Never run SQLite's backup operation on the app's aiosqlite
+                    # connection: doing so blocks its single worker thread and
+                    # makes unrelated API reads wait for the full DB copy.
+                    await asyncio.to_thread(
+                        self._backup_local_database, self._database_path, db_path
+                    )
+                else:
+                    # Fallback for callers that have not restored a local file.
+                    target = sqlite3.connect(db_path)
+                    try:
+                        await connection.backup(target)
+                    finally:
+                        target.close()
                 raw = db_path.read_bytes()
             self._validate_sqlite(raw)
             compressed = gzip.compress(raw, compresslevel=6, mtime=0)
