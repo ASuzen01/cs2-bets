@@ -162,44 +162,72 @@ class MatchSyncer:
             await asyncio.sleep(max(30, settings.sync_interval))
 
     # ----------------------------------------------------------------- tick
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _measure_phase(stats: dict[str, Any], name: str):
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            stats.setdefault("phase_ms", {})[name] = round((time.perf_counter() - started) * 1000)
+
     async def tick(self) -> dict[str, Any]:
         started_at = time.perf_counter()
-        packet = await self.client.fetch_packet()
-        matches = self.client.parse(packet)
-        maps_by_parent = parse_maps(packet, self.client)
-        football = parse_football(
-            packet, settings.football_include_list, settings.football_exclude_list
-        )
-        hockey = (
-            parse_hockey(packet, settings.hockey_include_list, settings.hockey_exclude_list)
-            if settings.hockey_enabled
-            else []
-        )
-        stats = {
-            "fetched": len(matches),
+        stats: dict[str, Any] = {
+            "fetched": 0,
             "created": 0,
             "updated": 0,
             "closed": 0,
             "settled": 0,
             "awaiting": 0,
             "maps_settled": 0,
-            "football": len(football),
+            "football": 0,
             "football_created": 0,
-            "hockey": len(hockey),
+            "hockey": 0,
             "hockey_created": 0,
+            "phase_ms": {},
         }
 
-        await self._store(matches, maps_by_parent, stats)
-        await self._store_football(football, stats)
-        await self._store_hockey(hockey, stats)
-        await self._close_started(stats)
+        async with self._measure_phase(stats, "fetch_packet"):
+            packet = await self.client.fetch_packet()
+        async with self._measure_phase(stats, "parse"):
+            matches = self.client.parse(packet)
+            maps_by_parent = parse_maps(packet, self.client)
+            football = parse_football(
+                packet, settings.football_include_list, settings.football_exclude_list
+            )
+            hockey = (
+                parse_hockey(packet, settings.hockey_include_list, settings.hockey_exclude_list)
+                if settings.hockey_enabled
+                else []
+            )
+        stats.update(
+            fetched=len(matches),
+            football=len(football),
+            hockey=len(hockey),
+        )
+
+        async with self._measure_phase(stats, "store_cs2_and_maps"):
+            await self._store(matches, maps_by_parent, stats)
+        async with self._measure_phase(stats, "store_football"):
+            await self._store_football(football, stats)
+        async with self._measure_phase(stats, "store_hockey"):
+            await self._store_hockey(hockey, stats)
+        async with self._measure_phase(stats, "close_started"):
+            await self._close_started(stats)
         # сначала карты: матч считается в том числе по их результатам
-        await self._settle_maps(maps_by_parent, stats)
-        await self._settle(matches, stats)
-        await self._refresh_english_names()
-        await self._settle_football(football, stats)
-        await self._settle_hockey(hockey, stats)
-        await self._close_stale(stats)
+        async with self._measure_phase(stats, "settle_maps"):
+            await self._settle_maps(maps_by_parent, stats)
+        async with self._measure_phase(stats, "settle_cs2"):
+            await self._settle(matches, stats)
+        async with self._measure_phase(stats, "refresh_names"):
+            await self._refresh_english_names()
+        async with self._measure_phase(stats, "settle_football"):
+            await self._settle_football(football, stats)
+        async with self._measure_phase(stats, "settle_hockey"):
+            await self._settle_hockey(hockey, stats)
+        async with self._measure_phase(stats, "close_stale"):
+            await self._close_stale(stats)
         stats["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
 
         self.last_sync_at = int(time.time())
