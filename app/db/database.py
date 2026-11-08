@@ -234,7 +234,7 @@ class Database:
         if self._telegram_snapshot is not None:
             try:
                 await self._telegram_snapshot.persist_connection(backend._conn)
-                backend.set_commit_hook(self._telegram_snapshot.persist_connection)
+                backend.set_commit_hook(self._telegram_snapshot.schedule_persist_connection)
             except Exception:
                 await backend.close()
                 self._backend = None
@@ -288,6 +288,8 @@ class Database:
 
     async def close(self) -> None:
         if self._backend is not None:
+            if self._telegram_snapshot is not None:
+                await self._telegram_snapshot.flush_pending()
             await self._backend.close()
             self._backend = None
 
@@ -2063,7 +2065,9 @@ class Database:
         if str(game["status"]) == "flying":
             current = multiplier_at(float(game["started_at"]), moment)
             if current < float(game["crash_multiplier"]):
-                return self._crash_payload(game, current=current, balance=await self.get_balance(user_id))
+                return self._crash_payload(
+                    game, current=current, balance=await self.get_balance(user_id), server_time=moment
+                )
             # Only lock the database on settlement, not for every live multiplier poll.
             async with self.transaction() as conn:
                 async with conn.execute(
@@ -2075,7 +2079,7 @@ class Database:
                 async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (int(game["id"]),)) as cur:
                     game = await cur.fetchone()
                     assert game is not None
-        return self._crash_payload(game, balance=await self.get_balance(user_id))
+        return self._crash_payload(game, balance=await self.get_balance(user_id), server_time=moment)
 
     async def start_crash(
         self, user_id: int, stake: int, crash_multiplier: float, *, now: float | None = None
@@ -2087,9 +2091,11 @@ class Database:
             raise InvalidBet(f"Минимальная ставка в «Самолётике» — {MIN_STAKE} 🪙")
         if not 1.0 <= float(crash_multiplier) <= 1_000_000.0:
             raise InvalidBet("Некорректная точка вылета")
-        moment = float(time.time() if now is None else now)
-        timestamp = int(moment)
         async with self.transaction() as conn:
+            # Start the game clock only once its transaction has acquired the
+            # write lock; queueing behind another write must not burn flight time.
+            moment = float(time.time() if now is None else now)
+            timestamp = int(moment)
             async with conn.execute(
                 "SELECT * FROM crash_games WHERE user_id = ? AND status = 'flying' ORDER BY id DESC LIMIT 1",
                 (user_id,),
@@ -2100,7 +2106,10 @@ class Database:
                 if current >= float(existing["crash_multiplier"]):
                     await self._settle_crash_loss(conn, existing, timestamp)
                 else:
-                    return self._crash_payload(existing, current=current, balance=await self._balance_in(conn, user_id))
+                    return self._crash_payload(
+                        existing, current=current, balance=await self._balance_in(conn, user_id),
+                        server_time=moment,
+                    )
 
             debit = await conn.execute(
                 "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
@@ -2121,7 +2130,9 @@ class Database:
             async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (game_id,)) as cur:
                 game = await cur.fetchone()
                 assert game is not None
-            return self._crash_payload(game, current=1.0, balance=await self._balance_in(conn, user_id))
+            return self._crash_payload(
+                game, current=1.0, balance=await self._balance_in(conn, user_id), server_time=moment
+            )
 
     async def cashout_crash(
         self, user_id: int, game_id: int, *, now: float | None = None
@@ -2130,9 +2141,10 @@ class Database:
         from app.services.crash import multiplier_at
         from app.services.crash import payout as crash_payout
 
-        moment = float(time.time() if now is None else now)
-        timestamp = int(moment)
         async with self.transaction() as conn:
+            # Evaluate cash-out when the write lock is acquired, not before waiting in the queue.
+            moment = float(time.time() if now is None else now)
+            timestamp = int(moment)
             async with conn.execute(
                 "SELECT * FROM crash_games WHERE id = ? AND user_id = ?", (game_id, user_id)
             ) as cur:
@@ -2140,7 +2152,9 @@ class Database:
             if game is None:
                 raise InvalidBet("Партия «Самолётик» не найдена")
             if str(game["status"]) != "flying":
-                return self._crash_payload(game, balance=await self._balance_in(conn, user_id))
+                return self._crash_payload(
+                    game, balance=await self._balance_in(conn, user_id), server_time=moment
+                )
             current = multiplier_at(float(game["started_at"]), moment)
             if current >= float(game["crash_multiplier"]):
                 await self._settle_crash_loss(conn, game, timestamp)
@@ -2156,7 +2170,9 @@ class Database:
             async with conn.execute("SELECT * FROM crash_games WHERE id = ?", (game_id,)) as cur:
                 updated = await cur.fetchone()
                 assert updated is not None
-            return self._crash_payload(updated, balance=await self._balance_in(conn, user_id))
+            return self._crash_payload(
+                updated, balance=await self._balance_in(conn, user_id), server_time=moment
+            )
 
     async def _settle_crash_loss(self, conn: Any, game: Any, now: int) -> None:
         """Idempotent settlement of an active flight that passed its crash point."""
@@ -2185,13 +2201,17 @@ class Database:
         )
 
     @staticmethod
-    def _crash_payload(game: Any, *, current: float | None = None, balance: int | None = None) -> dict[str, Any]:
+    def _crash_payload(
+        game: Any, *, current: float | None = None, balance: int | None = None,
+        server_time: float | None = None,
+    ) -> dict[str, Any]:
         status = str(game["status"])
         payload: dict[str, Any] = {
             "id": int(game["id"]),
             "stake": int(game["stake"]),
             "status": status,
             "started_at": float(game["started_at"]),
+            "server_time": float(time.time() if server_time is None else server_time),
             "cashout_multiplier": float(game["cashout_multiplier"]) if game["cashout_multiplier"] is not None else None,
             "payout": int(game["payout"]),
         }

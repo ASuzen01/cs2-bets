@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 
 import pytest
@@ -57,6 +58,7 @@ async def db(tmp_path):
 async def test_crash_cashout_credits_gross_payout_once(db: Database) -> None:
     game = await db.start_crash(7001, 10, 5.0, now=100.0)
     assert game["status"] == "flying"
+    assert game["server_time"] == 100.0
     assert "crash_multiplier" not in game
     assert game["balance"] == 990
 
@@ -79,6 +81,7 @@ async def test_crash_state_settles_loss_and_never_exposes_early(db: Database) ->
     game = await db.start_crash(7001, 20, 2.5, now=100.0)
     active = await db.crash_state(7001, now=100.1)
     assert active is not None and active["status"] == "flying"
+    assert active["server_time"] == 100.1
     assert "crash_multiplier" not in active
 
     lost = await db.crash_state(7001, now=120.0)
@@ -94,6 +97,24 @@ async def test_crash_state_settles_loss_and_never_exposes_early(db: Database) ->
     assert len(await db.casino_history(7001)) == 1
     with pytest.raises(InvalidBet):
         await db.cashout_crash(7001, game["id"] + 1, now=121)
+
+
+@pytest.mark.asyncio
+async def test_crash_clock_starts_after_waiting_for_database_write_lock(db: Database, monkeypatch) -> None:
+    from app.db import database as database_module
+
+    clock = [100.0]
+    monkeypatch.setattr(database_module.time, "time", lambda: clock[0])
+    await db._write_lock.acquire()
+    task = asyncio.create_task(db.start_crash(7001, 10, 5.0))
+    try:
+        await asyncio.sleep(0)
+        clock[0] = 200.0
+    finally:
+        db._write_lock.release()
+    game = await task
+    assert game["started_at"] == 200.0
+    assert game["server_time"] == 200.0
 
 
 async def test_crash_repeated_start_does_not_debit_twice(db: Database) -> None:

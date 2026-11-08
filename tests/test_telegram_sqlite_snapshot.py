@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
 import hashlib
 import io
@@ -113,6 +114,39 @@ async def test_commit_snapshot_edits_existing_pinned_document(tmp_path: Path) ->
         verify.deserialize(updated)
         assert verify.execute("SELECT count(*) FROM users").fetchone()[0] == 2
         assert verify.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_commit_does_not_wait_for_telegram_and_coalesces_pending_snapshots(tmp_path: Path) -> None:
+    backend = await SQLiteBackend.open(tmp_path / "async-backup.db")
+    await backend.executescript("CREATE TABLE values_table (value INTEGER)")
+    store = TelegramSQLiteSnapshot(FakeBot(b""), -1001234567890)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_persist(_connection) -> None:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+
+    store.persist_connection = slow_persist
+    backend.set_commit_hook(store.schedule_persist_connection)
+    try:
+        await backend.execute("INSERT INTO values_table VALUES (1)")
+        # This commit must return even though the remote snapshot is held open.
+        await asyncio.wait_for(backend.commit(), timeout=0.2)
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await store.schedule_persist_connection(backend._conn)
+        await store.schedule_persist_connection(backend._conn)
+        release.set()
+        await store.flush_pending()
+        assert calls == 2  # one in-flight snapshot plus one coalesced latest copy
+    finally:
+        release.set()
+        await store.flush_pending()
+        await backend.close()
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,7 @@
     ladderStake: 10,
     ladderBusy: false,
     crash: null,               // активный/последний полёт «Самолётика» с сервера
+    crashClock: null,          // серверный множитель, привязанный к монотонным часам браузера
     crashStake: 50,
     crashBusy: false,
     crashPolling: false,
@@ -3252,6 +3253,7 @@
       state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
       state.crash = data.crash || null;
+      syncCrashClock(state.crash);
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
         setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
@@ -4064,9 +4066,30 @@
     return details;
   }
 
+  function syncCrashClock(game) {
+    if (!game || game.status !== "flying") {
+      state.crashClock = null;
+      return;
+    }
+    const current = Number(game.current_multiplier);
+    if (Number.isFinite(current) && current >= 1) {
+      state.crashClock = { gameId: Number(game.id), multiplier: current, receivedAt: performance.now() };
+    } else {
+      state.crashClock = null;
+    }
+  }
+
   function crashReadout() {
     const game = state.crash;
     if (!game || game.status !== "flying") return 1;
+    const anchor = state.crashClock;
+    if (anchor && anchor.gameId === Number(game.id)) {
+      const elapsed = Math.max(0, (performance.now() - anchor.receivedAt) / 1000);
+      const raw = anchor.multiplier * Math.exp(0.16 * elapsed);
+      return Math.floor(Math.min(1_000_000, raw) * 100) / 100;
+    }
+    // Fallback for an older cached response; normally we use a server-computed
+    // multiplier so a phone's skewed wall clock cannot make the plane jump ahead.
     const elapsed = Math.max(0, Date.now() / 1000 - Number(game.started_at));
     const raw = elapsed >= Math.log(1_000_000) / 0.16 ? 1_000_000 : Math.exp(0.16 * elapsed);
     return Math.floor(raw * 100) / 100;
@@ -4135,6 +4158,7 @@
 
   async function crashRequest(action) {
     if (state.crashBusy) return;
+    const previousGameId = Number(state.crash && state.crash.id) || 0;
     state.crashBusy = true;
     renderCrash($("#games"));
     try {
@@ -4149,6 +4173,7 @@
         });
       }
       state.crash = data.game || null;
+      syncCrashClock(state.crash);
       if (data.balance !== undefined) setBalance(data.balance);
       if (action === "cashout") {
         if (state.crash && state.crash.status === "cashed") {
@@ -4164,6 +4189,26 @@
       renderCrash($("#games"));
       if (state.crash && state.crash.status !== "flying") refreshState({ silent: true });
     } catch (err) {
+      // A timed-out start may already have committed on the server. Reconcile
+      // before telling the player that takeoff failed, so we don't hide a live flight.
+      if (action === "start" && (!err.status || err.status >= 500)) {
+        try {
+          const recovered = await api("/api/crash/state");
+          const game = recovered.game || null;
+          if (game && Number(game.id) !== previousGameId) {
+            state.crash = game;
+            syncCrashClock(game);
+            if (recovered.balance !== undefined) setBalance(recovered.balance);
+            if (game.status === "crashed") {
+              toast(`Самолётик улетел на ×${Number(game.crash_multiplier).toFixed(2)}`, "bad");
+              haptic("bad");
+            }
+            return;
+          }
+        } catch (_recoveryError) {
+          // Keep the original error if the follow-up read is also unavailable.
+        }
+      }
       toast(err.message, "bad");
     } finally {
       state.crashBusy = false;
@@ -4276,6 +4321,7 @@
     try {
       const data = await api("/api/crash/state");
       state.crash = data.game || null;
+      syncCrashClock(state.crash);
       if (data.balance !== undefined && Number(data.balance) !== Number(state.user.balance)) setBalance(data.balance);
       if (state.crash && state.crash.status === "flying") updateCrashFlight();
       else if (oldStatus === "flying") {

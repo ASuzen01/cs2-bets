@@ -139,6 +139,9 @@ async def health(request: web.Request) -> web.Response:
     # состояние бэкапов: видно, что копии реально снимаются, без захода в бота
     try:
         db: Database = request.app[DB_KEY]
+        snapshot = getattr(db, "_telegram_snapshot", None)
+        if snapshot is not None:
+            payload["telegram_snapshot"] = snapshot.health_status()
         last = await db.last_backup()
         if last is not None:
             payload["last_backup_at"] = int(last["created_at"])

@@ -40,7 +40,25 @@ class TelegramSQLiteSnapshot:
         self.chat_id = int(chat_id)
         self._message_id: int | None = None
         self._write_lock = asyncio.Lock()
+        self._pending_connection: Any | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
         self._last_sha256: str | None = None
+        self._last_attempt_at = 0
+        self._last_success_at = 0
+        self._last_snapshot_bytes = 0
+        self._last_error: str | None = None
+
+    def health_status(self) -> dict[str, Any]:
+        """Operational status without exposing Telegram file IDs or error text."""
+        return {
+            "ok": self._last_error is None,
+            "last_attempt_at": self._last_attempt_at or None,
+            "last_success_at": self._last_success_at or None,
+            "size_bytes": self._last_snapshot_bytes or None,
+            "limit_bytes": MAX_DOWNLOAD_BYTES,
+            "near_limit": self._last_snapshot_bytes >= int(MAX_DOWNLOAD_BYTES * 0.8),
+            "last_error": bool(self._last_error),
+        }
 
     async def _validate_channel(self) -> Any:
         chat = await self.bot.get_chat(self.chat_id)
@@ -129,9 +147,61 @@ class TelegramSQLiteSnapshot:
         finally:
             temp_path.unlink(missing_ok=True)
         self._last_sha256 = digest
+        self._last_snapshot_bytes = len(compressed)
+        self._last_attempt_at = self._last_success_at = int(time.time())
+        self._last_error = None
         log.info("Restored SQLite snapshot from Telegram channel %s", self.chat_id)
 
+    async def schedule_persist_connection(self, connection: Any) -> None:
+        """Queue a coalesced snapshot without making a database commit wait on Telegram.
+
+        The local SQLite commit is the request-path durability boundary. Telegram
+        remains the remote recovery copy; a slow Bot API upload must never keep a
+        game transaction open while its round is already running.
+        """
+        self._pending_connection = connection
+        if self._snapshot_task is None or self._snapshot_task.done():
+            self._snapshot_task = asyncio.create_task(self._drain_pending_snapshots())
+
+    async def _drain_pending_snapshots(self) -> None:
+        while self._pending_connection is not None:
+            connection = self._pending_connection
+            self._pending_connection = None
+            for attempt in range(3):
+                try:
+                    await self.persist_connection(connection)
+                    break
+                except Exception:
+                    # Local commit already succeeded. Record/report the remote-copy
+                    # failure; retry briefly unless a newer database state is queued.
+                    log.exception("Background Telegram SQLite snapshot failed")
+                    if self._pending_connection is not None or attempt == 2:
+                        break
+                    await asyncio.sleep(1 << attempt)
+
+    async def flush_pending(self) -> None:
+        """Wait for queued snapshots before a graceful database shutdown."""
+        while self._snapshot_task is not None:
+            task = self._snapshot_task
+            await task
+            if task is self._snapshot_task and task.done():
+                self._snapshot_task = None
+            if self._pending_connection is not None and self._snapshot_task is None:
+                self._snapshot_task = asyncio.create_task(self._drain_pending_snapshots())
+
     async def persist_connection(self, connection: Any) -> None:
+        """Track snapshot health around a durable remote write."""
+        self._last_attempt_at = int(time.time())
+        try:
+            await self._persist_connection(connection)
+        except Exception as exc:
+            self._last_error = type(exc).__name__
+            raise
+        else:
+            self._last_success_at = int(time.time())
+            self._last_error = None
+
+    async def _persist_connection(self, connection: Any) -> None:
         """Create a consistent SQLite backup and replace the pinned document."""
         async with self._write_lock:
             if self._message_id is None:
@@ -150,6 +220,15 @@ class TelegramSQLiteSnapshot:
             compressed = gzip.compress(raw, compresslevel=6, mtime=0)
             if len(compressed) > MAX_DOWNLOAD_BYTES:
                 raise TelegramSnapshotError("Compressed SQLite snapshot exceeds 20 MB")
+            if (
+                len(compressed) >= int(MAX_DOWNLOAD_BYTES * 0.8)
+                and self._last_snapshot_bytes < int(MAX_DOWNLOAD_BYTES * 0.8)
+            ):
+                log.warning(
+                    "Telegram SQLite snapshot is approaching Bot API limit: %.1f / %.1f MB",
+                    len(compressed) / (1024 * 1024),
+                    MAX_DOWNLOAD_BYTES / (1024 * 1024),
+                )
             digest = hashlib.sha256(compressed).hexdigest()
             if digest == self._last_sha256:
                 return
@@ -181,6 +260,7 @@ class TelegramSQLiteSnapshot:
                         "Telegram snapshot update failed after local commit"
                     ) from exc
             self._last_sha256 = digest
+            self._last_snapshot_bytes = len(compressed)
 
     @staticmethod
     def _caption_sha(caption: str) -> str | None:
