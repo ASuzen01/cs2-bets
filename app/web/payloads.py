@@ -50,6 +50,13 @@ def short_tournament(name: str, limit: int = 42) -> str:
         base = parts[1]
         if _ROUND_PART.match(base) and not _ROUND_PART.match(parts[0]):
             base = parts[0]      # «Премьер-Лига. 12-й тур» → показываем лигу, а не тур
+        # Не схлопываем английскую и российскую Премьер-лиги в один фильтр.
+        if base.casefold() in {"премьер-лига", "premier league"}:
+            country = parts[0].casefold()
+            if country in {"англия", "england"}:
+                return "Англия · АПЛ"
+            if country in {"россия", "russia"}:
+                return "Россия · РПЛ"
         bo = next(
             (part for part in parts
              if len(part) in (3, 4) and part[:2].lower() == "bo" and part[2:].isdigit()),

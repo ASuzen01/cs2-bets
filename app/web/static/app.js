@@ -24,6 +24,7 @@
     category: "clubs",
     fbOpen: {},          // какие футбольные карточки раскрыты до полной росписи
     tournaments: {},     // выбранный турнир по каждому виду спорта
+    eventDates: {},      // выбранная локальная дата матчей по каждому виду спорта
     liveMatches: boot.live || [],   // матчи в эфире (state.live — флаг «данные загружены»)
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
@@ -500,9 +501,26 @@
           .filter(inCategory));
       });
     }
+    const dateBtn = $("#dateFilter");
+    if (dateBtn) {
+      once(dateBtn, () => {
+        const source = state.segment === "live" ? state.liveMatches : marketSource();
+        let matches = source
+          .filter((m) => (m.sport || "cs2") === state.sport)
+          .filter(inCategory);
+        if (state.onlyFavorites) {
+          matches = matches.filter((match) => isFavorite(match.team_a) || isFavorite(match.team_b));
+        }
+        openDateSheet(matches);
+      });
+    }
     const tourReset = $("#tourReset");
     if (tourReset) {
-      once(tourReset, () => { setTournament(null); renderMatches(); });
+      once(tourReset, () => {
+        setTournament(null);
+        setEventDate(null);
+        renderMatches();
+      });
     }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
       once(btn, () => {
@@ -783,6 +801,54 @@
     } catch (err) { /* приватный режим — просто не запоминаем */ }
   }
 
+  function eventDateStorageKey() {
+    return "ludka:event-date:" + state.sport;
+  }
+
+  function selectedEventDate() {
+    if (state.eventDates[state.sport] !== undefined) return state.eventDates[state.sport];
+    try { return localStorage.getItem(eventDateStorageKey()) || null; } catch (err) { return null; }
+  }
+
+  function setEventDate(value) {
+    state.eventDates[state.sport] = value || null;
+    try {
+      if (value) localStorage.setItem(eventDateStorageKey(), value);
+      else localStorage.removeItem(eventDateStorageKey());
+    } catch (err) { /* приватный режим — просто не запоминаем */ }
+  }
+
+  function localDateKey(date) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  function matchDateKey(match) {
+    const seconds = Number(match && match.start_time);
+    return Number.isFinite(seconds) && seconds > 0
+      ? localDateKey(new Date(seconds * 1000))
+      : "";
+  }
+
+  function dateLabel(key) {
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    if (key === localDateKey(today)) return "Сегодня";
+    if (key === localDateKey(tomorrow)) return "Завтра";
+    const date = new Date(`${key}T00:00:00`);
+    return new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short" })
+      .format(date).replace(/\.$/, "");
+  }
+
+  function eventDatesOf(list) {
+    const counts = new Map();
+    list.forEach((match) => {
+      const key = matchDateKey(match);
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
   function tournamentsOf(list) {
     const counts = new Map();
     list.forEach((match) => {
@@ -808,7 +874,53 @@
     button.append(caret);
     button.classList.toggle("active", Boolean(active));
     const reset = $("#tourReset");
-    if (reset) reset.hidden = !active;
+    if (reset) reset.hidden = !active && !selectedEventDate();
+  }
+
+  function renderDateFilter(all) {
+    const button = $("#dateFilter");
+    if (!button) return;
+    const dates = eventDatesOf(all);
+    const chosen = selectedEventDate();
+    if (chosen && !dates.some(([date]) => date === chosen)) setEventDate(null);
+    const active = selectedEventDate();
+    button.textContent = "";
+    button.append(document.createTextNode(active ? dateLabel(active) : "Все даты"));
+    button.append(el("span", "caret", "▼"));
+    button.classList.toggle("active", Boolean(active));
+    const reset = $("#tourReset");
+    if (reset) reset.hidden = !active && !selectedTournament();
+  }
+
+  function openDateSheet(all) {
+    haptic("light");
+    const dates = eventDatesOf(all);
+    const active = selectedEventDate();
+    openSheet((sheet) => {
+      sheet.append(el("h3", null, "Дата события"));
+      sheet.append(el("div", "sub", `${all.length} матчей · даты по местному времени`));
+      const box = el("div", "tourlist");
+      const pick = (date) => {
+        setEventDate(date);
+        closeSheet();
+        renderMatches();
+      };
+      const allButton = el("button", !active ? "active" : "");
+      allButton.type = "button";
+      allButton.append(el("span", "nm", "Все даты"));
+      allButton.append(el("span", "cnt", String(all.length)));
+      allButton.addEventListener("click", () => pick(null));
+      box.append(allButton);
+      dates.forEach(([date, count]) => {
+        const button = el("button", date === active ? "active" : "");
+        button.type = "button";
+        button.append(el("span", "nm", dateLabel(date)));
+        button.append(el("span", "cnt", String(count)));
+        button.addEventListener("click", () => pick(date));
+        box.append(button);
+      });
+      sheet.append(box);
+    });
   }
 
   function openTournamentSheet(all) {
@@ -844,21 +956,6 @@
   }
 
   function renderSportSegments() {
-    const tourBtn = $("#tourFilter");
-    if (tourBtn) {
-      tourBtn.addEventListener("click", () => {
-        const source = state.segment === "live"
-          ? state.liveMatches
-          : marketSource();
-        openTournamentSheet(source
-          .filter((m) => (m.sport || "cs2") === state.sport)
-          .filter(inCategory));
-      });
-    }
-    const tourReset = $("#tourReset");
-    if (tourReset) {
-      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
-    }
     document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.sport === state.sport);
     });
@@ -1177,11 +1274,16 @@
         updateFavFilter();
       }
     }
+    renderDateFilter(sportOnly);
+    const eventDate = selectedEventDate();
+    const dateFiltered = eventDate
+      ? sportOnly.filter((match) => matchDateKey(match) === eventDate)
+      : sportOnly;
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
     const list = tournament
-      ? sportOnly.filter((match) => (match.short_tournament || match.tournament) === tournament)
-      : sportOnly;
+      ? dateFiltered.filter((match) => (match.short_tournament || match.tournament) === tournament)
+      : dateFiltered;
 
     if (!list.length) {
       if (tournament && sportOnly.length) {
@@ -5798,30 +5900,6 @@
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-    });
-    const tourBtn = $("#tourFilter");
-    if (tourBtn) {
-      tourBtn.addEventListener("click", () => {
-        const source = state.segment === "live"
-          ? state.liveMatches
-          : marketSource();
-        openTournamentSheet(source
-          .filter((m) => (m.sport || "cs2") === state.sport)
-          .filter(inCategory));
-      });
-    }
-    const tourReset = $("#tourReset");
-    if (tourReset) {
-      tourReset.addEventListener("click", () => { setTournament(null); renderMatches(); });
-    }
-    document.querySelectorAll("#sportSegments .seg").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (state.sport === btn.dataset.sport) return;
-        state.sport = btn.dataset.sport;
-        haptic("light");
-        renderMatches();
-        refreshState({ silent: true });
-      });
     });
     document.querySelectorAll("#matchSegments .seg").forEach((btn) => {
       btn.addEventListener("click", () => {
