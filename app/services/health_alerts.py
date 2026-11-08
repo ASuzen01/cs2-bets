@@ -83,13 +83,39 @@ class HealthAlertMonitor:
                 log.exception("Не удалось отправить health-оповещение админу %s", admin_id)
 
     async def _condition(self, key: str, problem: str | None) -> None:
+        """Send an alert only on state transitions, including across restarts."""
+        meta_key = f"health_alert_active:{key}"
         was_active = key in self.active
+        try:
+            persisted = await self.db.get_meta(meta_key)
+        except Exception:
+            # The health alert itself must still work while the DB is failing.
+            log.debug("Не удалось прочитать состояние health-алерта %s", key, exc_info=True)
+        else:
+            if persisted is not None:
+                was_active = persisted == "1"
+
+        changed: str | None = None
         if problem and not was_active:
-            self.active.add(key)
             await self._notify(f"🚨 CS2 Bets: {problem}")
+            self.active.add(key)
+            changed = "1"
         elif not problem and was_active:
-            self.active.discard(key)
             await self._notify(f"✅ CS2 Bets: проблема устранена ({key})")
+            self.active.discard(key)
+            changed = "0"
+        elif was_active:
+            self.active.add(key)
+        else:
+            self.active.discard(key)
+
+        if changed is not None:
+            try:
+                await self.db.set_meta(meta_key, changed)
+            except Exception:
+                # Keep in-memory deduplication; the next process may notify again
+                # if the durable state could not be saved.
+                log.debug("Не удалось сохранить состояние health-алерта %s", key, exc_info=True)
 
     async def check_once(self, *, now: int | None = None) -> None:
         """Один проход мониторинга; доступен отдельно для тестов и диагностики."""

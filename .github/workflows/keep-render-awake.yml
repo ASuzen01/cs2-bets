@@ -1,0 +1,24 @@
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ping-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Ping the public Render endpoint
+        env:
+          PING_URL: https://cs2-bets-bot.onrender.com/ping
+        run: >-
+          curl --fail-with-body --silent --show-error
+          --retry 5 --retry-all-errors --retry-delay 5 --retry-connrefused
+          --connect-timeout 10 --max-time 25 "$PING_URL"

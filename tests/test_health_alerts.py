@@ -8,11 +8,19 @@ class FakeDB:
     def __init__(self, sync_at: int = 0) -> None:
         self.sync_at = sync_at
         self.fail = False
+        self.meta: dict[str, str] = {}
 
     async def get_meta(self, key: str) -> str | None:
         if self.fail:
             raise RuntimeError("database offline")
-        return str(self.sync_at) if key == "last_sync_at" and self.sync_at else None
+        if key == "last_sync_at" and self.sync_at:
+            return str(self.sync_at)
+        return self.meta.get(key)
+
+    async def set_meta(self, key: str, value: str) -> None:
+        if self.fail:
+            raise RuntimeError("database offline")
+        self.meta[key] = str(value)
 
 
 class FakeBot:
@@ -54,6 +62,40 @@ async def test_alerts_db_and_stale_feed_then_notify_on_recovery(monkeypatch) -> 
     assert monitor.active == set()
     assert len(bot.messages) == 8
     assert all("проблема устранена" in text for _, text in bot.messages[4:])
+
+
+async def test_active_alert_state_survives_monitor_restart(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_ids", "123")
+    db = FakeDB(sync_at=1)
+    bot = FakeBot()
+
+    first = HealthAlertMonitor(bot, db, FakeSyncer())
+    first.started_at = 0
+    await first.check_once(now=2000)
+    assert len(bot.messages) == 1
+    assert db.meta["health_alert_active:feed_stale"] == "1"
+
+    # Recreating the monitor simulates an application restart. The active
+    # incident remains recorded, so it does not send another start alert.
+    restarted = HealthAlertMonitor(bot, db, FakeSyncer())
+    restarted.started_at = 0
+    await restarted.check_once(now=2060)
+    assert len(bot.messages) == 1
+    assert restarted.active == {"feed_stale"}
+
+    db.sync_at = 3000
+    await restarted.check_once(now=3001)
+    assert len(bot.messages) == 2
+    assert "проблема устранена" in bot.messages[-1][1]
+    assert db.meta["health_alert_active:feed_stale"] == "0"
+
+    db.sync_at = 1
+    await restarted.check_once(now=4000)
+    assert len(bot.messages) == 3
+    assert "Лента матчей" in bot.messages[-1][1]
+    assert db.meta["health_alert_active:feed_stale"] == "1"
 
 
 async def test_alert_on_429_spike_is_cooled_down(monkeypatch) -> None:
