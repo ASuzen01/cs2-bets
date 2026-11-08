@@ -972,6 +972,7 @@
     if (isLive) top.append(liveTag("LIVE", "live"));
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
+    top.append(favoriteStar(match));
     card.append(top);
 
     const board = el("div", "fb-board");
@@ -1039,6 +1040,7 @@
     if (isLive) top.append(liveTag("LIVE", "live"));
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
+    top.append(favoriteStar(match));
     card.append(top);
 
     const board = el("div", "fb-board");
@@ -1188,20 +1190,28 @@
 
   // Избранные команды: звёздочка на карточке и фильтр «★ Мои».
   function favoriteStar(match) {
-    const names = [match.team_a, match.team_b];
-    const btn = el("button", "favstar" + (names.some(isFavorite) ? " on" : ""));
+    const names = [...new Set([match.team_a, match.team_b].filter(Boolean))];
+    const selected = names.some(isFavorite);
+    const btn = el("button", "favstar" + (selected ? " on" : ""));
     btn.type = "button";
-    btn.textContent = names.some(isFavorite) ? "★" : "☆";
-    btn.setAttribute("aria-label",
-      names.some(isFavorite) ? "Убрать из избранного" : "Добавить в избранное");
+    btn.textContent = selected ? "★" : "☆";
+    btn.setAttribute("aria-label", selected
+      ? "Убрать команды матча из «Мои»"
+      : "Добавить команды матча в «Мои»");
+    btn.title = selected
+      ? "Убрать обе команды из «Мои»"
+      : "Добавить обе команды в «Мои»";
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleFavorite(match.team_a);
-      if (match.team_b !== match.team_a && !isFavorite(match.team_a)) {
-        // повторный тап по звезде снимает обе команды матча
-        state.favorites = state.favorites.filter((name) => name !== match.team_b);
-        saveFavorites();
+      if (names.some(isFavorite)) {
+        state.favorites = state.favorites.filter((name) => !names.includes(name));
+        toast("Команды матча убраны из «Мои»");
+      } else {
+        state.favorites = [...new Set([...state.favorites, ...names])].slice(0, 40);
+        toast("Команды матча добавлены в «Мои»");
       }
+      saveFavorites();
+      haptic("light");
       renderMatches();
       updateFavFilter();
     });

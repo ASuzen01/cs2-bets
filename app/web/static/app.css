@@ -1323,3 +1323,10 @@ button:focus-visible{outline-color:#d6b66d}
 .baccarat-table-result{position:absolute;right:14px;bottom:12px;left:14px;color:#9b9279;font-size:9px;font-weight:900;letter-spacing:.18em;text-align:center}
 .baccarat-table-result.show{color:#e4d39c;text-shadow:0 0 12px rgba(221,193,113,.25)}
 @media(max-width:360px){.baccarat-board{grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:3px;padding:14px 6px 39px}.baccarat-card{width:39px;height:63px;flex-basis:39px}.baccarat-cards{gap:3px}.baccarat-hand-heading{font-size:8px}.baccarat-vs{font-size:7px}}
+
+/* Избранное должно быть заметно и нажимаемо на карточках всех видов спорта. */
+.card .top .tour{flex:1;min-width:0}
+.card .top .kick{flex:0 0 auto;white-space:nowrap}
+.card .top .favstar{display:grid;place-items:center;flex:0 0 34px;width:34px;height:32px;padding:0;
+  border:1px solid #536579;border-radius:9px;background:#202c3a;color:#f4d06c;font-size:21px;line-height:1}
+.card .top .favstar.on{border-color:#a98b4b;background:rgba(201,165,82,.18);color:#ffdc73}

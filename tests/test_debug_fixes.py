@@ -8,12 +8,24 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
 from app import texts
 from app.db import Database
 from app.web.payloads import short_tournament as web_short_tournament
+
+
+# ------------------------------------------------------- фильтр «Мои» для всех видов спорта
+def test_favorite_control_is_rendered_on_each_sports_card() -> None:
+    source = Path("app/web/static/app.js").read_text(encoding="utf-8")
+    for name in ("renderCard", "renderFootballCard", "renderHockeyCard"):
+        start = source.index(f"function {name}(")
+        end = source.find("\n  function ", start + 1)
+        body = source[start:end if end >= 0 else None]
+        assert "top.append(favoriteStar(match));" in body
+    assert "Добавить обе команды в «Мои»" in source
 
 
 # --------------------------------------------------------------- подпись турнира
