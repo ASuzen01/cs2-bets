@@ -117,6 +117,27 @@ async def test_crash_clock_starts_after_waiting_for_database_write_lock(db: Data
     assert game["server_time"] == 200.0
 
 
+@pytest.mark.asyncio
+async def test_crash_cashout_uses_request_arrival_time_while_waiting_for_lock(
+    db: Database, monkeypatch
+) -> None:
+    from app.db import database as database_module
+
+    game = await db.start_crash(7001, 10, 5.0, now=100.0)
+    clock = [101.0]
+    monkeypatch.setattr(database_module.time, "time", lambda: clock[0])
+    await db._write_lock.acquire()
+    task = asyncio.create_task(db.cashout_crash(7001, game["id"]))
+    try:
+        await asyncio.sleep(0)
+        clock[0] = 200.0
+    finally:
+        db._write_lock.release()
+    result = await task
+    assert result["status"] == "cashed"
+    assert result["cashout_multiplier"] == pytest.approx(1.17)
+
+
 async def test_crash_repeated_start_does_not_debit_twice(db: Database) -> None:
     first = await db.start_crash(7001, 50, 5.0, now=100.0)
     second = await db.start_crash(7001, 100, 8.0, now=101.0)

@@ -2141,10 +2141,10 @@ class Database:
         from app.services.crash import multiplier_at
         from app.services.crash import payout as crash_payout
 
+        # Cash-out is evaluated at request arrival, not after waiting for a write lock.
+        moment = float(time.time() if now is None else now)
+        timestamp = int(moment)
         async with self.transaction() as conn:
-            # Evaluate cash-out when the write lock is acquired, not before waiting in the queue.
-            moment = float(time.time() if now is None else now)
-            timestamp = int(moment)
             async with conn.execute(
                 "SELECT * FROM crash_games WHERE id = ? AND user_id = ?", (game_id, user_id)
             ) as cur:
