@@ -22,6 +22,7 @@ from app.services.bulk_sync import (
 from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
 from app.services.cs2_settle import settle_from_feed
+from app.services.flashscore_football_results import FlashscoreFootballResultsClient
 from app.services.fonbet import FonbetClient, FonbetMap, FonbetMatch, parse_maps
 from app.services.football import FootballMatch, is_placeholder_team, parse_football
 from app.services.hockey import HockeyMatch, parse_hockey
@@ -110,10 +111,16 @@ class MatchSyncer:
         client: FonbetClient | None = None,
         results: ResultsClient | None = None,
         cs2_results: Cs2ResultsClient | None = None,
+        flashscore_results: FlashscoreFootballResultsClient | None = None,
     ) -> None:
         self.bot = bot
         self.db = db
         self.results = results or ResultsClient()
+        # В тестах с подменённым primary-клиентом fallback передают явно,
+        # чтобы не выполнять неожиданные сетевые запросы.
+        self.flashscore_results = flashscore_results or (
+            FlashscoreFootballResultsClient() if results is None else None
+        )
         self.hockey_results = ResultsClient(sport="hockey")
         self.khl_results = KhlResultsClient()
         self.cs2_results = cs2_results or Cs2ResultsClient()
@@ -146,6 +153,8 @@ class MatchSyncer:
             self._task = None
         await self.client.close()
         await self.results.close()
+        if self.flashscore_results is not None:
+            await self.flashscore_results.close()
         await self.cs2_results.close()
         await self.hockey_results.close()
         await self.khl_results.close()
@@ -729,7 +738,9 @@ class MatchSyncer:
                 await self._cancel_market_row(row, stats, reason=f"статус {result.status}")
                 continue
             if result is not None and result.finished:
-                await self._settle_football_row(row, result.score_home, result.score_away, stats)
+                await self._settle_football_row(
+                    row, result.score_home, result.score_away, stats, source=result.source
+                )
                 continue
 
             if str(row["status"]) != "awaiting":
@@ -742,16 +753,24 @@ class MatchSyncer:
 
     async def _football_result_from_feed(self, row: Any) -> FootballResult | None:
         """Финальный счёт из внешнего фида результатов (None — не нашли/не готово)."""
+        names = {
+            "english_a": row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
+            "english_b": row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
+        }
+        teams = (str(row["team_a"]), str(row["team_b"]), int(row["start_time"]))
         try:
-            return await self.results.find(
-                str(row["team_a"]),
-                str(row["team_b"]),
-                int(row["start_time"]),
-                english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
-                english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
-            )
+            result = await self.results.find(*teams, **names)
         except Exception:
-            log.exception("Не смог получить результат футбольного матча #%s", row["id"])
+            log.exception("Не смог получить результат матча #%s из Livescore", row["id"])
+            result = None
+        if result is not None:
+            return result
+        if self.flashscore_results is None:
+            return None
+        try:
+            return await self.flashscore_results.find(*teams, **names)
+        except Exception:
+            log.exception("Не смог получить результат матча #%s из Flashscore", row["id"])
             return None
 
     async def _refresh_english_names(self) -> None:
@@ -839,12 +858,18 @@ class MatchSyncer:
                  row["id"], row["sport"], reason)
 
     async def _settle_football_row(
-        self, row: Any, score_a: int, score_b: int, stats: dict[str, Any]
+        self,
+        row: Any,
+        score_a: int,
+        score_b: int,
+        stats: dict[str, Any],
+        *,
+        source: str = "fonbet",
     ) -> None:
         """Расплатиться по футбольному матчу и рассказать об этом в чаты."""
         try:
             result = await self.db.settle_football(
-                int(row["id"]), score_a, score_b, source="fonbet"
+                int(row["id"]), score_a, score_b, source=source
             )
         except Exception:
             log.exception("Не смог рассчитать футбольный матч #%s", row["id"])

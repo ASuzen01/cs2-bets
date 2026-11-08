@@ -80,6 +80,7 @@ class FootballResult:
     final_away: int
     status: str
     start_ts: int
+    source: str = "livescore"
 
     @property
     def finished(self) -> bool:
@@ -129,6 +130,9 @@ def translit(name: str) -> str:
 RESULT_NAME_ALIASES = {
     "melbiu": "mjallby",                    # Мьельбю → Mjällby / Mjaellby
     "borats bania luka": "borac banja luka", # Борац Баня-Лука → Borac Banja Luka
+    "psg": "paris saint germain",            # Paris Saint-Germain
+    "rennais": "rennes",                     # Stade Rennais / Rennes
+    "koln": "cologne",                       # 1. FC Köln / FC Cologne
 }
 
 
@@ -149,20 +153,49 @@ def name_score(left: str, right: str) -> float:
     right_tokens = set(right_name.split())
     if not left_tokens or not right_tokens:
         return 0.0
+    if (left_tokens ^ right_tokens) & DIFF_TOKENS:
+        return 0.0
     common = left_tokens & right_tokens
     return 2 * len(common) / (len(left_tokens) + len(right_tokens))
+
+
+def pair_orientation(
+    name_a: str, name_b: str, home: str, away: str, *, min_weak: float = 0.5, min_strong: float = 0.9
+) -> str | None:
+    """Совпадение пары и её порядок; требует уверенного совпадения хотя бы одной команды."""
+    direct = (name_score(name_a, home), name_score(name_b, away))
+    reverse = (name_score(name_a, away), name_score(name_b, home))
+    direct_matches = min(direct) >= min_weak and max(direct) >= min_strong
+    reverse_matches = min(reverse) >= min_weak and max(reverse) >= min_strong
+    if direct_matches:
+        return "direct"
+    if reverse_matches:
+        return "reverse"
+    return None
 
 
 def pair_matches(
     name_a: str, name_b: str, home: str, away: str, *, min_weak: float = 0.5, min_strong: float = 0.9
 ) -> bool:
-    """Оба названия похожи, причём одно из них — уверенно (защита от однофамильцев)."""
-    direct = (name_score(name_a, home), name_score(name_b, away))
-    reverse = (name_score(name_a, away), name_score(name_b, home))
-    for first, second in (direct, reverse):
-        if min(first, second) >= min_weak and max(first, second) >= min_strong:
-            return True
-    return False
+    """Совпадает ли пара команд без учёта порядка."""
+    return pair_orientation(
+        name_a, name_b, home, away, min_weak=min_weak, min_strong=min_strong
+    ) is not None
+
+
+def _swap_result(result: FootballResult) -> FootballResult:
+    """Переставляет домашнюю/гостевую сторону, сохраняя источник и статус."""
+    return FootballResult(
+        home=result.away,
+        away=result.home,
+        score_home=result.score_away,
+        score_away=result.score_home,
+        final_home=result.final_away,
+        final_away=result.final_home,
+        status=result.status,
+        start_ts=result.start_ts,
+        source=result.source,
+    )
 
 
 def same_team(left: str, right: str, *, threshold: float = 0.82) -> bool:
@@ -247,17 +280,25 @@ class ResultsClient:
                 log.warning("Не смог получить результаты за %s: %s", day, exc)
                 continue
             for result in results:
-                for name_a in names_a:
-                    for name_b in names_b:
-                        if not pair_matches(name_a, name_b, result.home, result.away):
-                            continue
-                        delta = abs(float(result.start_ts) - float(start_ts or result.start_ts))
-                        if result.start_ts and int(result.start_ts) % 86400 == 0:
-                            # у хоккея фид отдаёт только дату (время в пакете нулевое):
-                            # сверять минуты не с чем — хватает попадания в тот же день
-                            delta = 0.0
-                        if delta < best_delta:
-                            best_delta, best = delta, result
+                orientation = next(
+                    (
+                        matched
+                        for name_a in names_a
+                        for name_b in names_b
+                        if (matched := pair_orientation(name_a, name_b, result.home, result.away))
+                    ),
+                    None,
+                )
+                if orientation is None:
+                    continue
+                delta = abs(float(result.start_ts) - float(start_ts or result.start_ts))
+                if result.start_ts and int(result.start_ts) % 86400 == 0:
+                    # у хоккея фид отдаёт только дату (время в пакете нулевое):
+                    # сверять минуты не с чем — хватает попадания в тот же день
+                    delta = 0.0
+                if delta < best_delta:
+                    best_delta = delta
+                    best = result if orientation == "direct" else _swap_result(result)
         return best
 
 

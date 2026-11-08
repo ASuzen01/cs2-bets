@@ -27,6 +27,7 @@ from app.db.database import Database
 from app.services.cs2_results import Cs2ResultsClient
 from app.services.cs2_rules import map_winner, required_maps
 from app.services.cs2_settle import settle_from_feed
+from app.services.flashscore_football_results import FlashscoreFootballResultsClient
 from app.services.maps import finish_maps_of_match, repair_refunded_maps
 from app.services.notify import notify_bettors, send_user
 from app.services.results import FootballResult, ResultsClient
@@ -48,9 +49,16 @@ async def recheck_recent(
     *,
     hours: int = 48,
     cs2_results: Cs2ResultsClient | None = None,
+    flashscore_results: FlashscoreFootballResultsClient | None = None,
 ) -> dict[str, Any]:
     """Сверяет расчёты последних `hours` часов с фактами. Возвращает отчёт."""
     client = results or ResultsClient()
+    # При переданном в тест/вызов primary-клиенте не обращаемся к сети неожиданно.
+    # В штатном production-вызове без инъекций включаем Flashscore автоматически.
+    own_flashscore = flashscore_results is None and results is None
+    flashscore = flashscore_results or (
+        FlashscoreFootballResultsClient() if own_flashscore else None
+    )
     cs2 = cs2_results or Cs2ResultsClient()
     since = int(time.time()) - hours * 3600
     report: dict[str, Any] = {
@@ -78,7 +86,7 @@ async def recheck_recent(
         report["checked"] += 1
         try:
             if str(row["sport"]) == "football":
-                line, matched = await _recheck_football(db, bot, client, row)
+                line, matched = await _recheck_football(db, bot, client, row, flashscore)
                 if matched is False:
                     report["unmatched"] += 1
                 if line:
@@ -94,6 +102,8 @@ async def recheck_recent(
 
     if results is None:
         await client.close()
+    if own_flashscore and flashscore is not None:
+        await flashscore.close()
     if cs2_results is None:
         await cs2.close()
     LAST_REPORT.clear()
@@ -107,19 +117,24 @@ async def recheck_recent(
 
 
 async def _recheck_football(
-    db: Database, bot: Bot | None, client: ResultsClient, row: Any
+    db: Database,
+    bot: Bot | None,
+    client: ResultsClient,
+    row: Any,
+    flashscore: FlashscoreFootballResultsClient | None = None,
 ) -> tuple[str | None, bool | None]:
     """Сверяет футбольный матч с фидом результатов.
 
     Возвращает (строка отчёта, найден ли результат в фиде).
     """
-    found: FootballResult | None = await client.find(
-        str(row["team_a"]),
-        str(row["team_b"]),
-        int(row["start_time"]),
-        english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
-        english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
-    )
+    names = {
+        "english_a": row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
+        "english_b": row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
+    }
+    teams = (str(row["team_a"]), str(row["team_b"]), int(row["start_time"]))
+    found: FootballResult | None = await client.find(*teams, **names)
+    if found is None and flashscore is not None:
+        found = await flashscore.find(*teams, **names)
     if found is None:
         return None, False
     if found.start_ts and abs(found.start_ts - int(row["start_time"])) > 6 * 3600:

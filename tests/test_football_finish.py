@@ -115,6 +115,29 @@ async def test_settles_by_feed_score_not_by_live_snapshot(db: Database) -> None:
     assert await db.get_balance(1) == 900          # ставка проиграла — и это верно
 
 
+async def test_uses_flashscore_when_livescore_has_no_match(db: Database) -> None:
+    row = await _finished_match(db)
+    primary = FakeResults(None)
+    fallback_result = _result((1, 2))
+    fallback_result.source = "flashscore"
+    fallback = FakeResults(fallback_result)
+    syncer = MatchSyncer(
+        bot=None,
+        db=db,
+        results=primary,
+        flashscore_results=fallback,  # type: ignore[arg-type]
+    )
+
+    stats = {"settled": 0, "awaiting": 0}
+    await syncer._settle_football([], stats)
+
+    assert primary.calls == fallback.calls == 1
+    assert stats["settled"] == 1
+    match = await db.get_match(int(row["id"]))
+    assert (int(match["score_a"]), int(match["score_b"])) == (1, 2)
+    assert str(match["result_source"]) == "flashscore"
+
+
 async def test_settles_winning_bet_by_feed_score(db: Database) -> None:
     """Ставка на победителя заходит по финальному счёту из фида."""
     row = await _finished_match(db)

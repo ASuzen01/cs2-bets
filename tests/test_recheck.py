@@ -94,6 +94,27 @@ async def test_football_wrong_result_is_fixed(db: Database) -> None:
     assert await db.get_balance(1) == 900 + round(100 * 1.24)
 
 
+async def test_awaiting_football_match_uses_flashscore_fallback(db: Database) -> None:
+    match_id = await _football(db)
+    await db.set_status(match_id, "awaiting")
+    livescore = FakeResults(None)
+    flashscore = FakeResults(_ft((2, 3)))
+
+    report = await recheck_recent(
+        db,
+        None,
+        livescore,
+        hours=48,
+        flashscore_results=flashscore,  # type: ignore[arg-type]
+    )
+
+    assert len(report["football"]) == 1
+    assert livescore.calls == 1 and flashscore.calls == 1
+    match = await db.get_match(match_id)
+    assert (int(match["score_a"]), int(match["score_b"])) == (2, 3)
+    assert str(match["status"]) == "finished"
+
+
 async def test_football_correct_result_is_not_touched(db: Database) -> None:
     """Счёт совпадает с фактом — ничего не пересчитываем и не дёргаем игроков."""
     match_id = await _football(db)

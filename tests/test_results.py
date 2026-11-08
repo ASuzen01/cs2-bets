@@ -212,6 +212,18 @@ def test_russian_names_match_english_feed_via_translit() -> None:
     assert not pair_matches("АЕК Афины", "Реал Мадрид", "AEK Athens U19", "Real Madrid U19")
 
 
+def test_observed_flashscore_livescore_team_name_variants_match_strictly() -> None:
+    from app.services.results import pair_matches, same_team
+
+    assert pair_matches("PSG", "Troyes", "Paris Saint-Germain", "Troyes")
+    assert pair_matches("Rennais", "Lille", "Rennes", "Lille")
+    assert pair_matches("Köln", "Bayer Leverkusen", "FC Cologne", "Bayer Leverkusen")
+    # Алиасы не ослабляют проверку пары или молодёжного состава.
+    assert not pair_matches("PSG", "Troyes", "Paris Saint-Germain U19", "Troyes U19")
+    assert not pair_matches("PSG", "Lille", "Paris Saint-Germain", "Troyes")
+    assert not same_team("Paris Saint-Germain", "Paris Saint-Germain U19")
+
+
 def test_scandinavian_transliteration_matches_live_score_feed() -> None:
     """Mjaellby из Livescore должна совпадать с Mjällby AIF из линии."""
     from app.services.results import pair_matches, same_team
