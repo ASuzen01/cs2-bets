@@ -4,7 +4,7 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
-    healthCheckPath: /health      # и /ping для внешних пингеров (см. docs/deploy-render-neon.md)
+    healthCheckPath: /ping        # лёгкая проверка процесса без ожидания БД
     autoDeploy: true
     envVars:
       - key: RUN_MODE
