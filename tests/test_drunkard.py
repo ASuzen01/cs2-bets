@@ -55,6 +55,49 @@ def test_a_normal_user_action_reveals_one_pair_not_the_whole_game() -> None:
     assert sum(len(hand) for hand in state["hands"].values()) == 24
 
 
+@pytest.mark.parametrize(
+    ("player_value", "opponent_value", "expected"),
+    [(2, 14, "player"), (14, 2, "opponent"), (3, 2, "player"), (14, 13, "player")],
+)
+def test_two_beats_ace_and_other_ranks_keep_normal_order(
+    player_value: int, opponent_value: int, expected: str,
+) -> None:
+    state = {
+        "version": 1, "deck_size": 52,
+        "hands": {
+            "player": [card(player_value, f"{player_value}♠")],
+            "opponent": [card(opponent_value, f"{opponent_value}♥")],
+        },
+        "rounds": 0, "wars": 0, "last_battle": None, "winner": None, "tie_reason": None,
+    }
+
+    drunkard.advance_round(state)
+
+    assert state["last_battle"]["winner"] == expected
+    assert state["winner"] == expected
+    assert len(state["hands"][expected]) == 2
+
+
+def test_two_beats_ace_as_the_face_up_war_tiebreak() -> None:
+    state = {
+        "version": 1, "deck_size": 8,
+        "hands": {
+            "player": [card(13, "К♠"), card(7, "7♠"), card(2, "2♠"), card(6, "6♠")],
+            "opponent": [card(13, "К♥"), card(8, "8♥"), card(14, "Т♥"), card(5, "5♥")],
+        },
+        "rounds": 0, "wars": 0, "last_battle": None, "winner": None, "tie_reason": None,
+    }
+
+    drunkard.advance_round(state)
+
+    assert state["last_battle"]["hidden_pairs"] == 1
+    assert state["last_battle"]["pairs"] == [
+        {"player": "К♠", "opponent": "К♥"},
+        {"player": "2♠", "opponent": "Т♥"},
+    ]
+    assert state["last_battle"]["winner"] == "player"
+
+
 def test_tie_enters_war_and_repeats_until_a_winner() -> None:
     state = {
         "version": 1, "deck_size": 6,

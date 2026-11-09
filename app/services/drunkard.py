@@ -1,7 +1,8 @@
 """Серверные правила игры «Пьяница».
 
 Полная колода делится поровну. Старшая карта забирает спор; при равенстве
-каждый участник кладёт карту рубашкой вверх и открывает следующую. Туз старший.
+каждый участник кладёт карту рубашкой вверх и открывает следующую. В 52-карточной
+колоде двойка бьёт туза, остальные ранги сравниваются по обычному порядку.
 """
 
 from __future__ import annotations
@@ -28,6 +29,23 @@ def _deck(size: int) -> list[dict[str, Any]]:
         for value in range(low_rank, 15)
         for suit in SUITS
     ]
+
+
+def _compare_values(first: int, second: int) -> int:
+    """Compare ranks: 2 beats Ace; all other ranks use normal numeric order."""
+    left, right = int(first), int(second)
+    if left == right:
+        return 0
+    if left == 2 and right == 14:
+        return 1
+    if left == 14 and right == 2:
+        return -1
+    return 1 if left > right else -1
+
+
+def _winner_for(first: dict[str, Any], second: dict[str, Any]) -> str | None:
+    comparison = _compare_values(int(first["value"]), int(second["value"]))
+    return "player" if comparison > 0 else "opponent" if comparison < 0 else None
 
 
 def new_game_state(size: int) -> dict[str, Any]:
@@ -61,7 +79,7 @@ def advance_round(state: dict[str, Any]) -> dict[str, Any]:
     pot.extend((first, second))
     pairs.append({"player": first["text"], "opponent": second["text"]})
     state["rounds"] += 1
-    winner = "player" if first["value"] > second["value"] else "opponent" if first["value"] < second["value"] else None
+    winner = _winner_for(first, second)
 
     while winner is None:
         state["wars"] += 1
@@ -90,8 +108,9 @@ def advance_round(state: dict[str, Any]) -> dict[str, Any]:
         first, second = player.pop(0), opponent.pop(0)
         pot.extend((first, second))
         pairs.append({"player": first["text"], "opponent": second["text"]})
-        if first["value"] != second["value"]:
-            winner = "player" if first["value"] > second["value"] else "opponent"
+        winner = _winner_for(first, second)
+        if winner is not None:
+            break
 
     if state.get("winner") != "draw":
         rng = secrets.SystemRandom()
@@ -139,7 +158,7 @@ def simulate_game(size: int) -> dict[str, Any]:
         pot = [first, second]
         final_cards = (first, second)
 
-        if first["value"] == second["value"]:
+        if _compare_values(first["value"], second["value"]) == 0:
             wars += 1
             while True:
                 # В споре каждый кладёт одну закрытую, затем одну открытую карту.
@@ -171,13 +190,13 @@ def simulate_game(size: int) -> dict[str, Any]:
                 first, second = player.popleft(), opponent.popleft()
                 pot.extend((first, second))
                 final_cards = (first, second)
-                if first["value"] != second["value"]:
-                    winner = "player" if first["value"] > second["value"] else "opponent"
+                winner = _winner_for(first, second)
+                if winner is not None:
                     break
                 wars += 1
 
         else:
-            winner = "player" if first["value"] > second["value"] else "opponent"
+            winner = _winner_for(first, second)
 
         if winner == "player":
             rng.shuffle(pot)
