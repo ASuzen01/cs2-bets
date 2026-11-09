@@ -82,6 +82,7 @@
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResults: { roulette: null, dice: null, plinko: null, slots: null, riftfall: null, baccarat: null },  // результаты мини-игр
+    casinoFullscreen: null,
     riftfallQuick: false,
     riftfallFullscreen: null,
     riftfallAutoRunning: false,
@@ -5303,6 +5304,8 @@
           : `Осталось платных спинов: ${state.slotAutoRemaining}${freeSpins ? ` · фри-спинов ${freeSpins} сверх лимита` : ""}`
         : `Серия: ${countLabel} платных спинов · фри-спины не уменьшают лимит`;
     }
+    const fullscreenClose = $("#casinoImmersive .casino-immersive-close");
+    if (fullscreenClose) fullscreenClose.disabled = state.casinoBusy || state.slotAutoRunning;
   }
 
   function slotAutoControlsNode() {
@@ -5481,6 +5484,11 @@
     card.append(play, slotAutoControlsNode());
     card.append(outcomeNode(), summaryNode(), historyNode(), gameInfoNode("slots"));
     host.append(card);
+    if (state.casinoFullscreen && state.casinoFullscreen.game === "slots") {
+      layoutCasinoFullscreenContent(host, "slots");
+    } else {
+      ensureCasinoFullscreenLauncher(host, "slots");
+    }
     if (result) paintOutcome(result);
     if (state.casinoBusy) lockTable(true);
   }
@@ -5955,6 +5963,250 @@
     if (session.telegram && typeof session.telegram.enableVerticalSwipes === "function") {
       session.telegram.enableVerticalSwipes();
     }
+  }
+
+  function casinoFullscreenHeading(game) {
+    const copy = {
+      roulette: ["EUROPEAN WHEEL", "РУЛЕТКА"],
+      dice: ["TWO DICE · ONE THROW", "КОСТИ"],
+      slots: ["PRIVATE RESERVE · 243 WAYS", "СЛОТ-МАШИНА"],
+    }[game] || ["CASINO", "ИГРА"];
+    const heading = el("div", "casino-immersive-heading");
+    heading.append(el("span", null, copy[0]), el("b", null, copy[1]));
+    return heading;
+  }
+
+  function casinoFullscreenCloseButton() {
+    const close = el("button", "casino-immersive-close");
+    close.type = "button";
+    close.setAttribute("aria-label", "Выйти из полноэкранного режима");
+    close.append(riftfallHudIcon("close"), el("span", null, "ВЕРНУТЬСЯ"));
+    close.disabled = state.casinoBusy || state.slotAutoRunning;
+    close.addEventListener("click", closeCasinoFullscreen);
+    return close;
+  }
+
+  function ensureCasinoFullscreenLauncher(host, game) {
+    if (!host || state.casinoFullscreen || !["roulette", "dice", "slots"].includes(game)) return;
+    if (host.querySelector(".casino-fullscreen-launch")) return;
+    const launch = el("button", "casino-fullscreen-launch", "ОТКРЫТЬ НА ВЕСЬ ЭКРАН");
+    launch.type = "button";
+    launch.dataset.casinoFullscreenOpen = game;
+    const back = host.querySelector(":scope > .game-back");
+    if (back) back.after(launch);
+    else host.prepend(launch);
+  }
+
+  function layoutCasinoFullscreenContent(host, game) {
+    const session = state.casinoFullscreen;
+    if (!session || session.host !== host || session.game !== game) return;
+    host.classList.add("casino-immersive-host");
+    host.querySelectorAll(".casino-fullscreen-launch").forEach((button) => button.remove());
+
+    const stage = el("div", "casino-immersive-stage");
+    const controls = el("aside", "casino-immersive-controls");
+    controls.append(casinoFullscreenCloseButton());
+
+    if (game === "slots") {
+      const card = host.querySelector(".slot-game-card");
+      if (!card) return;
+      const back = host.querySelector(":scope > .game-back");
+      const kicker = card.querySelector(".slot-kicker");
+      const title = card.querySelector(".slot-title");
+      const copy = card.querySelector(".slot-copy");
+      const machine = card.querySelector(".slot-machine-shell");
+      const status = card.querySelector(".slot-bonus-status");
+      const chest = card.querySelector(".slot-chest-bonus");
+      const stake = card.querySelector(".stake-block");
+      const meta = card.querySelector("#betMeta");
+      const play = card.querySelector("#playBtn");
+      const auto = card.querySelector(".slot-auto-panel");
+      const outcome = card.querySelector(".casino-outcome");
+      const summary = card.querySelector(".casino-summary");
+      const history = card.querySelector(".game-history");
+      const info = card.querySelector(".game-dropdown:not(.game-history)");
+      const heading = el("div", "casino-immersive-heading");
+      heading.append(kicker, title);
+      stage.append(heading);
+      if (copy) stage.append(copy);
+      if (machine) stage.append(machine);
+      if (status) stage.append(status);
+      if (outcome) stage.append(outcome);
+      if (back) back.remove();
+      const scroll = el("div", "casino-immersive-scroll");
+      [chest, stake, meta, summary, history, info]
+        .filter(Boolean).forEach((node) => scroll.append(node));
+      controls.append(scroll);
+      [play, auto].filter(Boolean).forEach((node) => controls.append(node));
+      card.classList.add("casino-immersive-layout");
+      card.replaceChildren(stage, controls);
+      host.replaceChildren(card);
+      return;
+    }
+
+    const dock = host.querySelector("#casinoPlayDock");
+    const panel = dock && dock.querySelector(".casino-panel");
+    const back = dock && dock.querySelector(".game-back");
+    const outcome = dock && dock.querySelector(".casino-outcome");
+    const betSummary = dock && dock.querySelector(".casino-dock-bet");
+    const play = dock && dock.querySelector("#playBtn");
+    const field = host.querySelector(".casino-field");
+    const stake = host.querySelector(".stake-block");
+    const meta = host.querySelector("#betMeta");
+    const summary = host.querySelector(".casino-summary");
+    const history = host.querySelector(".game-history");
+    const info = host.querySelector(".game-dropdown:not(.game-history)");
+    if (!dock || !panel || !field || !stake || !play) return;
+
+    stage.append(casinoFullscreenHeading(game), panel);
+    if (back) back.remove();
+    const scroll = el("div", "casino-immersive-scroll");
+    [field, stake, meta, betSummary, summary, history, info]
+      .filter(Boolean).forEach((node) => scroll.append(node));
+    controls.append(scroll);
+    [play, outcome].filter(Boolean).forEach((node) => controls.append(node));
+    const layout = el("div", "casino-immersive-layout");
+    layout.append(stage, controls);
+    host.replaceChildren(layout);
+  }
+
+  function syncCasinoFullscreenSafeArea(session) {
+    const telegram = session.telegram;
+    const safe = telegram && telegram.safeAreaInset || {};
+    const content = telegram && telegram.contentSafeAreaInset || {};
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    const getInset = (source, side, cssName) => {
+      const value = source[side];
+      if (value !== undefined && value !== null && Number.isFinite(Number(value))) {
+        return Math.max(0, Number(value));
+      }
+      return Math.max(0, parseFloat(rootStyle.getPropertyValue(cssName)) || 0);
+    };
+    ["top", "right", "bottom", "left"].forEach((side) => {
+      const total = getInset(safe, side, `--tg-safe-area-inset-${side}`)
+        + getInset(content, side, `--tg-content-safe-area-inset-${side}`);
+      session.overlay.style.setProperty(`--rift-tg-safe-${side}`, `${total}px`);
+    });
+    const platform = String(telegram && telegram.platform || "").toLowerCase();
+    if ((platform === "ios" || platform.startsWith("android"))
+      && parseFloat(session.overlay.style.getPropertyValue("--rift-tg-safe-top")) < 96) {
+      session.overlay.style.setProperty("--rift-tg-safe-top", "96px");
+    }
+    session.overlay.classList.toggle("tg-native-fullscreen", Boolean(telegram && telegram.isFullscreen));
+    session.overlay.classList.add("tg-safe-insets");
+  }
+
+  async function requestCasinoTelegramFullscreen(session) {
+    const telegram = session.telegram;
+    let request = null;
+    try {
+      // Native request is the first Telegram call and stays within the game-selection tap.
+      if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
+        request = telegram.requestFullscreen();
+      }
+    } catch (_) { /* Fullscreen is not available on every Telegram client. */ }
+    try { if (telegram && typeof telegram.expand === "function") telegram.expand(); } catch (_) { /* Optional API. */ }
+    try {
+      if (telegram && typeof telegram.disableVerticalSwipes === "function") telegram.disableVerticalSwipes();
+    } catch (_) { /* Optional API. */ }
+    try { if (telegram && typeof telegram.requestSafeArea === "function") telegram.requestSafeArea(); } catch (_) { /* Optional API. */ }
+    try {
+      if (telegram && typeof telegram.requestContentSafeArea === "function") telegram.requestContentSafeArea();
+    } catch (_) { /* Optional API. */ }
+    syncCasinoFullscreenSafeArea(session);
+    if (request) {
+      try { await request; } catch (_) { /* Safe-area layout remains the fallback. */ }
+    }
+    if (state.casinoFullscreen !== session) {
+      try {
+        if (telegram && telegram.isFullscreen && typeof telegram.exitFullscreen === "function") {
+          Promise.resolve(telegram.exitFullscreen()).catch(() => {});
+        }
+      } catch (_) { /* Optional Telegram API. */ }
+      return;
+    }
+    syncCasinoFullscreenSafeArea(session);
+    try {
+      if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
+        await screen.orientation.lock("landscape");
+      }
+    } catch (_) { /* The CSS rotation remains available on iOS WebViews. */ }
+  }
+
+  function openCasinoFullscreen(game) {
+    if (state.casinoFullscreen || state.riftfallFullscreen || state.casinoBusy
+      || !["roulette", "dice", "slots"].includes(game)) return;
+    const host = $("#games");
+    if (!host || !host.parentNode) return;
+    const parent = host.parentNode;
+    const nextSibling = host.nextSibling;
+    const overlay = el("section", "casino-immersive");
+    overlay.id = "casinoImmersive";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", `${casinoFullscreenHeading(game).textContent} — полноэкранная игра`);
+    const telegram = window.Telegram && window.Telegram.WebApp;
+    const session = { overlay, host, parent, nextSibling, game, telegram, telegramHandlers: [] };
+    state.casinoFullscreen = session;
+    clearCasinoDockTracking();
+    overlay.append(host);
+    document.body.append(overlay);
+    document.body.classList.add("riftfall-fullscreen-open");
+    if (telegram && typeof telegram.onEvent === "function") {
+      ["safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged", "fullscreenFailed"].forEach((eventName) => {
+        const handler = () => syncCasinoFullscreenSafeArea(session);
+        try {
+          telegram.onEvent(eventName, handler);
+          session.telegramHandlers.push([eventName, handler]);
+        } catch (_) { /* Event may not exist in older Telegram clients. */ }
+      });
+    }
+    syncCasinoFullscreenSafeArea(session);
+    layoutCasinoFullscreenContent(host, game);
+    window.scrollTo(0, 0);
+    requestCasinoTelegramFullscreen(session);
+    haptic("light");
+  }
+
+  function closeCasinoFullscreen() {
+    const session = state.casinoFullscreen;
+    if (!session) return true;
+    if (state.casinoBusy || state.slotAutoRunning) {
+      toast(state.slotAutoRunning ? "Остановите автоспин перед выходом" : "Дождитесь конца раунда");
+      return false;
+    }
+    session.telegramHandlers.forEach(([eventName, handler]) => {
+      try {
+        if (session.telegram && typeof session.telegram.offEvent === "function") {
+          session.telegram.offEvent(eventName, handler);
+        }
+      } catch (_) { /* Event cleanup is optional on older clients. */ }
+    });
+    try {
+      if (session.telegram && session.telegram.isFullscreen
+        && typeof session.telegram.exitFullscreen === "function") {
+        Promise.resolve(session.telegram.exitFullscreen()).catch(() => {});
+      }
+    } catch (_) { /* Telegram fullscreen is optional on older clients. */ }
+    session.host.classList.remove("casino-immersive-host");
+    session.parent.insertBefore(session.host, session.nextSibling && session.nextSibling.parentNode === session.parent
+      ? session.nextSibling : null);
+    session.overlay.remove();
+    state.casinoFullscreen = null;
+    document.body.classList.remove("riftfall-fullscreen-open");
+    try {
+      if (window.screen && screen.orientation && typeof screen.orientation.unlock === "function") {
+        screen.orientation.unlock();
+      }
+    } catch (_) { /* Orientation lock is not available in every WebView. */ }
+    try {
+      if (session.telegram && typeof session.telegram.enableVerticalSwipes === "function") {
+        session.telegram.enableVerticalSwipes();
+      }
+    } catch (_) { /* Optional Telegram API. */ }
+    renderGames();
+    window.scrollTo(0, 0);
+    return true;
   }
 
   function adjustRiftfallStake(direction) {
@@ -6521,7 +6773,12 @@
     paintOutcome(state.casinoResults[game]);
     // перерисовали экран посреди раунда — блокировка должна остаться
     if (state.casinoBusy) lockTable(true);
-    if (playDock) trackCasinoDock(playDock, playDockSpacer);
+    if (state.casinoFullscreen && state.casinoFullscreen.host === host) {
+      layoutCasinoFullscreenContent(host, state.casinoFullscreen.game);
+    } else {
+      ensureCasinoFullscreenLauncher(host, game);
+    }
+    if (playDock && !state.casinoFullscreen) trackCasinoDock(playDock, playDockSpacer);
   }
 
   // ------------------------------------------------------- анимация рулетки
@@ -6621,6 +6878,8 @@
       play.disabled = busy;
       if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : state.game === "riftfall" ? "Каскады в движении…" : state.game === "baccarat" ? "Раздаём…" : "Бросаем…";
     }
+    const immersiveClose = $("#casinoImmersive .casino-immersive-close");
+    if (immersiveClose) immersiveClose.disabled = busy || state.slotAutoRunning;
     document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => {
         const lockedSlotWager = !busy && state.game === "slots"
@@ -6779,6 +7038,9 @@
         state.game = btn.dataset.game;
         haptic("light");
         renderGames();
+        // Request native fullscreen in the same tap that selects an immersive casino game.
+        if (["roulette", "dice", "slots"].includes(state.game)) openCasinoFullscreen(state.game);
+        else if (state.game === "riftfall") openRiftfallFullscreen();
         // The game menu may have been scrolled; start the selected game below the app header.
         window.scrollTo(0, 0);
       });
@@ -6792,8 +7054,13 @@
       if (!node || node.disabled) return;
       const game = state.game;
 
+      if (node.dataset.casinoFullscreenOpen) {
+        openCasinoFullscreen(node.dataset.casinoFullscreenOpen);
+        return;
+      }
       if (node.dataset.backToGames !== undefined) {
         if (state.slotAutoRunning) stopSlotAutoSpin(true);
+        if (state.casinoFullscreen && !closeCasinoFullscreen()) return;
         if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.drunkardBusy) {
           toast("Дождись конца хода", "bad");
           return;
