@@ -76,12 +76,12 @@
     crashTicker: null,
     game: null,                // null — меню игр, иначе открыта выбранная игра
     casinoPick: { roulette: "red", dice: "over", baccarat: "player" },
-    casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50, baccarat: 50 },
+    casinoStake: { roulette: 50, dice: 50, plinko: 50, slots: 50, riftfall: 50, baccarat: 50 },
     plinkoRows: 12,
     plinkoRisk: "medium",
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
-    casinoResults: { roulette: null, dice: null, plinko: null, slots: null, baccarat: null },  // результаты мини-игр
+    casinoResults: { roulette: null, dice: null, plinko: null, slots: null, riftfall: null, baccarat: null },  // результаты мини-игр
     casinoHistoryOpen: false,
     casinoDockScrollHandler: null,
     slotAutoCount: 10,
@@ -3521,6 +3521,9 @@
         meta.append(el("span", null, Number(slotState.free_spins) > 0
           ? `${slotState.free_spins} фри-спинов · ставка зафиксирована ${money(slotState.spin_bet)}`
           : `Общая ставка за спин · ${state.casino.slots.ways} ways`));
+      } else if (game === "riftfall") {
+        meta.append(el("span", null, "Ставка за раунд: " + money(info.raw || 0)));
+        meta.append(el("span", null, "5×4 · каскады и расширяющийся Wild · RTP 95,5%"));
       } else {
         fillBetMeta(meta, game, info.raw || 0);
       }
@@ -3538,13 +3541,13 @@
       else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
-      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.raw);
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : game === "riftfall" ? "Запустить разлом" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.raw);
     }
   }
 
   function pickFor(game) {
     if (game === "plinko") return `${state.plinkoRows}:${state.plinkoRisk}`;
-    if (game === "slots") return "spin";
+    if (game === "slots" || game === "riftfall") return "spin";
     if (state.casinoPick[game]) return state.casinoPick[game];
     return game === "roulette" ? "red" : "over";
   }
@@ -3732,6 +3735,7 @@
       if (pick.startsWith("straight:")) return `точное число ${pick.split(":")[1]}`;
       return descriptions[pick] || "выбранная ставка";
     }
+    if (game === "riftfall") return "кластерный спин · каскады";
     if (game === "dice") {
       if (pick === "under") return "сумма двух кубиков 2–6";
       if (pick === "over") return "сумма двух кубиков 8–12";
@@ -3861,6 +3865,9 @@
     }
     if (game === "slots") {
       return { label: "Слот-машина", odds: null, stake: stakeFor(game), payout: null, profit: null };
+    }
+    if (game === "riftfall") {
+      return { label: "Золотой разлом", odds: null, stake: stakeFor(game), payout: null, profit: null };
     }
     const options = (state.casino && state.casino.options && state.casino.options[game]) || [];
     const option = options.find((item) => item.code === pick);
@@ -4020,6 +4027,7 @@
     if (result.game === "slots") {
       return result.outcome || (result.win_count ? `${result.win_count} выигрышных ways` : "Без выигрыша");
     }
+    if (result.game === "riftfall") return result.outcome || "Каскад завершён";
     return `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
   }
 
@@ -4043,6 +4051,8 @@
     line1.append(el("span", "big", what));
     const line2 = el("div", "line2", result.game === "plinko"
       ? `×${Number(result.multiplier).toFixed(2)} · выплата ${money(result.payout)} · результат ${moneySigned(result.payout - result.amount)}`
+      : result.game === "riftfall"
+        ? `${result.cascade_count} каскад(а) · выигрыш ${money(result.payout)} · итог ${moneySigned(result.payout - result.amount)}`
       : result.game === "baccarat"
         ? result.result === "tie" && result.selection !== "tie"
           ? `Ничья · ставка возвращена ${money(result.payout)}`
@@ -4105,9 +4115,11 @@
           : row.game === "drunkard" ? "пьяница"
             : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
             : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
-              : row.game === "baccarat" ? "баккара" : "кости"));
+              : row.game === "riftfall" ? "Золотой разлом"
+                : row.game === "baccarat" ? "баккара" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
+          : row.game === "riftfall" ? row.outcome
           : row.game === "baccarat" ? (row.outcome === "tie" ? "ничья" : row.outcome === "player" ? "игрок" : "банкир")
             : row.game === "slots" ? (slotResult && slotResult.selection === "chest_bonus"
               ? `сундук №${slotResult.chest} · ×${Number(slotResult.multiplier).toFixed(1)}`
@@ -4147,6 +4159,11 @@
         "Перед раундом выбери 8, 12 или 16 рядов и риск. Число шагов вправо определяет ячейку; чем реже ячейка, тем выше множитель. Выплата включает остаток ставки."
       ));
       box.append(el("span", "edge", "целевой RTP 95,5 % · округление монет может немного снизить фактическую отдачу"));
+    } else if (game === "riftfall") {
+      box.append(el("b", null, "Золотой разлом · 5 барабанов × 4 символа. "));
+      box.append(document.createTextNode("Собирай группы от 5 одинаковых символов, соединённых по вертикали или горизонтали. Если на барабане появляется золотой Wild, он расширяется на весь барабан и заменяет символы в комбинациях. Выигравшие символы исчезают, оставшиеся падают вниз, а сверху приходят новые. Каждый каскад повышает множитель; до четырёх каскадов за один спин. Вся ставка списывается один раз, итог определяет сервер до анимации."));
+      box.append(el("span", "edge", "целевой RTP 95,5% · множители цепочки 1× / 1,5× / 2,25× / 3,5×"));
+      box.append(el("p", null, "Каждый золотой Wild раскрывает весь свой барабан. Он может участвовать в группах разных типов; выигрышные клетки убираются один раз перед падением символов."));
     } else if (game === "slots") {
       box.append(el("b", null, "Слот-машина · 5 барабанов, 3 ряда, 243 ways. "));
       box.append(document.createTextNode(
@@ -5463,6 +5480,213 @@
     if (state.casinoBusy) lockTable(true);
   }
 
+  function riftfallCellNode(config, code, row, reel) {
+    const symbol = config.symbols.find((item) => item.code === code) || { name: "Пусто", icon: "·" };
+    const cell = el("div", `rift-cell rift-${code}`);
+    cell.dataset.row = String(row);
+    cell.dataset.reel = String(reel);
+    cell.dataset.symbol = code;
+    const face = el("div", "rift-cell-face");
+    const icon = el("span", "rift-symbol-icon", symbol.icon);
+    const label = el("small", "rift-symbol-name", symbol.name);
+    face.append(icon, label);
+    cell.append(face);
+    if (code === "wild") cell.append(el("span", "rift-wild-mark", "EXPAND"));
+    return cell;
+  }
+
+  function riftfallGridNode(config, grid, wildReels) {
+    const shell = el("div", "rift-machine-shell");
+    shell.append(el("div", "rift-machine-sheen"));
+    const frame = el("div", "rift-machine-frame");
+    const rim = el("div", "rift-frame-rim");
+    const field = el("div", "rift-grid");
+    field.id = "riftfallGrid";
+    field.setAttribute("role", "img");
+    field.setAttribute("aria-label", "Золотой разлом: пять барабанов, четыре ряда");
+    for (let reel = 0; reel < config.reels; reel += 1) {
+      const column = el("div", "rift-reel" + (wildReels.includes(reel) ? " wild-reel" : ""));
+      column.dataset.reel = String(reel);
+      const window = el("div", "rift-reel-window");
+      const strip = el("div", "rift-reel-strip");
+      strip.dataset.reel = String(reel);
+      for (let row = 0; row < config.rows; row += 1) {
+        strip.append(riftfallCellNode(config, grid[row][reel], row, reel));
+      }
+      window.append(strip);
+      column.append(window);
+      field.append(column);
+    }
+    rim.append(field);
+    frame.append(rim);
+    shell.append(frame);
+    const labels = el("div", "rift-reel-labels");
+    for (let reel = 1; reel <= config.reels; reel += 1) {
+      labels.append(el("span", null, `0${reel}`));
+    }
+    shell.append(labels);
+    return shell;
+  }
+
+  async function animateRiftfallReels(targetGrid) {
+    const config = state.casino && state.casino.riftfall;
+    const grid = $("#riftfallGrid");
+    if (!config || !grid) return;
+    const symbols = config.symbols;
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const spinPromises = Array.from(grid.querySelectorAll(".rift-reel-strip")).map((strip, reel) => {
+      const current = Array.from(strip.children).map((cell) => cell.dataset.symbol);
+      const final = targetGrid.map((row) => row[reel]);
+      const filler = Array.from({ length: 18 }, () => symbols[Math.floor(Math.random() * symbols.length)].code);
+      const sequence = current.concat(filler, final);
+      strip.style.transition = "none";
+      strip.style.transitionDelay = "0ms";
+      strip.style.transform = "translate3d(0,0,0)";
+      strip.classList.add("rolling");
+      strip.replaceChildren(...sequence.map((code, index) =>
+        riftfallCellNode(config, code, index % config.rows, reel)));
+      void strip.offsetHeight;
+      const first = strip.firstElementChild;
+      const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
+      const step = (first ? first.getBoundingClientRect().height : 56) + gap;
+      const delay = reduced ? 0 : reel * 115;
+      const duration = reduced ? 90 : 760 + reel * 115;
+      const distance = step * (sequence.length - config.rows);
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          strip.removeEventListener("transitionend", onEnd);
+          strip.style.transition = "none";
+          strip.style.transitionDelay = "0ms";
+          strip.style.transform = "translate3d(0,0,0)";
+          strip.classList.remove("rolling");
+          strip.replaceChildren(...final.map((code, row) => riftfallCellNode(config, code, row, reel)));
+          haptic("light");
+          resolve();
+        };
+        const onEnd = (event) => {
+          if (event.target === strip && event.propertyName === "transform") finish();
+        };
+        strip.addEventListener("transitionend", onEnd);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          strip.style.transition = `transform ${duration}ms cubic-bezier(.08,.78,.16,1)`;
+          strip.style.transitionDelay = `${delay}ms`;
+          strip.style.transform = `translate3d(0,-${distance}px,0)`;
+        }));
+        setTimeout(finish, duration + delay + 260);
+      });
+    });
+    await Promise.all(spinPromises);
+  }
+
+  async function animateRiftfall(result) {
+    const config = state.casino && state.casino.riftfall;
+    if (!config || !Array.isArray(result.initial_grid)) return;
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    await animateRiftfallReels(result.initial_grid);
+    const status = $("#riftChainStatus");
+    const meter = $(".riftfall-chain-meter");
+    $("#riftfallGrid")?.querySelectorAll(".rift-reel").forEach((reelNode, index) => {
+      reelNode.classList.toggle("wild-reel", (result.initial_wild_reels || []).includes(index));
+    });
+    for (const step of result.steps || []) {
+      const activeCells = (step.winning_cells || []).map(([row, reel]) =>
+        $(`#riftfallGrid .rift-cell[data-row="${row}"][data-reel="${reel}"]`)).filter(Boolean);
+      if (status) status.textContent = `КАСКАД ${step.index} · УСИЛЕНИЕ ×${Number(step.chain_multiplier).toFixed(2)}`;
+      if (meter) meter.querySelectorAll("span").forEach((node, index) => {
+        node.classList.toggle("reached", index < Number(step.index));
+      });
+      activeCells.forEach((cell) => cell.classList.add("resonating"));
+      haptic("light");
+      await pause(reduced ? 80 : 540);
+      activeCells.forEach((cell) => {
+        cell.classList.remove("resonating");
+        cell.classList.add("shattering");
+      });
+      await pause(reduced ? 50 : 280);
+      const reels = $("#riftfallGrid")?.querySelectorAll(".rift-reel-strip") || [];
+      reels.forEach((strip, reel) => {
+        strip.style.transition = "none";
+        strip.style.transitionDelay = "0ms";
+        strip.style.transform = "translate3d(0,0,0)";
+        strip.replaceChildren(...step.next_grid.map((row, index) =>
+          riftfallCellNode(config, row[reel], index, reel)));
+        strip.closest(".rift-reel")?.classList.toggle("wild-reel", (step.next_wild_reels || []).includes(reel));
+        strip.classList.add("falling");
+        void strip.offsetHeight;
+      });
+      await pause(reduced ? 80 : 460);
+      reels.forEach((strip) => strip.classList.remove("falling"));
+      if (status) status.textContent = `ВЫПЛАТА ЦЕПОЧКИ · ${money(step.cascade_payout)} · ×${Number(step.chain_multiplier).toFixed(2)}`;
+      haptic("ok");
+    }
+    const final = $("#riftChainStatus");
+    if (final) final.textContent = result.cascade_count
+      ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
+      : "НОВЫЙ РАУНД · ИЩИ СОВПАДЕНИЯ";
+    const finalGrid = $("#riftfallGrid");
+    if (finalGrid) {
+      finalGrid.querySelectorAll(".rift-reel-strip").forEach((strip, reel) => {
+        strip.replaceChildren(...result.grid.map((row, index) =>
+          riftfallCellNode(config, row[reel], index, reel)));
+        strip.closest(".rift-reel")?.classList.toggle("wild-reel", (result.wild_reels || []).includes(reel));
+      });
+    }
+  }
+
+  function renderRiftfall(host) {
+    host.textContent = "";
+    host.append(gameBackButton());
+    const config = state.casino && state.casino.riftfall;
+    if (!config) {
+      host.append(el("div", "skeleton"));
+      return;
+    }
+    const result = state.casinoResults.riftfall;
+    const fallback = [
+      ["coin", "bull", "briefcase", "diamond", "crown"],
+      ["diamond", "coin", "bull", "briefcase", "diamond"],
+      ["briefcase", "crown", "coin", "bull", "briefcase"],
+      ["bull", "diamond", "crown", "coin", "bull"],
+    ];
+    const grid = result && result.grid ? result.grid : fallback;
+    const wildReels = result && result.wild_reels ? result.wild_reels : [];
+    const card = el("section", "riftfall-game-card");
+    card.append(el("div", "riftfall-kicker", "PRIVATE RESERVE · CASCADE ENGINE"));
+    card.append(el("h2", "riftfall-title", "Золотой разлом"));
+    card.append(el("p", "riftfall-copy", "Поймай волну каскадов. Золотой Wild раскрывает целый барабан — и рынок отвечает движением."));
+    const topper = el("div", "riftfall-topline");
+    topper.append(el("span", null, "RIFT INDEX"), el("b", null, "95.5"), el("i", null, "RTP"));
+    card.append(topper, riftfallGridNode(config, grid, wildReels));
+    const chain = el("div", "riftfall-chain-meter");
+    ["×1", "×1.5", "×2.25", "×3.5"].forEach((label, index) => {
+      chain.append(el("span", result && index < Number(result.cascade_count) ? "reached" : "", label));
+    });
+    card.append(chain);
+    const status = el("div", "riftfall-chain-status");
+    status.id = "riftChainStatus";
+    status.textContent = result
+      ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
+      : "READY · ОЖИДАЕМ СИГНАЛ РЫНКА";
+    card.append(status, stakeRow("riftfall"));
+    const meta = el("div", "bet-meta riftfall-meta");
+    meta.id = "betMeta";
+    meta.append(el("span", null, `Ставка: ${money(stakeFor("riftfall"))} · вся сумма за один спин`));
+    meta.append(el("span", null, `Целевой RTP ${Number(config.rtp).toFixed(1)}% · до ${config.max_cascades} каскадов`));
+    card.append(meta);
+    const play = el("button", "btn play riftfall-spin-button");
+    play.id = "playBtn";
+    play.type = "button";
+    play.textContent = `ЗАПУСТИТЬ РАЗЛОМ · ${money(stakeFor("riftfall"))}`;
+    play.disabled = state.casinoBusy || !stakeOk("riftfall");
+    card.append(play, outcomeNode(), summaryNode(), historyNode(), gameInfoNode("riftfall"));
+    host.append(card);
+    if (result) paintOutcome(result);
+    if (state.casinoBusy) lockTable(true);
+  }
+
   function clearCasinoDockTracking() {
     if (state.casinoDockScrollHandler) {
       window.removeEventListener("scroll", state.casinoDockScrollHandler);
@@ -5845,6 +6069,10 @@
       renderSlots(host);
       return;
     }
+    if (state.game === "riftfall") {
+      renderRiftfall(host);
+      return;
+    }
 
     host.textContent = "";
     const game = state.game;
@@ -6008,7 +6236,7 @@
     const play = $("#playBtn");
     if (play) {
       play.disabled = busy;
-      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : state.game === "baccarat" ? "Раздаём…" : "Бросаем…";
+      if (busy) play.textContent = state.game === "roulette" ? "Крутим…" : state.game === "plinko" ? "Шарик в пути…" : state.game === "slots" ? "Барабаны крутятся…" : state.game === "riftfall" ? "Каскады в движении…" : state.game === "baccarat" ? "Раздаём…" : "Бросаем…";
     }
     document.querySelectorAll("#games .bet-chip, #games .numboard button, #games .plinko-choice, #games .plinko-risk, #games .stake-chip, #games .stake-step, #stakeInput")
       .forEach((node) => {
@@ -6071,6 +6299,7 @@
         if (game === "roulette") await spinRouletteTo(data.number);
         else if (game === "plinko") await animatePlinko(data);
         else if (game === "slots") await animateSlots(data);
+        else if (game === "riftfall") await animateRiftfall(data);
         else if (game === "baccarat") await animateBaccarat(data);
         else await rollDiceTo(data.dice);
       }
@@ -6094,7 +6323,7 @@
         if (game !== "slots") paintOutcome(data, { pop: true });
       } else {
         // результат некуда рисовать — говорим тостом, но именно про эту игру
-        const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : game === "slots" ? "Слот-машина" : "Кости";
+        const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : game === "slots" ? "Слот-машина" : game === "riftfall" ? "Золотой разлом" : "Кости";
         toast(`${name} · ${outcomeText(data)} · ` +
           (data.win
             ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`

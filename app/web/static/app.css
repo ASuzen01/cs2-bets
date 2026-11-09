@@ -1386,3 +1386,56 @@ button:focus-visible{outline-color:#d6b66d}
 .slot-chest-prize-list{display:flex;flex-wrap:wrap;gap:5px;padding:0 11px 10px}
 .slot-chest-prize-list span{padding:4px 7px;border-radius:7px;background:rgba(255,255,255,.04);color:#d1c39e;font-size:9px}
 @media(max-width:360px){.slot-chest-board{gap:5px}.slot-chest-button,.slot-chest-opened{min-height:43px;border-radius:9px}}
+.game-tile[data-game="riftfall"]{--game-accent:#e2c47c;background:radial-gradient(ellipse at 50% 34%,#51402a,#171d22 72%)}
+.art-riftfall{background:radial-gradient(ellipse at 50% 36%,rgba(213,178,102,.2),transparent 66%)}
+.riftfall-game-card{position:relative;isolation:isolate;overflow:hidden;padding:18px 13px 16px;border:1px solid rgba(213,184,119,.36);border-radius:23px;background:radial-gradient(ellipse at 50% 0%,rgba(177,135,67,.18),transparent 42%),linear-gradient(155deg,#181e21,#101619 64%,#171c1c);box-shadow:0 24px 58px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,241,205,.08);color:#f1ead8}
+.riftfall-game-card::before{position:absolute;z-index:-1;inset:0;content:"";opacity:.13;background:repeating-linear-gradient(135deg,transparent 0 17px,rgba(231,208,154,.08) 18px,transparent 19px 36px);pointer-events:none}
+.riftfall-kicker{color:#c4a966;font-size:8px;font-weight:950;letter-spacing:.22em;text-align:center}
+.riftfall-title{margin:5px 0 4px;color:#f3dfad;font-family:Georgia,"Times New Roman",serif;font-size:27px;line-height:1.06;text-align:center;text-shadow:0 2px 16px rgba(205,163,86,.24)}
+.riftfall-copy{max-width:350px;margin:0 auto 14px;color:#aaa899;font-size:10px;line-height:1.45;text-align:center}
+.riftfall-topline{display:flex;align-items:center;justify-content:center;gap:7px;margin:0 auto 8px;color:#81795f;font-size:8px;font-weight:900;letter-spacing:.17em}
+.riftfall-topline b{color:#f0d99a;font-family:Georgia,serif;font-size:14px;letter-spacing:.06em;text-shadow:0 0 13px rgba(231,199,117,.3)}
+.riftfall-topline i{font-size:7px;font-style:normal}
+.rift-machine-shell{position:relative;max-width:430px;margin:0 auto;padding:9px 8px 5px;border:1px solid #8f7444;border-radius:18px;background:linear-gradient(145deg,#66502c 0%,#29251d 23%,#111819 52%,#453722 100%);box-shadow:inset 0 1px 0 rgba(255,246,215,.4),inset 0 -5px 10px rgba(0,0,0,.45),0 16px 32px rgba(0,0,0,.36);transform:perspective(900px) rotateX(1deg);transform-style:preserve-3d}
+.rift-machine-sheen{position:absolute;z-index:3;inset:2px 8px auto;height:1px;background:linear-gradient(90deg,transparent,rgba(255,245,204,.56),transparent);pointer-events:none}
+.rift-machine-frame{position:relative;padding:7px;border:1px solid rgba(236,210,153,.55);border-radius:12px;background:linear-gradient(150deg,#222b2b,#0b1113 62%,#20211c);box-shadow:inset 0 0 22px rgba(0,0,0,.78),0 2px 0 rgba(255,239,196,.15)}
+.rift-frame-rim{padding:4px;border:1px solid rgba(159,131,76,.38);border-radius:8px;background:linear-gradient(180deg,#11191a,#090e10)}
+.rift-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;overflow:hidden;border-radius:5px;background:#060b0d;perspective:760px}
+.rift-reel{position:relative;min-width:0;overflow:hidden;border-left:1px solid rgba(225,198,132,.11);border-right:1px solid rgba(0,0,0,.65);background:linear-gradient(90deg,rgba(0,0,0,.24),transparent 17%,rgba(245,227,187,.025) 53%,rgba(0,0,0,.2))}
+.rift-reel::before,.rift-reel::after{position:absolute;z-index:2;left:0;right:0;height:9px;content:"";pointer-events:none}
+.rift-reel::before{top:0;background:linear-gradient(180deg,rgba(5,9,10,.76),transparent)}
+.rift-reel::after{bottom:0;background:linear-gradient(0deg,rgba(5,9,10,.76),transparent)}
+.rift-reel-window{height:248px;overflow:hidden;perspective:520px;transform-style:preserve-3d}
+.rift-reel-strip{display:flex;flex-direction:column;gap:4px;will-change:transform;transform:translate3d(0,0,0);transform-style:preserve-3d}
+.rift-cell{position:relative;display:grid;flex:0 0 59px;place-items:center;min-width:0;height:59px;overflow:hidden;border:1px solid rgba(221,199,147,.15);border-radius:5px;background:linear-gradient(145deg,#33362e 0%,#202725 38%,#13191a 100%);box-shadow:inset 0 1px 0 rgba(255,250,222,.13),inset 0 -5px 9px rgba(0,0,0,.34),0 1px 2px rgba(0,0,0,.4);color:#eee0bb;transform:translateZ(3px);backface-visibility:hidden;transition:filter .2s,box-shadow .2s,border-color .2s}
+.rift-cell::before{position:absolute;inset:1px;content:"";border:1px solid rgba(255,255,255,.025);border-radius:4px;pointer-events:none}
+.rift-cell-face{display:grid;place-items:center;width:100%;padding:3px 1px;text-shadow:0 2px 9px rgba(0,0,0,.72)}
+.rift-symbol-icon{display:block;color:#edd99e;font-family:Georgia,"Times New Roman",serif;font-size:clamp(21px,6.3vw,31px);font-weight:900;line-height:1;text-shadow:0 2px 0 rgba(0,0,0,.5),0 0 12px rgba(223,191,116,.23)}
+.rift-symbol-name{display:block;max-width:100%;margin-top:3px;overflow:hidden;color:rgba(235,225,197,.64);font-size:6px;font-weight:800;line-height:1;letter-spacing:.01em;text-overflow:ellipsis;white-space:nowrap}
+.rift-coin .rift-symbol-icon{color:#e9cb77;text-shadow:0 0 12px rgba(242,199,96,.3)}
+.rift-briefcase .rift-symbol-icon{color:#d6c49c}
+.rift-bull .rift-symbol-icon{color:#a9c4ad}
+.rift-diamond .rift-symbol-icon{color:#f0dfac;text-shadow:0 0 13px rgba(255,230,164,.4)}
+.rift-crown .rift-symbol-icon{color:#e3c783}
+.rift-cell.rift-wild{z-index:1;border-color:#edcf7b;background:radial-gradient(ellipse at 50% 25%,rgba(251,226,153,.54),rgba(151,111,45,.38) 38%,#332817 100%);box-shadow:inset 0 0 14px rgba(255,223,133,.28),0 0 13px rgba(238,196,93,.36);color:#fff1bd}
+.rift-wild .rift-symbol-icon{font-family:Arial,sans-serif;font-size:clamp(11px,3.7vw,16px);letter-spacing:.08em;color:#ffe8a3;text-shadow:0 1px 0 #755321,0 0 12px rgba(255,215,112,.55)}
+.rift-wild-mark{position:absolute;right:2px;bottom:2px;color:#fff0b8;font-size:4px;font-weight:1000;letter-spacing:.11em;opacity:.8}
+.rift-reel.wild-reel .rift-cell{border-color:rgba(231,197,110,.42);background-color:#302919}
+.rift-reel-strip.rolling .rift-cell{filter:blur(1.1px) brightness(1.28);transform:rotateX(9deg) translateZ(4px)}
+.rift-reel-strip.rolling{filter:drop-shadow(0 0 7px rgba(228,198,125,.2))}
+.rift-reel-strip.falling .rift-cell{animation:riftFallIn .45s cubic-bezier(.18,.82,.2,1) both}
+.rift-cell.resonating{z-index:4;border-color:#fff0b1;background:linear-gradient(145deg,#8c743d,#4d402a 50%,#29251a);box-shadow:inset 0 0 18px rgba(255,222,136,.7),0 0 21px rgba(242,201,100,.72);animation:riftResonate .48s ease-in-out infinite alternate}
+.rift-cell.shattering{z-index:5;animation:riftShatter .28s ease-in forwards}
+.rift-reel-labels{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:5px 7px 0;color:#a89566;font-size:7px;font-weight:950;letter-spacing:.12em;text-align:center}
+.riftfall-chain-meter{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;max-width:430px;margin:11px auto 7px}
+.riftfall-chain-meter span{padding:6px 3px;border:1px solid rgba(203,170,98,.18);border-radius:7px;background:rgba(255,255,255,.025);color:#82775e;font-size:9px;font-weight:900;text-align:center;transition:all .24s}
+.riftfall-chain-meter span.reached,.riftfall-chain-meter span.active{border-color:#d2b469;background:linear-gradient(130deg,rgba(181,138,56,.3),rgba(75,58,30,.18));color:#f1d88f;box-shadow:0 0 13px rgba(220,180,87,.14)}
+.riftfall-chain-status{min-height:27px;margin:0 auto 8px;color:#cab77f;font-size:9px;font-weight:950;letter-spacing:.08em;line-height:1.35;text-align:center}
+.riftfall-meta{margin:7px 0 0}
+.riftfall-spin-button{margin-top:11px;border:1px solid #d9bd75!important;color:#1e1a11!important;background:linear-gradient(125deg,#f4e5b5 0%,#d1b46e 44%,#a9823d 100%)!important;box-shadow:0 8px 24px rgba(187,151,76,.24),inset 0 1px 0 rgba(255,255,232,.65);font-weight:1000;letter-spacing:.045em;text-shadow:0 1px 0 rgba(255,255,255,.2)}
+.riftfall-spin-button:disabled{opacity:.48}
+@keyframes riftResonate{from{transform:translateZ(3px) scale(1)}to{transform:translateZ(12px) scale(1.045)}}
+@keyframes riftShatter{to{transform:translateY(-12px) rotateX(18deg) scale(.72);opacity:0;filter:blur(5px)}}
+@keyframes riftFallIn{from{transform:translateY(-28px) rotateX(-15deg);opacity:.2}to{transform:translateY(0) rotateX(0);opacity:1}}
+@media(max-width:380px){.riftfall-game-card{padding:15px 10px}.rift-machine-shell{padding:7px 5px 4px}.rift-machine-frame{padding:5px}.rift-frame-rim{padding:3px}.rift-grid{gap:2px}.rift-reel-window{height:220px}.rift-reel-strip{gap:2px}.rift-cell{height:53px;flex-basis:53px;border-radius:4px}.rift-symbol-icon{font-size:clamp(19px,6.2vw,25px)}.rift-symbol-name{font-size:5px}.rift-reel-labels{gap:2px;margin-inline:5px}}
+@media(prefers-reduced-motion:reduce){.rift-cell,.riftfall-chain-meter span{transition:none!important}.rift-cell.resonating,.rift-cell.shattering,.rift-reel-strip.falling .rift-cell{animation-duration:.01ms!important}}
