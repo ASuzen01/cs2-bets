@@ -82,6 +82,11 @@
     casinoBusy: false,
     casinoTyping: false,     // игрок вводит сумму: перерисовку не мешаем
     casinoResults: { roulette: null, dice: null, plinko: null, slots: null, riftfall: null, baccarat: null },  // результаты мини-игр
+    riftfallQuick: false,
+    riftfallFullscreen: null,
+    riftfallAutoRunning: false,
+    riftfallAutoRemaining: 0,
+    riftfallAutoRunId: 0,
     casinoHistoryOpen: false,
     casinoDockScrollHandler: null,
     slotAutoCount: 10,
@@ -3541,7 +3546,7 @@
       else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
-      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : game === "riftfall" ? "Запустить разлом" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.raw);
+      else play.textContent = (game === "roulette" ? "Крутить колесо" : game === "plinko" ? "Уронить шарик" : game === "slots" ? "Крутить барабаны" : game === "riftfall" ? "Открыть слот" : game === "baccarat" ? "Сдать карты" : "Бросить кости") + " · " + money(info.raw);
     }
   }
 
@@ -5480,18 +5485,60 @@
     if (state.casinoBusy) lockTable(true);
   }
 
+  function riftfallSymbolSvg(code) {
+    const svg = svgNode("svg", {
+      class: `rift-symbol-svg icon-${code}`,
+      viewBox: "0 0 64 64",
+      role: "presentation",
+      "aria-hidden": "true",
+    });
+    const add = (tag, attrs) => svg.append(svgNode(tag, attrs));
+    if (code === "coin") {
+      add("circle", { cx: 32, cy: 32, r: 24, fill: "#4c3d20", stroke: "#e7ca7a", "stroke-width": "3" });
+      add("circle", { cx: 32, cy: 32, r: 18, fill: "none", stroke: "#c8a956", "stroke-width": "1.5" });
+      add("path", { d: "M39 23c-2-3-5-4-8-4-5 0-8 3-8 7 0 10 17 4 17 13 0 4-4 7-9 7-4 0-7-1-9-4M32 15v34", fill: "none", stroke: "#f5e3aa", "stroke-width": "3", "stroke-linecap": "round" });
+      add("path", { d: "M15 22a19 19 0 0 1 7-8M49 42a19 19 0 0 1-7 8", fill: "none", stroke: "#fff1c4", "stroke-width": "1.5", opacity: ".75" });
+    } else if (code === "briefcase") {
+      add("path", { d: "M23 21v-5q0-4 4-4h10q4 0 4 4v5", fill: "none", stroke: "#e4d5ad", "stroke-width": "3" });
+      add("rect", { x: 10, y: 21, width: 44, height: 31, rx: 5, fill: "#29302b", stroke: "#d7c28d", "stroke-width": "3" });
+      add("path", { d: "M10 32h44M26 31v5h12v-5", fill: "none", stroke: "#e5d3a1", "stroke-width": "2.5", "stroke-linejoin": "round" });
+      add("path", { d: "M16 25h32M16 47h32", stroke: "#82907b", "stroke-width": "1.2", opacity: ".8" });
+    } else if (code === "bull") {
+      add("path", { d: "M12 51h42", fill: "none", stroke: "#758474", "stroke-width": "2" });
+      add("rect", { x: 15, y: 36, width: 8, height: 15, rx: 1, fill: "#657c68" });
+      add("rect", { x: 29, y: 27, width: 8, height: 24, rx: 1, fill: "#8ba58a" });
+      add("rect", { x: 43, y: 17, width: 8, height: 34, rx: 1, fill: "#c4d0ad" });
+      add("path", { d: "m13 31 13-8 10 3 17-15M43 11h10v10", fill: "none", stroke: "#d8e3c6", "stroke-width": "3", "stroke-linecap": "round", "stroke-linejoin": "round" });
+      add("circle", { cx: 26, cy: 23, r: 2.4, fill: "#f3e6bd" });
+    } else if (code === "diamond") {
+      add("path", { d: "m8 23 10-12h28l10 12-24 31z", fill: "#607b70", stroke: "#e2d7b8", "stroke-width": "2.5", "stroke-linejoin": "round" });
+      add("path", { d: "m8 23 18 0 6 31M56 23H38l-6 31M18 11l8 12 6-12 6 12 8-12", fill: "none", stroke: "#c6d3bd", "stroke-width": "1.8", "stroke-linejoin": "round" });
+      add("path", { d: "m18 11 14 43 14-43", fill: "none", stroke: "#f4e9c8", "stroke-width": "1", opacity: ".65" });
+    } else if (code === "crown") {
+      add("path", { d: "m10 20 12 11 10-17 10 17 12-11-5 26H15z", fill: "#9b7838", stroke: "#efd994", "stroke-width": "2.7", "stroke-linejoin": "round" });
+      add("path", { d: "M15 51h34M18 46h28", fill: "none", stroke: "#e8d39c", "stroke-width": "3", "stroke-linecap": "round" });
+      add("circle", { cx: 10, cy: 19, r: 3.5, fill: "#f3e4b6" });
+      add("circle", { cx: 32, cy: 13, r: 3.5, fill: "#f3e4b6" });
+      add("circle", { cx: 54, cy: 19, r: 3.5, fill: "#f3e4b6" });
+    } else if (code === "wild") {
+      add("path", { d: "M32 5 39 22 57 14 49 31 63 39 44 42 48 60 32 48 16 60 20 42 1 39 15 31 7 14 25 22z", fill: "#bd9950", stroke: "#f8e6aa", "stroke-width": "2.2", "stroke-linejoin": "round" });
+      add("circle", { cx: 32, cy: 34, r: 10, fill: "#372b17", stroke: "#f2d88f", "stroke-width": "2" });
+      add("path", { d: "M32 27v14M27 32h10", stroke: "#fff0b9", "stroke-width": "2", "stroke-linecap": "round" });
+    }
+    return svg;
+  }
+
   function riftfallCellNode(config, code, row, reel) {
-    const symbol = config.symbols.find((item) => item.code === code) || { name: "Пусто", icon: "·" };
+    const symbol = config.symbols.find((item) => item.code === code) || { name: "Пусто" };
     const cell = el("div", `rift-cell rift-${code}`);
     cell.dataset.row = String(row);
     cell.dataset.reel = String(reel);
     cell.dataset.symbol = code;
+    cell.setAttribute("aria-label", symbol.name);
     const face = el("div", "rift-cell-face");
-    const icon = el("span", "rift-symbol-icon", symbol.icon);
-    const label = el("small", "rift-symbol-name", symbol.name);
-    face.append(icon, label);
+    face.append(riftfallSymbolSvg(code));
     cell.append(face);
-    if (code === "wild") cell.append(el("span", "rift-wild-mark", "EXPAND"));
+    if (code === "wild") cell.append(el("span", "rift-wild-mark", "WILD"));
     return cell;
   }
 
@@ -5549,8 +5596,8 @@
       const first = strip.firstElementChild;
       const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
       const step = (first ? first.getBoundingClientRect().height : 56) + gap;
-      const delay = reduced ? 0 : reel * 115;
-      const duration = reduced ? 90 : 760 + reel * 115;
+      const delay = reduced || state.riftfallQuick ? 0 : reel * 115;
+      const duration = reduced ? 90 : state.riftfallQuick ? 190 + reel * 24 : 760 + reel * 115;
       const distance = step * (sequence.length - config.rows);
       return new Promise((resolve) => {
         let settled = false;
@@ -5600,12 +5647,12 @@
       });
       activeCells.forEach((cell) => cell.classList.add("resonating"));
       haptic("light");
-      await pause(reduced ? 80 : 540);
+      await pause(reduced ? 50 : state.riftfallQuick ? 150 : 540);
       activeCells.forEach((cell) => {
         cell.classList.remove("resonating");
         cell.classList.add("shattering");
       });
-      await pause(reduced ? 50 : 280);
+      await pause(reduced ? 35 : state.riftfallQuick ? 85 : 280);
       const reels = $("#riftfallGrid")?.querySelectorAll(".rift-reel-strip") || [];
       reels.forEach((strip, reel) => {
         strip.style.transition = "none";
@@ -5617,7 +5664,7 @@
         strip.classList.add("falling");
         void strip.offsetHeight;
       });
-      await pause(reduced ? 80 : 460);
+      await pause(reduced ? 45 : state.riftfallQuick ? 180 : 460);
       reels.forEach((strip) => strip.classList.remove("falling"));
       if (status) status.textContent = `ВЫПЛАТА ЦЕПОЧКИ · ${money(step.cascade_payout)} · ×${Number(step.chain_multiplier).toFixed(2)}`;
       haptic("ok");
@@ -5634,6 +5681,239 @@
         strip.closest(".rift-reel")?.classList.toggle("wild-reel", (result.wild_reels || []).includes(reel));
       });
     }
+  }
+
+  function riftfallHudIcon(name) {
+    const svg = svgNode("svg", { class: "rift-hud-icon", viewBox: "0 0 24 24", "aria-hidden": "true" });
+    const add = (tag, attrs) => svg.append(svgNode(tag, attrs));
+    if (name === "close") {
+      add("path", { d: "m6 6 12 12M18 6 6 18", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round" });
+    } else if (name === "spin") {
+      add("path", { d: "M8 5.5v13l10-6.5z", fill: "currentColor", stroke: "currentColor", "stroke-linejoin": "round" });
+    } else if (name === "quick") {
+      add("path", { d: "M3 8h9m-3-3 3 3-3 3M3 16h15m-3-3 3 3-3 3", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" });
+    } else if (name === "auto") {
+      add("path", { d: "M20 7v5h-5M4 17v-5h5", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" });
+      add("path", { d: "M5.5 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.5-3", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" });
+    }
+    return svg;
+  }
+
+  async function requestRiftfallLandscape() {
+    const telegram = window.Telegram && window.Telegram.WebApp;
+    if (telegram && typeof telegram.expand === "function") telegram.expand();
+    if (telegram && typeof telegram.disableVerticalSwipes === "function") telegram.disableVerticalSwipes();
+    try {
+      if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
+        await screen.orientation.lock("landscape");
+      }
+    } catch (_) {
+      // iOS Telegram WebView does not expose orientation lock; CSS rotates the playfield.
+    }
+  }
+
+  function syncRiftfallFullscreenHud(result) {
+    const session = state.riftfallFullscreen;
+    if (!session) return;
+    const amount = $("#riftImmersiveStake");
+    if (amount) amount.textContent = money(stakeFor("riftfall"));
+    const balanceNode = $("#riftImmersiveBalance");
+    if (balanceNode) balanceNode.textContent = money(balance());
+    const spin = $("#riftImmersiveSpin");
+    if (spin) {
+      spin.disabled = state.casinoBusy || state.riftfallAutoRunning || !stakeOk("riftfall");
+      spin.classList.toggle("busy", state.casinoBusy);
+      spin.innerHTML = "";
+      spin.append(riftfallHudIcon("spin"), el("span", null, state.casinoBusy ? "РАУНД ИДЁТ" : "КРУТИТЬ"));
+    }
+    const quick = $("#riftImmersiveQuick");
+    if (quick) {
+      quick.disabled = state.casinoBusy;
+      quick.classList.toggle("active", state.riftfallQuick);
+      quick.setAttribute("aria-pressed", String(state.riftfallQuick));
+      quick.replaceChildren(riftfallHudIcon("quick"), el("span", null, state.riftfallQuick ? "Быстрый · вкл" : "Быстрый спин"));
+    }
+    const auto = $("#riftImmersiveAuto");
+    if (auto) {
+      auto.disabled = (state.casinoBusy && !state.riftfallAutoRunning)
+        || (!state.riftfallAutoRunning && !stakeOk("riftfall"));
+      auto.classList.toggle("active", state.riftfallAutoRunning);
+      auto.setAttribute("aria-pressed", String(state.riftfallAutoRunning));
+      auto.replaceChildren(
+        riftfallHudIcon("auto"),
+        el("span", null, state.riftfallAutoRunning
+          ? `Стоп · ${state.riftfallAutoRemaining}` : "Автоспин · 10")
+      );
+    }
+    const close = $("#riftImmersiveClose");
+    if (close) close.disabled = state.casinoBusy || state.riftfallAutoRunning;
+    const resultNode = $("#riftImmersiveResult");
+    if (resultNode && result) {
+      resultNode.classList.toggle("win", Number(result.payout) > Number(result.amount));
+      resultNode.classList.toggle("loss", Number(result.payout) <= Number(result.amount));
+      resultNode.textContent = result.cascade_count
+        ? `${result.cascade_count} каскада · ${money(result.payout)}`
+        : `Выплата · ${money(result.payout)}`;
+    }
+  }
+
+  function openRiftfallFullscreen() {
+    if (state.riftfallFullscreen || state.casinoBusy) return;
+    const stageSlot = $("#riftfallStageSlot");
+    const chainSlot = $("#riftfallChainSlot");
+    const statusSlot = $("#riftfallStatusSlot");
+    if (!stageSlot || !chainSlot || !statusSlot) return;
+
+    const overlay = el("section", "riftfall-immersive");
+    overlay.id = "riftfallImmersive";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Золотой разлом — полноэкранная игра");
+    const stage = el("main", "rift-immersive-stage");
+    const heading = el("div", "rift-immersive-heading");
+    heading.append(el("span", "rift-immersive-mark", "PRIVATE RESERVE"), el("b", null, "ЗОЛОТОЙ РАЗЛОМ"));
+    const machine = el("div", "rift-immersive-machine");
+    const chainAndStatus = el("div", "rift-immersive-readout");
+    const stageNode = stageSlot.firstElementChild;
+    const chainNode = chainSlot.firstElementChild;
+    const statusNode = statusSlot.firstElementChild;
+    if (!stageNode || !chainNode || !statusNode) return;
+    machine.append(stageNode);
+    chainAndStatus.append(chainNode, statusNode);
+    stage.append(heading, machine, chainAndStatus);
+
+    const controls = el("aside", "rift-immersive-controls");
+    const close = el("button", "rift-immersive-close");
+    close.id = "riftImmersiveClose";
+    close.type = "button";
+    close.setAttribute("aria-label", "Закрыть полноэкранный слот");
+    close.append(riftfallHudIcon("close"), el("span", null, "ВЕРНУТЬСЯ"));
+    close.addEventListener("click", closeRiftfallFullscreen);
+    const controlBrand = el("div", "rift-immersive-control-brand");
+    controlBrand.append(el("span", null, "СЕССИЯ · 01"), el("b", null, "PRIVATE TABLE"));
+
+    const betPanel = el("div", "rift-immersive-bet-panel");
+    betPanel.append(el("span", "rift-immersive-label", "СТАВКА ЗА СПИН"));
+    const betControl = el("div", "rift-immersive-bet-control");
+    const decrease = el("button", "rift-bet-adjust", "−");
+    decrease.type = "button";
+    decrease.setAttribute("aria-label", "Уменьшить ставку");
+    decrease.addEventListener("click", () => adjustRiftfallStake(-1));
+    const betValue = el("b", "rift-immersive-bet", money(stakeFor("riftfall")));
+    betValue.id = "riftImmersiveStake";
+    const increase = el("button", "rift-bet-adjust", "+");
+    increase.type = "button";
+    increase.setAttribute("aria-label", "Увеличить ставку");
+    increase.addEventListener("click", () => adjustRiftfallStake(1));
+    betControl.append(decrease, betValue, increase);
+    betPanel.append(betControl);
+
+    const spin = el("button", "rift-immersive-spin");
+    spin.id = "riftImmersiveSpin";
+    spin.type = "button";
+    spin.addEventListener("click", () => playCasinoRound());
+    const actions = el("div", "rift-immersive-actions");
+    const quick = el("button", "rift-immersive-action");
+    quick.id = "riftImmersiveQuick";
+    quick.type = "button";
+    quick.addEventListener("click", () => {
+      state.riftfallQuick = !state.riftfallQuick;
+      haptic("light");
+      syncRiftfallFullscreenHud();
+    });
+    const auto = el("button", "rift-immersive-action");
+    auto.id = "riftImmersiveAuto";
+    auto.type = "button";
+    auto.addEventListener("click", startRiftfallAutoSpin);
+    actions.append(quick, auto);
+    const result = el("div", "rift-immersive-result");
+    result.id = "riftImmersiveResult";
+    result.textContent = "ГОТОВ К СПИНУ";
+    const balanceRow = el("div", "rift-immersive-balance");
+    balanceRow.append(el("span", null, "БАЛАНС"));
+    const balanceValue = el("b", null, money(balance()));
+    balanceValue.id = "riftImmersiveBalance";
+    balanceRow.append(balanceValue);
+    controls.append(close, controlBrand, betPanel, spin, actions, result, balanceRow);
+    overlay.append(stage, controls);
+    document.body.append(overlay);
+    document.body.classList.add("riftfall-fullscreen-open");
+    state.riftfallFullscreen = { overlay, stageSlot, chainSlot, statusSlot, stageNode, chainNode, statusNode };
+    syncRiftfallFullscreenHud(state.casinoResults.riftfall);
+    window.scrollTo(0, 0);
+    requestRiftfallLandscape();
+    haptic("light");
+  }
+
+  function closeRiftfallFullscreen() {
+    const session = state.riftfallFullscreen;
+    if (!session) return;
+    if (state.casinoBusy || state.riftfallAutoRunning) {
+      toast("Остановите автоспин и дождитесь конца раунда");
+      return;
+    }
+    session.stageSlot.append(session.stageNode);
+    session.chainSlot.append(session.chainNode);
+    session.statusSlot.append(session.statusNode);
+    session.overlay.remove();
+    state.riftfallFullscreen = null;
+    document.body.classList.remove("riftfall-fullscreen-open");
+    try {
+      if (window.screen && screen.orientation && typeof screen.orientation.unlock === "function") {
+        screen.orientation.unlock();
+      }
+    } catch (_) { /* Orientation lock is not available in every WebView. */ }
+    const telegram = window.Telegram && window.Telegram.WebApp;
+    if (telegram && typeof telegram.enableVerticalSwipes === "function") telegram.enableVerticalSwipes();
+  }
+
+  function adjustRiftfallStake(direction) {
+    if (state.casinoBusy || state.riftfallAutoRunning) return;
+    const info = stakeState("riftfall");
+    const base = info.raw || info.min;
+    let next = Math.round(direction > 0 ? base * 1.5 : base / 1.5);
+    if (direction > 0) next = Math.round(next / 10) * 10 || base + 10;
+    state.casinoStake.riftfall = Math.max(info.min, Math.min(balance(), next));
+    syncStakeUI("riftfall");
+    syncRiftfallFullscreenHud();
+  }
+
+  function startRiftfallAutoSpin() {
+    if (state.riftfallAutoRunning) {
+      state.riftfallAutoRunning = false;
+      state.riftfallAutoRemaining = 0;
+      state.riftfallAutoRunId += 1;
+      syncRiftfallFullscreenHud();
+      return;
+    }
+    if (state.casinoBusy || !stakeOk("riftfall")) return;
+    state.riftfallAutoRunning = true;
+    state.riftfallAutoRemaining = 10;
+    const runId = ++state.riftfallAutoRunId;
+    syncRiftfallFullscreenHud();
+    (async () => {
+      try {
+        while (state.riftfallAutoRunning && runId === state.riftfallAutoRunId
+          && state.riftfallAutoRemaining > 0) {
+          const played = await playCasinoRound({ auto: true });
+          if (played && typeof played === "object" && played.retryAfter) {
+            toast(`Автоспин продолжится через ${played.retryAfter} сек`);
+            await pause((played.retryAfter + 1) * 1000);
+            continue;
+          }
+          if (!played || !state.riftfallAutoRunning || runId !== state.riftfallAutoRunId) break;
+          state.riftfallAutoRemaining -= 1;
+          syncRiftfallFullscreenHud();
+          if (state.riftfallAutoRemaining > 0) await pause(1600);
+        }
+      } finally {
+        if (runId === state.riftfallAutoRunId) {
+          state.riftfallAutoRunning = false;
+          state.riftfallAutoRemaining = 0;
+          syncRiftfallFullscreenHud();
+        }
+      }
+    })();
   }
 
   function renderRiftfall(host) {
@@ -5659,18 +5939,26 @@
     card.append(el("p", "riftfall-copy", "Поймай волну каскадов. Золотой Wild раскрывает целый барабан — и рынок отвечает движением."));
     const topper = el("div", "riftfall-topline");
     topper.append(el("span", null, "RIFT INDEX"), el("b", null, "95.5"), el("i", null, "RTP"));
-    card.append(topper, riftfallGridNode(config, grid, wildReels));
+    const stageSlot = el("div", "riftfall-stage-slot");
+    stageSlot.id = "riftfallStageSlot";
+    stageSlot.append(riftfallGridNode(config, grid, wildReels));
+    card.append(topper, stageSlot);
     const chain = el("div", "riftfall-chain-meter");
     ["×1", "×1.5", "×2.25", "×3.5"].forEach((label, index) => {
       chain.append(el("span", result && index < Number(result.cascade_count) ? "reached" : "", label));
     });
-    card.append(chain);
+    const chainSlot = el("div", "riftfall-chain-slot");
+    chainSlot.id = "riftfallChainSlot";
+    chainSlot.append(chain);
     const status = el("div", "riftfall-chain-status");
     status.id = "riftChainStatus";
     status.textContent = result
       ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
       : "READY · ОЖИДАЕМ СИГНАЛ РЫНКА";
-    card.append(status, stakeRow("riftfall"));
+    const statusSlot = el("div", "riftfall-status-slot");
+    statusSlot.id = "riftfallStatusSlot";
+    statusSlot.append(status);
+    card.append(chainSlot, statusSlot, stakeRow("riftfall"));
     const meta = el("div", "bet-meta riftfall-meta");
     meta.id = "betMeta";
     meta.append(el("span", null, `Ставка: ${money(stakeFor("riftfall"))} · вся сумма за один спин`));
@@ -5679,7 +5967,8 @@
     const play = el("button", "btn play riftfall-spin-button");
     play.id = "playBtn";
     play.type = "button";
-    play.textContent = `ЗАПУСТИТЬ РАЗЛОМ · ${money(stakeFor("riftfall"))}`;
+    play.textContent = `ОТКРЫТЬ СЛОТ · ${money(stakeFor("riftfall"))}`;
+    play.dataset.riftOpen = "true";
     play.disabled = state.casinoBusy || !stakeOk("riftfall");
     card.append(play, outcomeNode(), summaryNode(), historyNode(), gameInfoNode("riftfall"));
     host.append(card);
@@ -6019,6 +6308,10 @@
     clearCasinoDockTracking();
     const host = $("#games");
     if (!host) return;
+    if (state.riftfallFullscreen && state.game === "riftfall") {
+      syncRiftfallFullscreenHud(state.casinoResults.riftfall);
+      return;
+    }
     const menu = $("#gameSwitch");
     const screen = $("#screen-games");
     if (screen) screen.classList.toggle("catalog-mode", !state.game);
@@ -6245,6 +6538,7 @@
           && Boolean(node.closest(".stake-block"));
         node.disabled = busy || lockedSlotWager;
       });
+    syncRiftfallFullscreenHud(state.casinoResults.riftfall);
   }
 
   function refreshSide() {
@@ -6318,6 +6612,7 @@
       }
       setBalance(data.balance);
       state.casinoResults[game] = data;
+      if (game === "riftfall") syncRiftfallFullscreenHud(data);
       const onScreen = state.tab === "games" && state.game === game;
       if (onScreen) {
         if (game !== "slots") paintOutcome(data, { pop: true });
@@ -6461,6 +6756,7 @@
         startSlotAutoSpin();
         return;
       }
+      if (node.dataset.riftOpen !== undefined) { openRiftfallFullscreen(); return; }
       if (node.id === "playBtn") { playCasinoRound(); return; }
 
       if (node.dataset.plinkoRows) {
