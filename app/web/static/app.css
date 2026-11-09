@@ -1447,7 +1447,7 @@ button:focus-visible{outline-color:#d6b66d}
 .riftfall-fullscreen-open{overflow:hidden!important;overscroll-behavior:none!important;touch-action:none}
 .riftfall-immersive{--rift-cell-height:clamp(42px,calc((100dvh - 142px)/4),110px);position:fixed;z-index:10000;inset:0;display:flex;gap:12px;width:100vw;height:100dvh;overflow:hidden;padding:10px 12px;background:radial-gradient(ellipse at 38% 42%,rgba(125,102,57,.13),transparent 48%),linear-gradient(120deg,#0b1012,#111716 56%,#090d0e);color:#eee6d1;box-sizing:border-box;overscroll-behavior:contain;touch-action:manipulation}
 .riftfall-immersive::before{position:absolute;inset:5px;content:"";border:1px solid rgba(202,174,112,.22);border-radius:16px;pointer-events:none}
-.riftfall-immersive.tg-safe-rotate{padding-top:max(10px,var(--rift-tg-safe-right,0px));padding-right:max(10px,var(--rift-tg-safe-bottom,0px));padding-bottom:max(10px,var(--rift-tg-safe-left,0px));padding-left:max(10px,var(--rift-tg-safe-top,0px))}
+.riftfall-immersive.tg-safe-insets{padding-top:max(10px,var(--rift-tg-safe-top,0px));padding-right:max(10px,var(--rift-tg-safe-right,0px));padding-bottom:max(10px,var(--rift-tg-safe-bottom,0px));padding-left:max(10px,var(--rift-tg-safe-left,0px))}
 .rift-immersive-stage{position:relative;z-index:1;display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;padding:2px 5px 0}
 .rift-immersive-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 5px 7px}
 .rift-immersive-heading b{color:#efdaa2;font-family:Georgia,"Times New Roman",serif;font-size:clamp(12px,2.1vw,20px);font-weight:700;letter-spacing:.16em;text-shadow:0 0 16px rgba(222,190,115,.2)}
@@ -1496,6 +1496,7 @@ button:focus-visible{outline-color:#d6b66d}
 @keyframes riftSpinPulse{to{transform:rotate(20deg) scale(.9);opacity:.62}}
 @media (orientation:portrait) and (max-width:700px){
   .riftfall-immersive{--rift-cell-height:clamp(34px,calc((100vw - 132px)/4),92px);top:50%;left:50%;right:auto;bottom:auto;width:100dvh;height:100dvw;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center center}
+  .riftfall-immersive.tg-safe-insets{padding-top:max(10px,var(--rift-tg-safe-right,0px));padding-right:max(10px,var(--rift-tg-safe-bottom,0px));padding-bottom:max(10px,var(--rift-tg-safe-left,0px));padding-left:max(10px,var(--rift-tg-safe-top,0px))}
   .riftfall-immersive .rift-machine-shell{max-height:calc(100dvw - 58px)}
   .riftfall-immersive .rift-cell{max-height:calc((100dvw - 132px)/4)}
   .rift-immersive-controls{flex-basis:clamp(190px,30vh,245px);gap:7px;padding:8px}

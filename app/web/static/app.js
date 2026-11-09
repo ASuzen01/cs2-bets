@@ -5705,18 +5705,38 @@
     const safe = telegram && telegram.safeAreaInset || {};
     const content = telegram && telegram.contentSafeAreaInset || {};
     const rootStyle = window.getComputedStyle(document.documentElement);
+    const insetValue = (source, side, cssName) => {
+      const value = source[side];
+      if (value !== undefined && value !== null && Number.isFinite(Number(value))) {
+        return Math.max(0, Number(value));
+      }
+      return Math.max(0, parseFloat(rootStyle.getPropertyValue(cssName)) || 0);
+    };
     ["top", "right", "bottom", "left"].forEach((side) => {
-      const cssSafe = parseFloat(rootStyle.getPropertyValue(`--tg-safe-area-inset-${side}`)) || 0;
-      const cssContent = parseFloat(rootStyle.getPropertyValue(`--tg-content-safe-area-inset-${side}`)) || 0;
-      const inset = Math.max(0, Number(safe[side]) || 0, Number(content[side]) || 0, cssSafe, cssContent);
+      const inset = insetValue(safe, side, `--tg-safe-area-inset-${side}`)
+        + insetValue(content, side, `--tg-content-safe-area-inset-${side}`);
       session.overlay.style.setProperty(`--rift-tg-safe-${side}`, `${inset}px`);
     });
+    // Telegram keeps its Close/menu pills floating above even in fullscreen.
+    // Reserve a conservative top lane if an older client reports no content inset.
+    const platform = String(telegram && telegram.platform || "").toLowerCase();
+    const mobileTelegram = platform === "ios" || platform.startsWith("android");
+    if (mobileTelegram && Number(session.overlay.style.getPropertyValue("--rift-tg-safe-top").replace("px", "")) < 96) {
+      session.overlay.style.setProperty("--rift-tg-safe-top", "96px");
+    }
     session.overlay.classList.toggle("tg-native-fullscreen", Boolean(telegram && telegram.isFullscreen));
-    session.overlay.classList.toggle("tg-safe-rotate", !(telegram && telegram.isFullscreen));
+    session.overlay.classList.add("tg-safe-insets");
   }
 
   async function requestRiftfallLandscape() {
     const telegram = window.Telegram && window.Telegram.WebApp;
+    let fullscreenRequest = null;
+    try {
+      // Fire the native request first, in the same user gesture that opens Riftfall.
+      if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
+        fullscreenRequest = telegram.requestFullscreen();
+      }
+    } catch (_) { /* Older clients reject or omit fullscreen support. */ }
     try { if (telegram && typeof telegram.expand === "function") telegram.expand(); } catch (_) { /* Optional Telegram API. */ }
     try {
       if (telegram && typeof telegram.disableVerticalSwipes === "function") telegram.disableVerticalSwipes();
@@ -5727,12 +5747,12 @@
     } catch (_) { /* Optional Telegram API. */ }
     syncRiftfallTelegramSafeArea(telegram);
     try {
-      // Telegram fullscreen hides its floating close/menu toolbar; do this directly
-      // from the player's tap before trying the browser's orientation lock.
-      if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
-        await telegram.requestFullscreen();
+      // Ask Telegram for native fullscreen in the player's tap. Its own pills can
+      // remain floating, so the game also keeps Telegram's safe-area padding.
+      if (fullscreenRequest) {
+        await fullscreenRequest;
         if (!state.riftfallFullscreen) {
-          if (telegram.isFullscreen && typeof telegram.exitFullscreen === "function") {
+          if (telegram && telegram.isFullscreen && typeof telegram.exitFullscreen === "function") {
             Promise.resolve(telegram.exitFullscreen()).catch(() => {});
           }
           return;
