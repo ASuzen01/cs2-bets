@@ -5163,6 +5163,112 @@
     return shell;
   }
 
+  function slotWinningWayGroups(result, config) {
+    if (!result || !Array.isArray(result.grid)) return [];
+    const groups = new Map();
+    const rows = [];
+    const visit = (reel) => {
+      if (reel < config.reels) {
+        for (let row = 0; row < config.rows; row += 1) {
+          rows[reel] = row;
+          visit(reel + 1);
+        }
+        return;
+      }
+      const symbol = result.grid[rows[0]] && result.grid[rows[0]][0];
+      if (!symbol || symbol === "scatter") return;
+      let length = 1;
+      while (length < config.reels
+        && result.grid[rows[length]] && result.grid[rows[length]][length] === symbol) length += 1;
+      if (length < 3) return;
+      const key = `${symbol}:${length}`;
+      const group = groups.get(key) || { symbol, length, ways: 0, path: null };
+      group.ways += 1;
+      if (!group.path) group.path = rows.slice(0, length).map((row, reelIndex) => [row, reelIndex]);
+      groups.set(key, group);
+    };
+    visit(0);
+    const reported = new Map((result.wins || []).map((win) => [`${win.symbol}:${Number(win.length)}`, Number(win.ways)]));
+    return Array.from(groups.values())
+      .filter((group) => reported.get(`${group.symbol}:${group.length}`) === group.ways)
+      .sort((left, right) => {
+        if (left.length !== right.length) return right.length - left.length;
+        const value = (group) => group.ways
+          * Number(config.paytable[group.symbol] && config.paytable[group.symbol][String(group.length)] || 0);
+        return value(right) - value(left);
+      });
+  }
+
+  async function animateSlotWinPaths(result, config) {
+    const grid = $("#slotGrid");
+    if (!grid) return;
+    const winningCells = result.winning_cells || [];
+    const groups = slotWinningWayGroups(result, config);
+    const fast = state.slotQuick || state.slotAutoRunning;
+    const maximum = fast ? 2 : 4;
+    const showGroups = groups.slice(0, maximum);
+    const svg = svgNode("svg", { class: "slot-win-layer", "aria-hidden": "true", preserveAspectRatio: "none" });
+    svg.setAttribute("viewBox", `0 0 ${Math.max(1, grid.clientWidth)} ${Math.max(1, grid.clientHeight)}`);
+    const caption = el("div", "slot-win-callout");
+    caption.setAttribute("aria-live", "polite");
+    grid.append(svg, caption);
+
+    for (const group of showGroups) {
+      const points = group.path.map(([row, reel]) => {
+        const cell = grid.querySelector(`.slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+        if (!cell) return null;
+        const cellRect = cell.getBoundingClientRect();
+        const gridRect = grid.getBoundingClientRect();
+        return [
+          ((cellRect.left + cellRect.width / 2 - gridRect.left) / Math.max(1, gridRect.width)) * grid.clientWidth,
+          ((cellRect.top + cellRect.height / 2 - gridRect.top) / Math.max(1, gridRect.height)) * grid.clientHeight,
+        ];
+      }).filter(Boolean);
+      if (points.length < 3) continue;
+      svg.replaceChildren();
+      grid.querySelectorAll(".slot-cell.slot-win-active").forEach((cell) => cell.classList.remove("slot-win-active"));
+      group.path.forEach(([row, reel]) => {
+        const cell = grid.querySelector(`.slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+        if (cell) cell.classList.add("slot-win-active");
+      });
+      const d = points.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+      const glow = svgNode("path", { class: "slot-win-path-glow", d });
+      const path = svgNode("path", { class: "slot-win-path", d });
+      svg.append(glow, path);
+      points.forEach(([cx, cy]) => svg.append(svgNode("circle", { class: "slot-win-dot", cx, cy, r: 4 })));
+      const symbol = config.symbols.find((item) => item.code === group.symbol);
+      caption.textContent = `${symbol ? symbol.name : group.symbol} · ${group.length} барабана · ${group.ways} ways`;
+      const pathLength = Math.max(1, path.getTotalLength());
+      [glow, path].forEach((line) => {
+        line.style.strokeDasharray = String(pathLength);
+        line.style.strokeDashoffset = String(pathLength);
+      });
+      const duration = fast ? 150 : 360;
+      requestAnimationFrame(() => [glow, path].forEach((line) => {
+        line.style.transition = `stroke-dashoffset ${duration}ms cubic-bezier(.2,.7,.2,1)`;
+        line.style.strokeDashoffset = "0";
+      }));
+      await pause(duration + (fast ? 50 : 240));
+    }
+
+    const scatters = Array.from(grid.querySelectorAll('.slot-cell[data-symbol="scatter"]'));
+    if (Number(result.awarded_free_spins) > 0 && scatters.length) {
+      svg.replaceChildren();
+      caption.textContent = `SCATTER · ${result.awarded_free_spins} фри-спинов`;
+      for (const cell of scatters) {
+        cell.classList.add("slot-scatter-awarded");
+        await pause(fast ? 55 : 110);
+      }
+    }
+    grid.querySelectorAll(".slot-cell.slot-win-active").forEach((cell) => cell.classList.remove("slot-win-active"));
+    svg.remove();
+    caption.remove();
+    winningCells.forEach(([row, reel]) => {
+      const cell = grid.querySelector(`.slot-cell[data-row="${row}"][data-reel="${reel}"]`);
+      if (cell) cell.classList.add("hit");
+    });
+  }
+
   async function animateSlots(result) {
     const config = state.casino && state.casino.slots;
     if (!config || !Array.isArray(result.grid)) return;
@@ -5188,7 +5294,9 @@
       void strip.offsetHeight;
       const firstCell = strip.firstElementChild;
       const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
-      const step = (firstCell ? firstCell.getBoundingClientRect().height : 53) + gap;
+      // offsetHeight is the reel's untransformed layout size; getBoundingClientRect()
+      // swaps axes when the old portrait-to-landscape CSS rotation is active.
+      const step = (firstCell ? firstCell.offsetHeight : 53) + gap;
       const duration = fastMode ? 135 + reel * 28 : 900 + reel * 170;
       const delay = fastMode ? reel * 25 : reel * 135;
       const distance = step * (sequence.length - config.rows);
@@ -5219,10 +5327,7 @@
       }));
     }
     await Promise.all(spinReels);
-    (result.winning_cells || []).forEach(([row, reel]) => {
-      const cell = $(`#slotGrid .slot-cell[data-row="${row}"][data-reel="${reel}"]`);
-      if (cell) cell.classList.add("hit");
-    });
+    await animateSlotWinPaths(result, config);
     if (!autoMode) haptic(result.win || result.awarded_free_spins ? "ok" : "bad");
     else if (result.awarded_free_spins) haptic("ok");
   }
@@ -6085,7 +6190,7 @@
       if (outcome) stage.append(outcome);
       if (back) back.remove();
       const scroll = el("div", "casino-immersive-scroll");
-      [chest, stake].filter(Boolean).forEach((node) => scroll.append(node));
+      [chest, stake, auto].filter(Boolean).forEach((node) => scroll.append(node));
       if (meta || summary || history || info) {
         const extra = el("details", "casino-immersive-secondary");
         extra.append(el("summary", null, "ИСТОРИЯ И ПРАВИЛА"));
@@ -6093,7 +6198,7 @@
         scroll.append(extra);
       }
       controls.append(scroll);
-      [play, auto].filter(Boolean).forEach((node) => controls.append(node));
+      if (play) controls.append(play);
       card.classList.add("casino-immersive-layout");
       card.replaceChildren(stage, controls);
       host.replaceChildren(card);
@@ -6226,7 +6331,7 @@
     if (!host || !host.parentNode) return;
     const parent = host.parentNode;
     const nextSibling = host.nextSibling;
-    const overlay = el("section", "casino-immersive");
+    const overlay = el("section", "casino-immersive" + (game === "slots" ? " casino-immersive-slots" : ""));
     overlay.id = "casinoImmersive";
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
