@@ -173,6 +173,26 @@ CREATE TABLE IF NOT EXISTS casino_bets (
 );
 CREATE INDEX IF NOT EXISTS idx_casino_user ON casino_bets(user_id, created_at);
 
+-- «Пьяница»: приглашения и завершённые серверные партии с результатом.
+CREATE TABLE IF NOT EXISTS drunkard_games (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    creator_id   INTEGER NOT NULL,
+    opponent_id  INTEGER,
+    creator_name TEXT NOT NULL,
+    opponent_name TEXT NOT NULL,
+    mode         TEXT NOT NULL,
+    deck_size    INTEGER NOT NULL,
+    stake        INTEGER NOT NULL,
+    status       TEXT NOT NULL,
+    result_json  TEXT,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    settled_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_drunkard_creator ON drunkard_games(creator_id, id);
+CREATE INDEX IF NOT EXISTS idx_drunkard_opponent ON drunkard_games(opponent_id, id);
+CREATE INDEX IF NOT EXISTS idx_drunkard_status ON drunkard_games(status, created_at);
+
 -- незавершённые фри-спины и их зафиксированная ставка хранятся на сервере
 CREATE TABLE IF NOT EXISTS slot_states (
     user_id     INTEGER PRIMARY KEY,

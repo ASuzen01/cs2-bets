@@ -89,13 +89,15 @@ async def test_dump_roundtrip_restores_everything(db, tmp_path) -> None:
         await fresh.close()
 
 
-async def test_restore_accepts_pre_crash_game_backup(db) -> None:
+async def test_restore_accepts_backup_without_new_game_tables(db) -> None:
     data = await db.dump_rows()
     data.pop("crash_games")
+    data.pop("drunkard_games")
 
     counts = await db.restore_rows(data)
 
     assert counts["crash_games"] == 0
+    assert counts["drunkard_games"] == 0
 
 
 async def test_restore_replaces_current_data(db, tmp_path) -> None:

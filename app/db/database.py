@@ -82,6 +82,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "wheel_spins",
     "tease_claims",
     "casino_bets",
+    "drunkard_games",
     "slot_states",
     "ladder_games",
     "blackjack_games",
@@ -117,6 +118,8 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("wheel_spins", "user_id"),
     ("tease_claims", "user_id"),
     ("casino_bets", "user_id"),
+    ("drunkard_games", "creator_id"),
+    ("drunkard_games", "opponent_id"),
     ("slot_states", "user_id"),
     ("ladder_games", "user_id"),
     ("blackjack_games", "user_id"),
@@ -542,10 +545,11 @@ class Database:
         if unknown:
             raise BackupError(f"В дампе незнакомые таблицы: {', '.join(sorted(unknown))}")
         missing = set(BACKUP_TABLES) - set(data)
-        # Backups made before the crash game existed have no crash_games table;
-        # restore them as an empty table, while keeping every older omission strict.
-        if missing == {"crash_games"}:
-            data = {**data, "crash_games": []}
+        # Older backups may predate these new game tables; restore those as empty,
+        # while keeping every established table omission strict.
+        legacy_optional = {"crash_games", "drunkard_games"}
+        if missing and missing <= legacy_optional:
+            data = {**data, **{table: [] for table in missing}}
             missing = set()
         if missing:
             raise BackupError(
@@ -1612,6 +1616,295 @@ class Database:
             response["round"] = round_id
             response["balance"] = await self._balance_in(conn, user_id)
             return response
+
+    @staticmethod
+    def _drunkard_payload(row: Any, user_id: int) -> dict[str, Any]:
+        result = json.loads(str(row["result_json"])) if row["result_json"] else None
+        creator_id = int(row["creator_id"])
+        opponent_id = int(row["opponent_id"]) if row["opponent_id"] is not None else None
+        creator_side = creator_id == user_id
+        side = "player" if creator_side else "opponent"
+        opponent_name = str(row["opponent_name"] if creator_side else row["creator_name"])
+        outcome = None
+        payout = 0
+        if result is not None:
+            winner = result.get("winner")
+            outcome = "draw" if winner is None else "win" if winner == side else "loss"
+            payout = int((result.get("payouts") or {}).get(str(user_id), 0))
+        return {
+            "id": int(row["id"]),
+            "mode": str(row["mode"]),
+            "status": str(row["status"]),
+            "deck_size": int(row["deck_size"]),
+            "stake": int(row["stake"]),
+            "creator_id": creator_id,
+            "opponent_id": opponent_id,
+            "creator_name": str(row["creator_name"]),
+            "opponent_name": str(row["opponent_name"]),
+            "your_side": side,
+            "your_outcome": outcome,
+            "your_payout": payout,
+            "other_name": opponent_name,
+            "result": result,
+            "created_at": int(row["created_at"]),
+        }
+
+    async def drunkard_state(self, user_id: int) -> dict[str, Any]:
+        """Приглашения и последняя партия игрока в «Пьяницу»."""
+        cutoff = int(time.time()) - 24 * 3600
+        incoming = await self._fetchall(
+            "SELECT * FROM drunkard_games WHERE opponent_id = ? AND status = 'invited' "
+            "AND created_at >= ? ORDER BY id DESC LIMIT 10",
+            (user_id, cutoff),
+        )
+        outgoing = await self._fetchall(
+            "SELECT * FROM drunkard_games WHERE creator_id = ? AND status = 'invited' "
+            "AND created_at >= ? ORDER BY id DESC LIMIT 10",
+            (user_id, cutoff),
+        )
+        last = await self._fetchone(
+            "SELECT * FROM drunkard_games WHERE status = 'finished' "
+            "AND (creator_id = ? OR opponent_id = ?) ORDER BY id DESC LIMIT 1",
+            (user_id, user_id),
+        )
+        return {
+            "incoming": [self._drunkard_payload(row, user_id) for row in incoming],
+            "outgoing": [self._drunkard_payload(row, user_id) for row in outgoing],
+            "last": self._drunkard_payload(last, user_id) if last is not None else None,
+        }
+
+    async def _record_drunkard_casino(
+        self,
+        conn: Any,
+        user_id: int,
+        opponent_name: str,
+        stake: int,
+        payout: int,
+        outcome: str,
+        result: dict[str, Any],
+        now: int,
+    ) -> None:
+        label = {
+            "win": f"Победа над {opponent_name}",
+            "loss": f"Поражение от {opponent_name}",
+            "draw": "Ничья · ставка возвращена",
+        }[outcome]
+        await conn.execute(
+            """INSERT INTO casino_bets
+               (user_id, game, selection, label, amount, odds, outcome, win, payout, result_json, created_at)
+               VALUES (?, 'drunkard', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                "vs:" + opponent_name,
+                label,
+                stake,
+                payout / stake if stake else 0,
+                outcome,
+                1 if outcome == "win" else 0,
+                payout,
+                json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                now,
+            ),
+        )
+        await self._bump_quest(conn, user_id, "casino", now)
+
+    @staticmethod
+    def _validate_drunkard(stake: int, deck_size: int) -> None:
+        from app.services.drunkard import VALID_DECK_SIZES
+
+        if stake < 10:
+            raise InvalidBet("Минимальная ставка — 10 🪙")
+        if int(deck_size) not in VALID_DECK_SIZES:
+            raise InvalidBet("Выбери колоду на 24, 36 или 52 карты")
+
+    async def play_drunkard_bot(
+        self, user_id: int, stake: int, deck_size: int, token: str | None = None
+    ) -> dict[str, Any]:
+        """Списывает ставку и атомарно рассчитывает полную партию против компьютера."""
+        from app.services.drunkard import simulate_game
+
+        self._validate_drunkard(stake, deck_size)
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "drunkard-bot", tap, now)
+            if duplicate is not None:
+                game_id = duplicate or await self._previous_id(conn, user_id, "drunkard-bot", tap)
+                row = await (await conn.execute(
+                    "SELECT * FROM drunkard_games WHERE id = ? AND creator_id = ?",
+                    (game_id, user_id),
+                )).fetchone()
+                if row is not None:
+                    return {"game": self._drunkard_payload(row, user_id), "balance": await self._balance_in(conn, user_id)}
+            debit = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (stake, user_id, stake),
+            )
+            if debit.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+            await self._ledger(conn, user_id, -stake, "ставка · Пьяница · компьютер", now)
+            result = simulate_game(int(deck_size))
+            outcome = "draw" if result["winner"] is None else "win" if result["winner"] == "player" else "loss"
+            payout = stake if outcome == "draw" else stake * 2 if outcome == "win" else 0
+            result.update({
+                "mode": "bot", "opponent_name": "Компьютер", "stake": stake,
+                "outcome": outcome, "payouts": {str(user_id): payout},
+            })
+            if payout:
+                await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+                await self._ledger(conn, user_id, payout, "выплата · Пьяница", now)
+            created = await conn.execute(
+                """INSERT INTO drunkard_games
+                   (creator_id, opponent_id, creator_name, opponent_name, mode, deck_size, stake,
+                    status, result_json, created_at, updated_at, settled_at)
+                   VALUES (?, NULL, ?, 'Компьютер', 'bot', ?, ?, 'finished', ?, ?, ?, ?) RETURNING id""",
+                (
+                    user_id, str((await self.get_user(user_id))["full_name"] or "Игрок"), int(deck_size),
+                    stake, json.dumps(result, ensure_ascii=False, separators=(",", ":")), now, now, now,
+                ),
+            )
+            created_row = await created.fetchone()
+            game_id = int(created_row["id"]) if created_row else int(created.lastrowid or 0)
+            await self._record_drunkard_casino(conn, user_id, "Компьютер", stake, payout, outcome, result, now)
+            if tap:
+                await self._remember_token(conn, user_id, "drunkard-bot", tap, game_id)
+            row = await (await conn.execute("SELECT * FROM drunkard_games WHERE id = ?", (game_id,))).fetchone()
+            return {"game": self._drunkard_payload(row, user_id), "balance": await self._balance_in(conn, user_id)}
+
+    async def create_drunkard_invite(
+        self,
+        user_id: int,
+        opponent_ident: str,
+        stake: int,
+        deck_size: int,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Создаёт вызов по Telegram ID или username; ставка пока не списывается."""
+        self._validate_drunkard(stake, deck_size)
+        opponent = await self.find_user(opponent_ident)
+        if opponent is None:
+            raise InvalidBet("Игрок не найден. Он должен хотя бы раз открыть бота; проверь username или ID.")
+        opponent_id = int(opponent["user_id"])
+        if opponent_id == user_id:
+            raise InvalidBet("Нельзя вызвать самого себя")
+        creator = await self.get_user(user_id)
+        creator_name = str(creator["full_name"] or creator["username"] or "Игрок")
+        opponent_name = str(opponent["full_name"] or opponent["username"] or f"Игрок {opponent_id}")
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "drunkard-invite", tap, now)
+            if duplicate is not None:
+                game_id = duplicate or await self._previous_id(conn, user_id, "drunkard-invite", tap)
+                row = await (await conn.execute(
+                    "SELECT * FROM drunkard_games WHERE id = ? AND creator_id = ?",
+                    (game_id, user_id),
+                )).fetchone()
+                if row is not None:
+                    return self._drunkard_payload(row, user_id)
+            existing = await (await conn.execute(
+                "SELECT * FROM drunkard_games WHERE creator_id = ? AND opponent_id = ? "
+                "AND status = 'invited' ORDER BY id DESC LIMIT 1",
+                (user_id, opponent_id),
+            )).fetchone()
+            if existing is not None:
+                return self._drunkard_payload(existing, user_id)
+            if await self._balance_in(conn, user_id) < stake:
+                raise InsufficientFunds("Недостаточно монет для ставки")
+            created = await conn.execute(
+                """INSERT INTO drunkard_games
+                   (creator_id, opponent_id, creator_name, opponent_name, mode, deck_size, stake,
+                    status, result_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'invite', ?, ?, 'invited', NULL, ?, ?) RETURNING id""",
+                (user_id, opponent_id, creator_name, opponent_name, int(deck_size), stake, now, now),
+            )
+            row = await created.fetchone()
+            game_id = int(row["id"]) if row else int(created.lastrowid or 0)
+            if tap:
+                await self._remember_token(conn, user_id, "drunkard-invite", tap, game_id)
+            saved = await (await conn.execute("SELECT * FROM drunkard_games WHERE id = ?", (game_id,))).fetchone()
+            return self._drunkard_payload(saved, user_id)
+
+    async def accept_drunkard_invite(self, user_id: int, game_id: int) -> dict[str, Any]:
+        """Списывает одинаковые ставки и атомарно завершает принятую партию."""
+        from app.services.drunkard import simulate_game
+
+        now = int(time.time())
+        async with self.transaction() as conn:
+            row = await (await conn.execute(
+                "SELECT * FROM drunkard_games WHERE id = ?", (game_id,)
+            )).fetchone()
+            if row is None or int(row["opponent_id"] or 0) != user_id:
+                raise InvalidBet("Приглашение не найдено")
+            if str(row["status"]) == "finished":
+                return {"game": self._drunkard_payload(row, user_id), "balance": await self._balance_in(conn, user_id)}
+            if str(row["status"]) != "invited":
+                raise InvalidBet("Это приглашение уже закрыто")
+            if now - int(row["created_at"]) > 24 * 3600:
+                raise InvalidBet("Приглашение просрочено")
+            stake, deck_size = int(row["stake"]), int(row["deck_size"])
+            creator_id = int(row["creator_id"])
+            for player_id in (creator_id, user_id):
+                debit = await conn.execute(
+                    "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                    (stake, player_id, stake),
+                )
+                if debit.rowcount == 0:
+                    raise InsufficientFunds("Одному из игроков не хватает монет для одинаковой ставки")
+                await self._ledger(conn, player_id, -stake, "ставка · Пьяница · матч с игроком", now)
+            result = simulate_game(deck_size)
+            winner = result["winner"]
+            outcomes = {
+                player_id: "draw" if winner is None else "win" if winner == side else "loss"
+                for side, player_id in (("player", creator_id), ("opponent", user_id))
+            }
+            payouts = {
+                str(player_id): stake if outcome == "draw" else stake * 2 if outcome == "win" else 0
+                for player_id, outcome in outcomes.items()
+            }
+            result.update({
+                "mode": "invite", "stake": stake, "payouts": payouts,
+                "creator_name": str(row["creator_name"]),
+                "opponent_name": str(row["opponent_name"]),
+            })
+            for side, player_id in (("player", creator_id), ("opponent", user_id)):
+                outcome = outcomes[player_id]
+                payout = payouts[str(player_id)]
+                if payout:
+                    await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, player_id))
+                    await self._ledger(conn, player_id, payout, "выплата · Пьяница", now)
+                other_name = str(row["opponent_name"] if side == "player" else row["creator_name"])
+                await self._record_drunkard_casino(
+                    conn, player_id, other_name, stake, payout, outcome, result, now
+                )
+            await conn.execute(
+                "UPDATE drunkard_games SET status = 'finished', result_json = ?, updated_at = ?, settled_at = ? WHERE id = ?",
+                (json.dumps(result, ensure_ascii=False, separators=(",", ":")), now, now, game_id),
+            )
+            finished = await (await conn.execute("SELECT * FROM drunkard_games WHERE id = ?", (game_id,))).fetchone()
+            return {"game": self._drunkard_payload(finished, user_id), "balance": await self._balance_in(conn, user_id)}
+
+    async def close_drunkard_invite(self, user_id: int, game_id: int) -> dict[str, Any]:
+        """Создатель отменяет вызов, получатель отклоняет его; деньги ещё не списаны."""
+        now = int(time.time())
+        async with self.transaction() as conn:
+            row = await (await conn.execute(
+                "SELECT * FROM drunkard_games WHERE id = ? AND status = 'invited'", (game_id,)
+            )).fetchone()
+            if row is None:
+                raise InvalidBet("Приглашение уже закрыто")
+            if int(row["creator_id"]) == user_id:
+                status = "cancelled"
+            elif int(row["opponent_id"] or 0) == user_id:
+                status = "declined"
+            else:
+                raise InvalidBet("Это не ваше приглашение")
+            await conn.execute(
+                "UPDATE drunkard_games SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, game_id),
+            )
+            saved = await (await conn.execute("SELECT * FROM drunkard_games WHERE id = ?", (game_id,))).fetchone()
+            return self._drunkard_payload(saved, user_id)
 
     @staticmethod
     def _blackjack_payload(game_id: int, state: dict[str, Any], balance: int) -> dict[str, Any]:

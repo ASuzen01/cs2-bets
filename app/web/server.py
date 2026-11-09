@@ -104,6 +104,10 @@ def register_routes(
     app.router.add_post("/api/casino/play", api_casino_play)
     app.router.add_post("/api/blackjack/start", api_blackjack_start)
     app.router.add_post("/api/blackjack/action", api_blackjack_action)
+    app.router.add_post("/api/drunkard/play", api_drunkard_play)
+    app.router.add_post("/api/drunkard/invite", api_drunkard_invite)
+    app.router.add_post("/api/drunkard/accept", api_drunkard_accept)
+    app.router.add_post("/api/drunkard/close", api_drunkard_close)
     app.router.add_post("/api/ladder/start", api_ladder_start)
     app.router.add_post("/api/ladder/pick", api_ladder_pick)
     app.router.add_post("/api/ladder/continue", api_ladder_continue)
@@ -307,6 +311,7 @@ async def api_state(request: web.Request) -> web.Response:
             "blackjack": await db.blackjack_state(user_id),
             "ladder": await db.ladder_state(user_id),
             "crash": await db.crash_state(user_id),
+            "drunkard": await db.drunkard_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -1112,6 +1117,85 @@ async def api_blackjack_action(request: web.Request) -> web.Response:
     except InvalidBet as exc:
         return _bad(str(exc))
     return web.json_response({"ok": True, **result})
+
+
+async def api_drunkard_play(request: web.Request) -> web.Response:
+    """Полная серверная партия «Пьяница» против компьютера."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    try:
+        result = await db.play_drunkard_bot(
+            user_id,
+            _as_int(body.get("amount")),
+            _as_int(body.get("deck_size")),
+            body.get("token"),
+        )
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    return web.json_response({
+        "ok": True,
+        **result,
+        "drunkard": await db.drunkard_state(user_id),
+    })
+
+
+async def api_drunkard_invite(request: web.Request) -> web.Response:
+    """Отправляет сопернику вызов на ту же колоду и ставку."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    try:
+        game = await db.create_drunkard_invite(
+            user_id,
+            str(body.get("opponent") or ""),
+            _as_int(body.get("amount")),
+            _as_int(body.get("deck_size")),
+            body.get("token"),
+        )
+    except InsufficientFunds as exc:
+        return _bad(str(exc))
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "drunkard": await db.drunkard_state(user_id)})
+
+
+async def api_drunkard_accept(request: web.Request) -> web.Response:
+    """Принимает приглашение; ставки обоих игроков списываются вместе."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game_id = _as_int((await _json_body(request)).get("game_id"))
+    if game_id <= 0:
+        return _bad("Приглашение не найдено")
+    try:
+        result = await db.accept_drunkard_invite(user_id, game_id)
+    except InsufficientFunds as exc:
+        return _bad(str(exc))
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    return web.json_response({
+        "ok": True,
+        **result,
+        "drunkard": await db.drunkard_state(user_id),
+    })
+
+
+async def api_drunkard_close(request: web.Request) -> web.Response:
+    """Отменяет своё исходящее или отклоняет входящее приглашение."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    game_id = _as_int((await _json_body(request)).get("game_id"))
+    if game_id <= 0:
+        return _bad("Приглашение не найдено")
+    try:
+        game = await db.close_drunkard_invite(user_id, game_id)
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "drunkard": await db.drunkard_state(user_id)})
 
 
 async def api_ladder_start(request: web.Request) -> web.Response:

@@ -61,6 +61,14 @@
     ladderStake: 10,
     ladderBusy: false,
     crash: null,               // активный/последний полёт «Самолётика» с сервера
+    drunkard: null,            // приглашения и последняя партия «Пьяницы»
+    drunkardStake: 50,
+    drunkardDeckSize: 36,
+    drunkardMode: "bot",
+    drunkardOpponent: "",
+    drunkardBusy: false,
+    drunkardTyping: false,
+    drunkardToken: null,
     crashClock: null,          // серверный множитель, привязанный к монотонным часам браузера
     crashStake: 50,
     crashBusy: false,
@@ -90,6 +98,11 @@
   };
 
   const POLL_MS = 40000;  // как часто подтягиваем свежие кэфы, пока приложение открыто
+  window.setInterval(() => {
+    if (state.tab === "games" && state.game === "drunkard" && !state.drunkardBusy && !state.drunkardTyping) {
+      refreshState({ silent: true });
+    }
+  }, 15000);
 
   // ---------------------------------------------------------------- утилиты
   const $ = (sel) => document.querySelector(sel);
@@ -3365,6 +3378,7 @@
       state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
       state.crash = data.crash || null;
+      state.drunkard = data.drunkard || { incoming: [], outgoing: [], last: null };
       syncCrashClock(state.crash);
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
@@ -3386,7 +3400,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.drunkardBusy && !state.drunkardTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -4088,13 +4102,15 @@
       who.append(document.createTextNode(row.label));
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
-          : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
+          : row.game === "drunkard" ? "пьяница"
+            : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
             : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
               : row.game === "baccarat" ? "баккара" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
           : row.game === "baccarat" ? (row.outcome === "tie" ? "ничья" : row.outcome === "player" ? "игрок" : "банкир")
             : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
+            : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
               : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
@@ -4147,6 +4163,10 @@
       box.append(document.createTextNode("На каждом этаже выбери дверь: за одной спрятан приз. После удачного выбора можно забрать выплату или продолжить; промах завершает игру без выплаты. Число дверей растёт с этажом, выплаты учитывают вероятность прохождения."));
       box.append(el("span", "edge", "теоретический RTP 95,5 % · исход двери выбирает сервер"));
       box.append(el("p", null, "Положение приза генерируется сервером криптографическим генератором; браузер не выбирает и не меняет исход."));
+    } else if (game === "drunkard") {
+      box.append(el("b", null, "Пьяница · полная партия, колода пополам. "));
+      box.append(document.createTextNode("24 карты: 9–туз; 36: 6–туз; 52: 2–туз. Туз старший, масти равны. При равенстве каждый кладёт одну карту рубашкой вверх и открывает следующую; победитель забирает весь спор. Карты выигрыша перемешиваются перед тем, как уйти в низ колоды. Партия автоматически идёт до конца или до повторения позиции; при повторе — ничья и возврат ставки. Против игрока обе ставки одинаковы и списываются только после принятия вызова."));
+      box.append(el("p", null, "Победа возвращает свою ставку и ставку соперника (2×); поражение теряет ставку; ничья возвращает ставку. Колода и порядок перемешиваются на сервере."));
     } else if (game === "blackjack") {
       box.append(el("b", null, "Блэкджек · одна колода из 52 карт. "));
       box.append(document.createTextNode("Обычная победа — чистая прибыль 1:1, ничья возвращает ставку, натуральный блэкджек — 3:2. Дилер стоит на любой 17. Удвоение доступно на первых двух картах; одинаковые ранги можно разделить до четырёх рук. Тузы повторно не делятся, после сплита тузов выдаётся по одной карте. Страховка стоит половину исходной ставки и при блэкджеке дилера возвращает 3× сумму страховки."));
@@ -5397,6 +5417,226 @@
     update();
   }
 
+  async function drunkardRequest(action, payload) {
+    if (state.drunkardBusy) return;
+    state.drunkardBusy = true;
+    const host = $("#games");
+    renderDrunkard(host);
+    try {
+      const data = await api(`/api/drunkard/${action}`, { method: "POST", body: payload || {} });
+      if (data.drunkard) state.drunkard = data.drunkard;
+      if (data.balance !== undefined && state.user) {
+        state.user.balance = Number(data.balance);
+        setBalance(data.balance);
+      }
+      if (action === "play" || action === "invite") state.drunkardToken = null;
+      if (action === "play") toast("Партия завершена", "ok");
+      else if (action === "invite") toast("Вызов отправлен · монеты пока не списаны", "ok");
+      else if (action === "accept") toast("Партия завершена", "ok");
+      else toast("Приглашение закрыто");
+      haptic("light");
+      await refreshState({ silent: true });
+    } catch (err) {
+      if (err.status && err.status < 500) state.drunkardToken = null;
+      toast(err.message, "bad");
+      haptic("bad");
+    } finally {
+      state.drunkardBusy = false;
+      renderDrunkard(host);
+    }
+  }
+
+  function syncDrunkardActionButton() {
+    const button = $(".drunkard-play");
+    if (!button) return;
+    const amount = Number(state.drunkardStake);
+    const valid = Number.isInteger(amount) && amount >= 10 && amount <= balance();
+    const isInvite = state.drunkardMode === "invite";
+    button.disabled = state.drunkardBusy || !valid || (isInvite && !state.drunkardOpponent.trim());
+    button.textContent = state.drunkardBusy
+      ? (isInvite ? "Отправляем вызов…" : "Сдаём карты…")
+      : `${isInvite ? "Вызвать игрока" : "Играть с компьютером"} · ${money(Math.max(0, amount))}`;
+  }
+
+  function drunkardResultCard(game) {
+    if (!game || !game.result) return null;
+    const result = game.result;
+    const card = el("section", "drunkard-result");
+    const won = game.your_outcome === "win";
+    const draw = game.your_outcome === "draw";
+    card.append(el("div", "drunkard-result-kicker", "РЕЗУЛЬТАТ ПАРТИИ"));
+    card.append(el("h3", "drunkard-result-title" + (won ? " win" : draw ? " draw" : " loss"),
+      won ? "Победа!" : draw ? "Ничья · ставка возвращена" : `${game.other_name} победил`));
+    const payout = Number(game.your_payout || 0);
+    card.append(el("p", "drunkard-result-copy", won
+      ? `Выплата ${money(payout)} · чистый выигрыш ${money(Math.max(0, payout - Number(game.stake)))}`
+      : draw ? `Возврат ставки ${money(payout)}` : `Ставка ${money(game.stake)} проиграла`));
+    const faces = el("div", "drunkard-last-cards");
+    const myCard = game.your_side === "player" ? result.last_player_card : result.last_opponent_card;
+    const otherCard = game.your_side === "player" ? result.last_opponent_card : result.last_player_card;
+    [["ВЫ", myCard], [game.other_name || "СОПЕРНИК", otherCard]].forEach(([name, face]) => {
+      const playing = el("div", "drunkard-face");
+      playing.append(el("small", null, name), el("b", null, face || "—"));
+      faces.append(playing);
+    });
+    card.append(faces);
+    const myCards = game.your_side === "player" ? result.cards_player : result.cards_opponent;
+    const otherCards = game.your_side === "player" ? result.cards_opponent : result.cards_player;
+    card.append(el("div", "drunkard-result-stats",
+      `${Number(result.deck_size)} карт · ${Number(result.rounds)} раздач · ${Number(result.wars)} споров · у вас ${Number(myCards)} карт, у соперника ${Number(otherCards)}`));
+    return card;
+  }
+
+  function renderDrunkard(host) {
+    if (!host) return;
+    host.textContent = "";
+    host.append(gameBackButton());
+    const card = el("section", "drunkard-card");
+    card.append(el("div", "drunkard-kicker", "КАРТЫ · СЕРВЕРНАЯ СДАЧА"));
+    card.append(el("h2", "drunkard-title", "Пьяница"));
+    card.append(el("p", "drunkard-copy",
+      "Колода делится поровну. Старшая карта забирает спор; при равенстве — закрытая карта и новая открытая до победителя."));
+
+    const deckLabel = el("div", "drunkard-label", "Колода");
+    card.append(deckLabel);
+    const deckRow = el("div", "drunkard-choice-row");
+    [24, 36, 52].forEach((size) => {
+      const button = el("button", "drunkard-choice" + (Number(state.drunkardDeckSize) === size ? " active" : ""), `${size} карты`);
+      button.type = "button";
+      button.disabled = state.drunkardBusy;
+      button.addEventListener("click", () => {
+        state.drunkardDeckSize = size;
+        state.drunkardToken = null;
+        renderDrunkard(host);
+      });
+      deckRow.append(button);
+    });
+    card.append(deckRow);
+
+    const stakeLabel = el("div", "drunkard-label", "Ставка");
+    card.append(stakeLabel);
+    const presets = el("div", "drunkard-stakes");
+    [10, 50, 100, 250, 500].forEach((amount) => {
+      const button = el("button", "stake-chip" + (Number(state.drunkardStake) === amount ? " active" : ""), String(amount));
+      button.type = "button";
+      button.disabled = state.drunkardBusy || amount > balance();
+      button.addEventListener("click", () => {
+        state.drunkardStake = amount;
+        state.drunkardToken = null;
+        renderDrunkard(host);
+      });
+      presets.append(button);
+    });
+    card.append(presets);
+    card.append(el("div", "hint", "Или введи свою сумму"));
+    const custom = el("input", "stake-input drunkard-custom-stake");
+    custom.type = "number";
+    custom.inputMode = "numeric";
+    custom.min = "10";
+    custom.step = "1";
+    custom.value = String(state.drunkardStake || 50);
+    custom.disabled = state.drunkardBusy;
+    custom.setAttribute("aria-label", "Своя ставка");
+    custom.addEventListener("focus", () => { state.drunkardTyping = true; });
+    custom.addEventListener("input", () => {
+      const amount = Number(custom.value);
+      state.drunkardStake = Number.isFinite(amount) ? amount : 0;
+      state.drunkardToken = null;
+      syncDrunkardActionButton();
+    });
+    custom.addEventListener("blur", () => { state.drunkardTyping = false; });
+    card.append(custom);
+
+    const modeRow = el("div", "drunkard-choice-row drunkard-mode-row");
+    [["bot", "Компьютер"], ["invite", "Игрок по приглашению"]].forEach(([mode, label]) => {
+      const button = el("button", "drunkard-choice" + (state.drunkardMode === mode ? " active" : ""), label);
+      button.type = "button";
+      button.disabled = state.drunkardBusy;
+      button.addEventListener("click", () => {
+        state.drunkardMode = mode;
+        state.drunkardToken = null;
+        renderDrunkard(host);
+      });
+      modeRow.append(button);
+    });
+    card.append(modeRow);
+
+    const amount = Number(state.drunkardStake);
+    const stakeValid = Number.isInteger(amount) && amount >= 10 && amount <= balance();
+    if (state.drunkardMode === "bot") {
+      const play = el("button", "btn play drunkard-play", state.drunkardBusy
+        ? "Сдаём карты…" : `Играть с компьютером · ${money(Math.max(0, amount))}`);
+      play.type = "button";
+      play.disabled = state.drunkardBusy || !stakeValid;
+      play.addEventListener("click", () => drunkardRequest("play", {
+        amount, deck_size: state.drunkardDeckSize, token: state.drunkardToken || (state.drunkardToken = newToken()),
+      }));
+      card.append(play);
+    } else {
+      const opponent = el("input", "stake-input drunkard-opponent");
+      opponent.type = "text";
+      opponent.autocomplete = "off";
+      opponent.disabled = state.drunkardBusy;
+      opponent.placeholder = "@username или Telegram ID";
+      opponent.value = state.drunkardOpponent;
+      opponent.setAttribute("aria-label", "Username или Telegram ID соперника");
+      opponent.addEventListener("focus", () => { state.drunkardTyping = true; });
+      opponent.addEventListener("input", () => {
+        state.drunkardOpponent = opponent.value;
+        state.drunkardToken = null;
+        syncDrunkardActionButton();
+      });
+      opponent.addEventListener("blur", () => { state.drunkardTyping = false; });
+      card.append(opponent);
+      card.append(el("div", "hint", "Соперник должен хотя бы раз открыть бота. Ставка спишется у обоих только после принятия вызова."));
+      const invite = el("button", "btn play drunkard-play", state.drunkardBusy
+        ? "Отправляем вызов…" : `Вызвать игрока · ${money(Math.max(0, amount))}`);
+      invite.type = "button";
+      invite.disabled = state.drunkardBusy || !stakeValid || !state.drunkardOpponent.trim();
+      invite.addEventListener("click", () => drunkardRequest("invite", {
+        opponent: state.drunkardOpponent.trim(), amount,
+        deck_size: state.drunkardDeckSize, token: state.drunkardToken || (state.drunkardToken = newToken()),
+      }));
+      card.append(invite);
+    }
+    card.append(el("div", "drunkard-payout-note",
+      "Победа — выплата 2× ставки (включая её возврат); поражение — ставка теряется; ничья — возврат. Туз старший. Монеты виртуальные."));
+    host.append(card);
+
+    const stateData = state.drunkard || { incoming: [], outgoing: [], last: null };
+    (stateData.incoming || []).forEach((invite) => {
+      const panel = el("section", "drunkard-invite");
+      panel.append(el("b", null, `Вызов от ${invite.creator_name}`));
+      panel.append(el("p", null, `${invite.deck_size} карт · ставка ${money(invite.stake)}`));
+      const actions = el("div", "drunkard-actions");
+      const accept = el("button", "btn play", state.drunkardBusy ? "Подождите…" : "Принять · сыграть");
+      accept.type = "button";
+      accept.disabled = state.drunkardBusy || Number(invite.stake) > balance();
+      accept.addEventListener("click", () => drunkardRequest("accept", { game_id: invite.id }));
+      const decline = el("button", "btn ghost", "Отклонить");
+      decline.type = "button";
+      decline.disabled = state.drunkardBusy;
+      decline.addEventListener("click", () => drunkardRequest("close", { game_id: invite.id }));
+      actions.append(accept, decline);
+      panel.append(actions);
+      host.append(panel);
+    });
+    (stateData.outgoing || []).forEach((invite) => {
+      const panel = el("section", "drunkard-invite outgoing");
+      panel.append(el("b", null, `Ждём ответа: ${invite.opponent_name}`));
+      panel.append(el("p", null, `${invite.deck_size} карт · ставка ${money(invite.stake)} · монеты не списаны`));
+      const cancel = el("button", "btn ghost", "Отменить вызов");
+      cancel.type = "button";
+      cancel.disabled = state.drunkardBusy;
+      cancel.addEventListener("click", () => drunkardRequest("close", { game_id: invite.id }));
+      panel.append(cancel);
+      host.append(panel);
+    });
+    const result = drunkardResultCard(stateData.last);
+    if (result) host.append(result);
+    host.append(gameInfoNode("drunkard"));
+  }
+
   function renderGames() {
     clearCasinoDockTracking();
     const host = $("#games");
@@ -5428,6 +5668,10 @@
     if (state.game === "blackjack") {
       renderBlackjack(host);
       host.prepend(gameBackButton());
+      return;
+    }
+    if (state.game === "drunkard") {
+      renderDrunkard(host);
       return;
     }
     if (state.game === "crash") {
@@ -5747,7 +5991,7 @@
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.drunkardBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");
@@ -5772,7 +6016,7 @@
 
       if (node.dataset.backToGames !== undefined) {
         if (state.slotAutoRunning) stopSlotAutoSpin(true);
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.drunkardBusy) {
           toast("Дождись конца хода", "bad");
           return;
         }
