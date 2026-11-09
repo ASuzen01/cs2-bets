@@ -86,6 +86,7 @@
     riftfallQuick: false,
     riftfallFullscreen: null,
     riftfallAutoRunning: false,
+    riftfallAutoCount: 10,
     riftfallAutoRemaining: 0,
     riftfallAutoRunId: 0,
     casinoHistoryOpen: false,
@@ -5955,8 +5956,25 @@
   function syncRiftfallFullscreenHud(result) {
     const session = state.riftfallFullscreen;
     if (!session) return;
-    const amount = $("#riftImmersiveStake");
-    if (amount) amount.textContent = money(stakeFor("riftfall"));
+    const info = stakeState("riftfall");
+    const amount = $("#riftImmersiveStakeInput");
+    if (amount && document.activeElement !== amount) amount.value = String(info.raw || info.min);
+    const stakeLocked = state.casinoBusy || state.riftfallAutoRunning;
+    document.querySelectorAll("#riftImmersivePresets .stake-chip").forEach((chip) => {
+      const value = Number(chip.dataset.stake);
+      const isAll = chip.dataset.riftStakeAll === "true";
+      chip.classList.toggle("active", isAll ? info.raw === Math.floor(balance()) : value === info.raw);
+      chip.disabled = stakeLocked || (isAll ? balance() < info.min : value > balance());
+    });
+    const minus = $("#riftImmersiveStakeMinus");
+    const plus = $("#riftImmersiveStakePlus");
+    if (minus) minus.disabled = stakeLocked || info.raw <= info.min;
+    if (plus) plus.disabled = stakeLocked || info.raw >= balance();
+    if (amount) {
+      amount.disabled = stakeLocked;
+      amount.max = String(Math.max(info.min, Math.floor(balance())));
+      amount.setAttribute("aria-invalid", String(!stakeOk("riftfall")));
+    }
     const balanceNode = $("#riftImmersiveBalance");
     if (balanceNode) balanceNode.textContent = money(balance());
     const spin = $("#riftImmersiveSpin");
@@ -5964,14 +5982,21 @@
       spin.disabled = state.casinoBusy || state.riftfallAutoRunning || !stakeOk("riftfall");
       spin.classList.toggle("busy", state.casinoBusy);
       spin.innerHTML = "";
-      spin.append(riftfallHudIcon("spin"), el("span", null, state.casinoBusy ? "РАУНД ИДЁТ" : "КРУТИТЬ"));
+      spin.append(riftfallHudIcon("spin"), el("span", null,
+        state.casinoBusy ? "РАУНД ИДЁТ" : `КРУТИТЬ · ${money(stakeFor("riftfall"))}`));
     }
+    document.querySelectorAll("#riftImmersiveAutoCounts [data-rift-auto-count]").forEach((button) => {
+      const selected = Number(button.dataset.riftAutoCount) === state.riftfallAutoCount;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.disabled = stakeLocked;
+    });
     const quick = $("#riftImmersiveQuick");
     if (quick) {
       quick.disabled = state.casinoBusy;
       quick.classList.toggle("active", state.riftfallQuick);
       quick.setAttribute("aria-pressed", String(state.riftfallQuick));
-      quick.replaceChildren(riftfallHudIcon("quick"), el("span", null, state.riftfallQuick ? "Быстрый · вкл" : "Быстрый спин"));
+      quick.textContent = state.riftfallQuick ? "Быстрый спин · ВКЛ" : "Быстрый спин";
     }
     const auto = $("#riftImmersiveAuto");
     if (auto) {
@@ -5979,11 +6004,32 @@
         || (!state.riftfallAutoRunning && !stakeOk("riftfall"));
       auto.classList.toggle("active", state.riftfallAutoRunning);
       auto.setAttribute("aria-pressed", String(state.riftfallAutoRunning));
-      auto.replaceChildren(
-        riftfallHudIcon("auto"),
-        el("span", null, state.riftfallAutoRunning
-          ? `Стоп · ${state.riftfallAutoRemaining}` : "Автоспин · 10")
-      );
+      const countLabel = state.riftfallAutoCount === 0 ? "∞" : String(state.riftfallAutoCount);
+      const remaining = state.riftfallAutoCount === 0 ? "∞" : String(state.riftfallAutoRemaining);
+      auto.textContent = state.riftfallAutoRunning ? `Стоп · ${remaining}` : `Автоспин · ${countLabel}`;
+    }
+    const autoInfo = $("#riftImmersiveAutoInfo");
+    if (autoInfo) {
+      const countLabel = state.riftfallAutoCount === 0 ? "∞" : String(state.riftfallAutoCount);
+      autoInfo.textContent = state.riftfallAutoRunning
+        ? state.riftfallAutoCount === 0 ? "Автоспин без лимита" : `Осталось спинов: ${state.riftfallAutoRemaining}`
+        : `Серия: ${countLabel} платных спинов`;
+    }
+    if (result && !state.casinoBusy) {
+      const currentSummary = $("#riftImmersiveSummary");
+      if (currentSummary) {
+        const freshSummary = summaryNode();
+        freshSummary.id = "riftImmersiveSummary";
+        currentSummary.replaceWith(freshSummary);
+      }
+      const currentHistory = $("#riftImmersiveHistory");
+      if (currentHistory) {
+        const wasOpen = currentHistory.open;
+        const freshHistory = historyNode();
+        freshHistory.id = "riftImmersiveHistory";
+        freshHistory.open = wasOpen;
+        currentHistory.replaceWith(freshHistory);
+      }
     }
     const close = $("#riftImmersiveClose");
     if (close) close.disabled = state.casinoBusy || state.riftfallAutoRunning;
@@ -6036,31 +6082,97 @@
     close.setAttribute("aria-label", "Закрыть полноэкранный слот");
     close.append(riftfallHudIcon("close"), el("span", null, "ВЕРНУТЬСЯ"));
     close.addEventListener("click", closeRiftfallFullscreen);
-    const controlBrand = el("div", "rift-immersive-control-brand");
-    controlBrand.append(el("span", null, "СЕССИЯ · 01"), el("b", null, "PRIVATE TABLE"));
-
+    const settingsScroll = el("div", "rift-immersive-settings-scroll");
     const betPanel = el("div", "rift-immersive-bet-panel");
     betPanel.append(el("span", "rift-immersive-label", "СТАВКА ЗА СПИН"));
+    const presets = el("div", "rift-immersive-presets");
+    presets.id = "riftImmersivePresets";
+    const { min } = casinoLimits();
+    pickPresets(min, Number.POSITIVE_INFINITY, 4).forEach((value) => {
+      const chip = el("button", "stake-chip");
+      chip.type = "button";
+      chip.dataset.stake = String(value);
+      chip.append(el("span", "rift-immersive-chip-value", money(value).replace(/ 🪙$/, "")), coinIcon());
+      chip.addEventListener("click", () => {
+        if (state.casinoBusy || state.riftfallAutoRunning) return;
+        state.casinoStake.riftfall = value;
+        haptic("light");
+        syncStakeUI("riftfall");
+        syncRiftfallFullscreenHud();
+      });
+      presets.append(chip);
+    });
+    const allChip = el("button", "stake-chip rift-immersive-all", "Всё");
+    allChip.type = "button";
+    allChip.dataset.riftStakeAll = "true";
+    allChip.addEventListener("click", () => {
+      if (state.casinoBusy || state.riftfallAutoRunning) return;
+      state.casinoStake.riftfall = Math.floor(balance());
+      haptic("light");
+      syncStakeUI("riftfall");
+      syncRiftfallFullscreenHud();
+    });
+    presets.append(allChip);
+
     const betControl = el("div", "rift-immersive-bet-control");
     const decrease = el("button", "rift-bet-adjust", "−");
+    decrease.id = "riftImmersiveStakeMinus";
     decrease.type = "button";
     decrease.setAttribute("aria-label", "Уменьшить ставку");
     decrease.addEventListener("click", () => adjustRiftfallStake(-1));
-    const betValue = el("b", "rift-immersive-bet", money(stakeFor("riftfall")));
-    betValue.id = "riftImmersiveStake";
+    const betValue = el("input", "rift-immersive-bet stake-input");
+    betValue.id = "riftImmersiveStakeInput";
+    betValue.type = "number";
+    betValue.inputMode = "numeric";
+    betValue.autocomplete = "off";
+    betValue.min = String(min);
+    betValue.max = String(Math.max(min, Math.floor(balance())));
+    betValue.value = String(stakeFor("riftfall"));
+    betValue.setAttribute("aria-label", "Своя сумма ставки в Золотом разломе");
+    betValue.addEventListener("focus", () => { state.casinoTyping = true; });
+    betValue.addEventListener("input", () => {
+      const parsed = Number.parseInt(betValue.value, 10);
+      state.casinoStake.riftfall = Number.isFinite(parsed) ? parsed : 0;
+      syncStakeUI("riftfall", { keepInput: true });
+      syncRiftfallFullscreenHud();
+    });
+    betValue.addEventListener("blur", () => {
+      state.casinoTyping = false;
+      state.casinoStake.riftfall = clampStake(state.casinoStake.riftfall, min, casinoLimits().max);
+      betValue.value = String(state.casinoStake.riftfall);
+      syncStakeUI("riftfall");
+      syncRiftfallFullscreenHud();
+    });
+    betValue.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); betValue.blur(); }
+    });
     const increase = el("button", "rift-bet-adjust", "+");
+    increase.id = "riftImmersiveStakePlus";
     increase.type = "button";
     increase.setAttribute("aria-label", "Увеличить ставку");
     increase.addEventListener("click", () => adjustRiftfallStake(1));
     betControl.append(decrease, betValue, increase);
-    betPanel.append(betControl);
+    betPanel.append(presets, betControl);
 
-    const spin = el("button", "rift-immersive-spin");
-    spin.id = "riftImmersiveSpin";
-    spin.type = "button";
-    spin.addEventListener("click", () => playCasinoRound());
-    const actions = el("div", "rift-immersive-actions");
-    const quick = el("button", "rift-immersive-action");
+    const autoPanel = el("div", "slot-auto-panel rift-immersive-auto-panel");
+    const counts = el("div", "slot-auto-counts");
+    counts.id = "riftImmersiveAutoCounts";
+    counts.append(el("span", null, "Серия"));
+    [[10, "10"], [25, "25"], [50, "50"], [0, "∞"]].forEach(([count, label]) => {
+      const button = el("button", "slot-auto-count", label);
+      button.type = "button";
+      button.dataset.riftAutoCount = String(count);
+      button.setAttribute("aria-pressed", String(state.riftfallAutoCount === count));
+      button.addEventListener("click", () => {
+        if (state.casinoBusy || state.riftfallAutoRunning) return;
+        state.riftfallAutoCount = count;
+        haptic("light");
+        syncRiftfallFullscreenHud();
+      });
+      counts.append(button);
+    });
+    const actions = el("div", "slot-auto-actions");
+    const quick = el("button", "slot-quick-button", "Быстрый спин");
     quick.id = "riftImmersiveQuick";
     quick.type = "button";
     quick.addEventListener("click", () => {
@@ -6068,20 +6180,41 @@
       haptic("light");
       syncRiftfallFullscreenHud();
     });
-    const auto = el("button", "rift-immersive-action");
+    const auto = el("button", "slot-auto-button", "Автоспин · 10");
     auto.id = "riftImmersiveAuto";
     auto.type = "button";
     auto.addEventListener("click", startRiftfallAutoSpin);
     actions.append(quick, auto);
-    const result = el("div", "rift-immersive-result");
-    result.id = "riftImmersiveResult";
-    result.textContent = "ГОТОВ К СПИНУ";
+    const autoInfo = el("div", "slot-auto-info", "Серия: 10 платных спинов");
+    autoInfo.id = "riftImmersiveAutoInfo";
+    autoPanel.append(counts, actions, autoInfo);
+
+    const extra = el("details", "rift-immersive-details");
+    const extraSummary = el("summary", null, "ИСТОРИЯ И ПРАВИЛА");
+    const extraContent = el("div", "rift-immersive-details-content");
+    const sessionSummary = summaryNode();
+    sessionSummary.id = "riftImmersiveSummary";
+    const sessionHistory = historyNode();
+    sessionHistory.id = "riftImmersiveHistory";
+    const sessionRules = gameInfoNode("riftfall");
+    extraContent.append(sessionSummary, sessionHistory, sessionRules);
+    extra.append(extraSummary, extraContent);
+
     const balanceRow = el("div", "rift-immersive-balance");
     balanceRow.append(el("span", null, "БАЛАНС"));
     const balanceValue = el("b", null, money(balance()));
     balanceValue.id = "riftImmersiveBalance";
     balanceRow.append(balanceValue);
-    controls.append(close, controlBrand, betPanel, spin, actions, balanceRow);
+    settingsScroll.append(betPanel, autoPanel, extra, balanceRow);
+
+    const spin = el("button", "rift-immersive-spin");
+    spin.id = "riftImmersiveSpin";
+    spin.type = "button";
+    spin.addEventListener("click", () => playCasinoRound());
+    const result = el("div", "rift-immersive-result");
+    result.id = "riftImmersiveResult";
+    result.textContent = "ГОТОВ К СПИНУ";
+    controls.append(close, settingsScroll, spin);
     stage.append(result);
     overlay.append(stage, controls);
     document.body.append(overlay);
@@ -6463,13 +6596,13 @@
     }
     if (state.casinoBusy || !stakeOk("riftfall")) return;
     state.riftfallAutoRunning = true;
-    state.riftfallAutoRemaining = 10;
+    state.riftfallAutoRemaining = state.riftfallAutoCount;
     const runId = ++state.riftfallAutoRunId;
     syncRiftfallFullscreenHud();
     (async () => {
       try {
         while (state.riftfallAutoRunning && runId === state.riftfallAutoRunId
-          && state.riftfallAutoRemaining > 0) {
+          && (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0)) {
           const played = await playCasinoRound({ auto: true });
           if (played && typeof played === "object" && played.retryAfter) {
             toast(`Автоспин продолжится через ${played.retryAfter} сек`);
@@ -6477,9 +6610,9 @@
             continue;
           }
           if (!played || !state.riftfallAutoRunning || runId !== state.riftfallAutoRunId) break;
-          state.riftfallAutoRemaining -= 1;
+          if (state.riftfallAutoCount > 0) state.riftfallAutoRemaining -= 1;
           syncRiftfallFullscreenHud();
-          if (state.riftfallAutoRemaining > 0) await pause(1600);
+          if (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0) await pause(1600);
         }
       } finally {
         if (runId === state.riftfallAutoRunId) {
