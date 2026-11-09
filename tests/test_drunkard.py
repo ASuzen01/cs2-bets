@@ -56,14 +56,18 @@ def test_a_normal_user_action_reveals_one_pair_not_the_whole_game() -> None:
 
 
 @pytest.mark.parametrize(
-    ("player_value", "opponent_value", "expected"),
-    [(2, 14, "player"), (14, 2, "opponent"), (3, 2, "player"), (14, 13, "player")],
+    ("deck_size", "player_value", "opponent_value", "expected"),
+    [
+        (52, 14, 2, "player"), (52, 2, 14, "opponent"),
+        (36, 14, 6, "player"), (24, 14, 9, "player"),
+        (52, 3, 2, "player"), (52, 14, 13, "player"),
+    ],
 )
-def test_two_beats_ace_and_other_ranks_keep_normal_order(
-    player_value: int, opponent_value: int, expected: str,
+def test_ace_beats_the_lowest_card_and_other_ranks_keep_order(
+    deck_size: int, player_value: int, opponent_value: int, expected: str,
 ) -> None:
     state = {
-        "version": 1, "deck_size": 52,
+        "version": 1, "deck_size": deck_size,
         "hands": {
             "player": [card(player_value, f"{player_value}♠")],
             "opponent": [card(opponent_value, f"{opponent_value}♥")],
@@ -78,7 +82,7 @@ def test_two_beats_ace_and_other_ranks_keep_normal_order(
     assert len(state["hands"][expected]) == 2
 
 
-def test_two_beats_ace_as_the_face_up_war_tiebreak() -> None:
+def test_ace_beats_two_as_the_face_up_war_tiebreak() -> None:
     state = {
         "version": 1, "deck_size": 8,
         "hands": {
@@ -95,7 +99,7 @@ def test_two_beats_ace_as_the_face_up_war_tiebreak() -> None:
         {"player": "К♠", "opponent": "К♥"},
         {"player": "2♠", "opponent": "Т♥"},
     ]
-    assert state["last_battle"]["winner"] == "player"
+    assert state["last_battle"]["winner"] == "opponent"
 
 
 def test_tie_enters_war_and_repeats_until_a_winner() -> None:

@@ -23,7 +23,7 @@ def test_game_catalog_and_controls_expose_requested_options() -> None:
     assert 'drunkardRequest("invite"' in js and 'drunkardRequest("accept"' in js
     assert 'drunkardRequest("step"' in js and "Открыть следующие карты" in js
     assert "ПО ОДНОЙ КАРТЕ РУБАШКОЙ ВВЕРХ" in js
-    assert "двойка бьёт туза" in js
+    assert "Туз старше всех карт" in js
 
 
 @pytest.fixture

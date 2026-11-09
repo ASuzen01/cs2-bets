@@ -1,8 +1,8 @@
 """Серверные правила игры «Пьяница».
 
-Полная колода делится поровну. Старшая карта забирает спор; при равенстве
-каждый участник кладёт карту рубашкой вверх и открывает следующую. В 52-карточной
-колоде двойка бьёт туза, остальные ранги сравниваются по обычному порядку.
+Полная колода делится поровну. Туз старше всех карт, включая младшую карту
+каждой колоды: 2 в колоде на 52 карты, 6 в колоде на 36 карт, 9 в колоде на 24.
+При равенстве каждый участник кладёт карту рубашкой вверх и открывает следующую.
 """
 
 from __future__ import annotations
@@ -32,15 +32,9 @@ def _deck(size: int) -> list[dict[str, Any]]:
 
 
 def _compare_values(first: int, second: int) -> int:
-    """Compare ranks: 2 beats Ace; all other ranks use normal numeric order."""
+    """Compare ranks in order: Ace (14) is high; suits do not break ties."""
     left, right = int(first), int(second)
-    if left == right:
-        return 0
-    if left == 2 and right == 14:
-        return 1
-    if left == 14 and right == 2:
-        return -1
-    return 1 if left > right else -1
+    return (left > right) - (left < right)
 
 
 def _winner_for(first: dict[str, Any], second: dict[str, Any]) -> str | None:
