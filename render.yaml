@@ -4,8 +4,9 @@ services:
     runtime: docker
     plan: free
     region: frankfurt
+    branch: main
     healthCheckPath: /ping        # лёгкая проверка процесса без ожидания БД
-    autoDeploy: true
+    autoDeployTrigger: commit
     envVars:
       - key: RUN_MODE
         value: webhook
