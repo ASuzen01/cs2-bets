@@ -131,9 +131,14 @@
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("viewBox", "0 0 20 20");
     svg.setAttribute("aria-hidden", "true");
-    const use = document.createElementNS(SVG_NS, "use");
-    use.setAttribute("href", "#i-coin");
-    svg.append(use);
+    const add = (tag, attrs) => svg.append(svgNode(tag, attrs));
+    add("circle", { cx: 10, cy: 10, r: 8.5, fill: "#b58b3e", stroke: "#f0d78e", "stroke-width": 1.2 });
+    add("circle", { cx: 10, cy: 10, r: 6.6, fill: "none", stroke: "#735622", "stroke-width": .8 });
+    add("circle", { cx: 10, cy: 7.2, r: 2.25, fill: "#304333", stroke: "#d3c17f", "stroke-width": .45 });
+    add("circle", { cx: 7.3, cy: 10, r: 2.25, fill: "#40563a", stroke: "#d3c17f", "stroke-width": .45 });
+    add("circle", { cx: 12.7, cy: 10, r: 2.25, fill: "#40563a", stroke: "#d3c17f", "stroke-width": .45 });
+    add("circle", { cx: 10, cy: 12.7, r: 2.25, fill: "#304333", stroke: "#d3c17f", "stroke-width": .45 });
+    add("path", { d: "M10 12.5v3", fill: "none", stroke: "#40563a", "stroke-width": 1.4, "stroke-linecap": "round" });
     label.append(svg);
     return label;
   }
@@ -5060,20 +5065,64 @@
     if (state.casinoBusy) lockTable(true);
   }
 
-  function slotSymbolIcon(config, code) {
-    const symbol = config.symbols.find((item) => item.code === code);
-    return symbol ? symbol.icon : "·";
+  function slotSymbolIcon(code) {
+    const svg = svgNode("svg", {
+      class: `slot-symbol slot-symbol-svg icon-${code}`,
+      viewBox: "0 0 64 64",
+      role: "presentation",
+      "aria-hidden": "true",
+    });
+    const add = (tag, attrs) => svg.append(svgNode(tag, attrs));
+    if (code === "cherry") {
+      add("path", { d: "M31 30C29 20 28 13 22 8M32 30c7-10 14-13 22-12", fill: "none", stroke: "#b99a58", "stroke-width": 3.5, "stroke-linecap": "round" });
+      add("path", { d: "M36 15C42 5 53 6 59 9 55 18 47 23 36 20z", fill: "#78915a", stroke: "#c3c985", "stroke-width": 1.5, "stroke-linejoin": "round" });
+      add("circle", { cx: 23, cy: 41, r: 14, fill: "#942e39", stroke: "#e37a69", "stroke-width": 2 });
+      add("circle", { cx: 43, cy: 42, r: 14, fill: "#b63840", stroke: "#ef9180", "stroke-width": 2 });
+      add("ellipse", { cx: 18, cy: 36, rx: 3, ry: 5, fill: "#f6b1a0", opacity: .8 });
+      add("ellipse", { cx: 38, cy: 37, rx: 3, ry: 5, fill: "#ffc0a3", opacity: .8 });
+    } else if (code === "lemon") {
+      add("path", { d: "M14 33c7-11 19-18 33-12 5 2 9 8 8 14-2 13-15 23-29 21-12-2-19-12-12-23z", fill: "#d5ae4e", stroke: "#f2d782", "stroke-width": 2.4, "stroke-linejoin": "round" });
+      add("path", { d: "M14 34c-5 2-8 1-10-2 3-5 7-7 12-6M53 33c5 1 8 0 10-3-3-4-7-5-12-3", fill: "#d6b557", stroke: "#f2d782", "stroke-width": 2, "stroke-linejoin": "round" });
+      add("path", { d: "M30 20C33 8 46 6 56 9c-4 10-12 16-24 15z", fill: "#6c8650", stroke: "#a5b47a", "stroke-width": 1.7, "stroke-linejoin": "round" });
+      add("path", { d: "M22 39c6-8 16-12 25-12", fill: "none", stroke: "#fae6a0", "stroke-width": 2, opacity: .65, "stroke-linecap": "round" });
+    } else if (code === "bell") {
+      add("path", { d: "M17 46c4-5 5-11 5-21 0-8 4-14 10-14s10 6 10 14c0 10 1 16 5 21z", fill: "#b78a39", stroke: "#f1d37e", "stroke-width": 2.5, "stroke-linejoin": "round" });
+      add("path", { d: "M15 46h34v5H15z", fill: "#826029", stroke: "#e5c46b", "stroke-width": 2, "stroke-linejoin": "round" });
+      add("path", { d: "M27 16c2-3 6-3 9 0M32 8v3", fill: "none", stroke: "#f8e4a3", "stroke-width": 2, "stroke-linecap": "round" });
+      add("circle", { cx: 32, cy: 53, r: 4.5, fill: "#d0a54b", stroke: "#f5d982", "stroke-width": 1.5 });
+      add("path", { d: "M22 35c1-6 1-10 3-13", fill: "none", stroke: "#f6dfa0", "stroke-width": 2, opacity: .7, "stroke-linecap": "round" });
+    } else if (code === "bar") {
+      add("rect", { x: 5, y: 13, width: 54, height: 38, rx: 7, fill: "#362b18", stroke: "#d3b66a", "stroke-width": 2.5 });
+      add("rect", { x: 9, y: 17, width: 46, height: 30, rx: 4, fill: "none", stroke: "#816b3a", "stroke-width": 1 });
+      add("text", { x: 32, y: 39, fill: "#f3dfa0", "font-family": "Georgia, serif", "font-size": 19, "font-weight": 700, "letter-spacing": 1, "text-anchor": "middle" });
+      svg.lastElementChild.textContent = "BAR";
+    } else if (code === "seven") {
+      add("path", { d: "M15 10h34v9L30 55H17l18-33H15z", fill: "#9aaeb0", stroke: "#d8e3d9", "stroke-width": 2.5, "stroke-linejoin": "round" });
+      add("path", { d: "M20 15h24M28 48l7-13", fill: "none", stroke: "#eff2df", "stroke-width": 2, opacity: .75, "stroke-linecap": "round" });
+      add("path", { d: "M8 57h48", fill: "none", stroke: "#71837c", "stroke-width": 2, "stroke-linecap": "round" });
+    } else if (code === "diamond") {
+      add("path", { d: "m8 23 10-12h28l10 12-24 31z", fill: "#527a83", stroke: "#dce9d9", "stroke-width": 2.5, "stroke-linejoin": "round" });
+      add("path", { d: "m8 23 18 0 6 31M56 23H38l-6 31M18 11l8 12 6-12 6 12 8-12", fill: "none", stroke: "#b8d5d1", "stroke-width": 1.8, "stroke-linejoin": "round" });
+      add("path", { d: "m18 11 14 43 14-43", fill: "none", stroke: "#f4edcf", "stroke-width": 1, opacity: .7 });
+    } else if (code === "scatter") {
+      add("path", { d: "M32 5 39 21 56 14 48 30 61 38 44 41 47 58 32 47 17 58 20 41 3 38 16 30 8 14 25 21z", fill: "#945c40", stroke: "#f0c28c", "stroke-width": 2.3, "stroke-linejoin": "round" });
+      add("circle", { cx: 32, cy: 33, r: 9, fill: "#402b25", stroke: "#f0ce9c", "stroke-width": 1.6 });
+      add("path", { d: "M32 27v12M28 33h8", fill: "none", stroke: "#fff0c6", "stroke-width": 2, "stroke-linecap": "round" });
+    } else {
+      add("circle", { cx: 32, cy: 32, r: 20, fill: "#6b765c", stroke: "#d2c28f", "stroke-width": 2 });
+    }
+    return svg;
   }
 
   function slotCellNode(config, code, row, reel, hit) {
+    const symbol = config.symbols.find((item) => item.code === code);
     const cell = el("div", "slot-cell" + (hit ? " hit" : ""));
     cell.dataset.row = String(row);
     cell.dataset.reel = String(reel);
     cell.dataset.symbol = code;
-    const icon = el("span", "slot-symbol", slotSymbolIcon(config, code));
-    if (code === "bar") icon.classList.add("bar-symbol");
+    cell.setAttribute("aria-label", symbol ? symbol.name : code);
     if (code === "scatter") cell.classList.add("scatter-cell");
-    cell.append(icon);
+    cell.append(slotSymbolIcon(code));
     return cell;
   }
 
@@ -5262,7 +5311,9 @@
     const table = el("div", "slot-paytable-list");
     config.symbols.filter((item) => item.code !== "scatter").forEach((symbol) => {
       const row = el("div", "slot-paytable-row");
-      row.append(el("span", "slot-pay-symbol", symbol.icon + " " + symbol.name));
+      const label = el("span", "slot-pay-symbol");
+      label.append(slotSymbolIcon(symbol.code), el("span", null, symbol.name));
+      row.append(label);
       const pay = config.paytable[symbol.code];
       row.append(el("span", "slot-pay-values", `×${Number(pay["3"]).toFixed(2)} · ×${Number(pay["4"]).toFixed(2)} · ×${Number(pay["5"]).toFixed(2)}`));
       table.append(row);
@@ -6034,8 +6085,13 @@
       if (outcome) stage.append(outcome);
       if (back) back.remove();
       const scroll = el("div", "casino-immersive-scroll");
-      [chest, stake, meta, summary, history, info]
-        .filter(Boolean).forEach((node) => scroll.append(node));
+      [chest, stake].filter(Boolean).forEach((node) => scroll.append(node));
+      if (meta || summary || history || info) {
+        const extra = el("details", "casino-immersive-secondary");
+        extra.append(el("summary", null, "ИСТОРИЯ И ПРАВИЛА"));
+        [meta, summary, history, info].filter(Boolean).forEach((node) => extra.append(node));
+        scroll.append(extra);
+      }
       controls.append(scroll);
       [play, auto].filter(Boolean).forEach((node) => controls.append(node));
       card.classList.add("casino-immersive-layout");
@@ -6088,9 +6144,16 @@
       session.overlay.style.setProperty(`--rift-tg-safe-${side}`, `${total}px`);
     });
     const platform = String(telegram && telegram.platform || "").toLowerCase();
-    if ((platform === "ios" || platform.startsWith("android"))
-      && parseFloat(session.overlay.style.getPropertyValue("--rift-tg-safe-top")) < 96) {
-      session.overlay.style.setProperty("--rift-tg-safe-top", "96px");
+    if (platform === "ios" || platform.startsWith("android")) {
+      if (parseFloat(session.overlay.style.getPropertyValue("--rift-tg-safe-top")) < 96) {
+        session.overlay.style.setProperty("--rift-tg-safe-top", "96px");
+      }
+      // In portrait CSS rotation, the device bottom inset becomes the opposite
+      // landscape edge. Keep a home-indicator gutter even when Telegram reports 0.
+      if (platform === "ios"
+        && parseFloat(session.overlay.style.getPropertyValue("--rift-tg-safe-bottom")) < 34) {
+        session.overlay.style.setProperty("--rift-tg-safe-bottom", "34px");
+      }
     }
     session.overlay.classList.toggle("tg-native-fullscreen", Boolean(telegram && telegram.isFullscreen));
     session.overlay.classList.add("tg-safe-insets");

@@ -1262,8 +1262,10 @@ button:focus-visible{outline-color:#d6b66d}
 .slot-machine-frame{padding:7px;border:1px solid rgba(226,198,126,.48);border-radius:11px;background:#0e1313;box-shadow:inset 0 0 22px rgba(0,0,0,.72)}
 .slot-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(3,minmax(53px,1fr));gap:3px;overflow:hidden;border-radius:6px;background:#121918}
 .slot-cell{position:relative;display:grid;place-items:center;min-width:0;min-height:53px;overflow:hidden;border:1px solid rgba(217,194,133,.12);border-radius:6px;background:linear-gradient(150deg,#25302d,#171c1b 72%);color:#f3e4b7;transition:background .15s,border-color .15s,box-shadow .15s}
-.slot-symbol{display:block;font-size:clamp(22px,7.2vw,34px);line-height:1;text-shadow:0 2px 7px rgba(0,0,0,.42);user-select:none}
-.slot-symbol.bar-symbol{padding:4px 5px;border:1px solid #b69b5b;border-radius:4px;color:#ead594;background:linear-gradient(145deg,#594622,#292318);font-size:clamp(11px,3.2vw,15px);font-style:italic;font-weight:1000;letter-spacing:.04em}
+.slot-symbol{display:block;width:clamp(28px,7.8vw,48px);height:clamp(28px,7.8vw,48px);overflow:visible;filter:drop-shadow(0 3px 4px rgba(0,0,0,.42));user-select:none}
+.slot-symbol.icon-bar{width:min(76%,52px);height:auto;max-height:38px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))}
+.slot-symbol.icon-seven{width:clamp(26px,7vw,44px);height:clamp(26px,7vw,44px)}
+.slot-symbol.icon-scatter{width:clamp(25px,6.7vw,40px);height:clamp(25px,6.7vw,40px)}
 .slot-cell.rolling{filter:blur(.6px) brightness(1.18);background:#30352d}
 .slot-cell.hit{z-index:1;border-color:#e8cb78;background:linear-gradient(145deg,rgba(218,186,97,.35),rgba(90,75,38,.52));box-shadow:inset 0 0 15px rgba(241,211,119,.3),0 0 12px rgba(235,196,94,.27);animation:slotHit .6s ease-in-out infinite alternate}
 .slot-cell.scatter-cell{border-color:rgba(214,145,108,.52);background:linear-gradient(145deg,#402a25,#241c1b)}
@@ -1279,7 +1281,10 @@ button:focus-visible{outline-color:#d6b66d}
 .slot-paytable summary::-webkit-details-marker{display:none}.slot-paytable summary::after{content:"＋";float:right;color:#a99054}.slot-paytable[open] summary::after{content:"−"}
 .slot-paytable-list{display:grid;gap:4px;padding:0 10px 10px}
 .slot-paytable-row{display:flex;align-items:center;justify-content:space-between;gap:5px;padding:7px 8px;border-radius:7px;background:rgba(255,255,255,.025)}
-.slot-pay-symbol{color:#ddd2b3;font-size:10px;font-weight:800}.slot-pay-values{color:#c5ad70;font-size:9px;font-variant-numeric:tabular-nums;font-weight:800;white-space:nowrap}
+.slot-pay-symbol{display:flex;align-items:center;gap:6px;color:#ddd2b3;font-size:10px;font-weight:800}
+.slot-pay-symbol .slot-symbol{width:20px;height:20px;max-width:20px;max-height:20px}
+.slot-pay-symbol .slot-symbol.icon-bar{width:28px;max-width:28px;max-height:18px}
+.slot-pay-values{color:#c5ad70;font-size:9px;font-variant-numeric:tabular-nums;font-weight:800;white-space:nowrap}
 @media(max-width:360px){.slot-game-card{padding:15px 11px}.slot-grid{grid-template-rows:repeat(3,minmax(47px,1fr));gap:2px}.slot-cell{min-height:47px}.slot-machine-shell{padding:7px 6px 4px}.slot-machine-frame{padding:5px}.slot-pay-values{font-size:8px}}
 /* Reels are continuous, clipped strips: each visible cell always contains a symbol. */
 .slot-grid{grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch}
@@ -1448,13 +1453,28 @@ button:focus-visible{outline-color:#d6b66d}
 .casino-immersive{position:fixed;z-index:10000;inset:0;overflow:hidden;padding:10px 12px;background:radial-gradient(ellipse at 38% 42%,rgba(125,102,57,.13),transparent 48%),linear-gradient(120deg,#0b1012,#111716 56%,#090d0e);color:#eee6d1;box-sizing:border-box;overscroll-behavior:contain;touch-action:manipulation}
 .casino-immersive.tg-safe-insets{padding-top:max(10px,var(--rift-tg-safe-top,0px));padding-right:max(10px,var(--rift-tg-safe-right,0px));padding-bottom:max(10px,var(--rift-tg-safe-bottom,0px));padding-left:max(10px,var(--rift-tg-safe-left,0px))}
 #games.casino-immersive-host{position:relative;display:block;width:100%;height:100%;max-width:none;min-width:0;min-height:0;margin:0;padding:0;overflow:hidden;box-sizing:border-box;--casino-reel-cell:clamp(48px,calc((64dvw - 46px)/3),82px)}
-.casino-immersive-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,30%);gap:12px;width:100%;height:100%;min-width:0;min-height:0}
+.casino-immersive-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,35%);gap:12px;width:100%;height:100%;min-width:0;min-height:0}
 .casino-immersive-stage{position:relative;display:flex;flex-direction:column;align-items:stretch;justify-content:center;min-width:0;min-height:0;overflow:hidden;padding:12px;border:1px solid rgba(202,174,112,.22);border-radius:16px;background:radial-gradient(ellipse at 38% 42%,rgba(125,102,57,.13),transparent 48%),linear-gradient(120deg,#0b1012,#111716 56%,#090d0e);box-sizing:border-box}
 .casino-immersive-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:32px;padding:3px 7px 9px;color:#aa9564;font-size:9px;font-weight:900;letter-spacing:.18em}
 .casino-immersive-heading b{color:#efdaa2;font-family:Georgia,"Times New Roman",serif;font-size:clamp(14px,2.4vw,21px);letter-spacing:.13em}
 .casino-immersive-controls{display:flex;flex-direction:column;gap:9px;min-width:0;min-height:0;overflow:hidden;padding:12px;border:1px solid rgba(208,178,111,.3);border-radius:15px;background:linear-gradient(155deg,rgba(35,39,33,.96),rgba(16,21,20,.97) 60%,rgba(29,28,22,.97));box-shadow:inset 0 1px 0 rgba(255,243,207,.07),0 10px 26px rgba(0,0,0,.22);box-sizing:border-box;overscroll-behavior:contain}
-.casino-immersive-scroll{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y}
+.casino-immersive-scroll{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(202,174,112,.35) transparent}
+.casino-immersive-scroll::-webkit-scrollbar{width:4px;height:4px}
+.casino-immersive-scroll::-webkit-scrollbar-thumb{border-radius:4px;background:rgba(202,174,112,.3)}
+.casino-immersive-stage .slot-cell{padding:0;box-sizing:border-box}
+.casino-immersive-stage .slot-symbol{max-width:76%;max-height:76%}
+.casino-immersive-stage .slot-symbol.icon-bar{width:76%;max-width:52px;max-height:38px}
 .casino-immersive-controls>*:not(.casino-immersive-scroll){flex:0 0 auto}
+.casino-immersive-secondary{margin:5px 0 2px;border:1px solid rgba(207,177,105,.2);border-radius:9px;background:rgba(0,0,0,.15)}
+.casino-immersive-secondary>summary{padding:8px;color:#cabb91;font-size:9px;font-weight:900;letter-spacing:.06em;cursor:pointer;list-style:none}
+.casino-immersive-secondary>summary::-webkit-details-marker{display:none}
+.casino-immersive-secondary[open]>summary{border-bottom:1px solid rgba(207,177,105,.16)}
+.casino-immersive-layout .stake-block{margin:0 0 4px}
+.casino-immersive-layout .stake-presets{gap:4px;margin-bottom:4px}
+.casino-immersive-layout .stake-chip{min-width:0;padding:5px 2px;font-size:10px}
+.casino-immersive-layout .stake-row{gap:4px}
+.casino-immersive-layout .stake-step{width:31px;height:32px;border-radius:8px;font-size:16px}
+.casino-immersive-layout .stake-input{height:34px;border-radius:8px;font-size:15px}
 .casino-immersive-close{display:flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;min-height:34px;padding:5px 10px;border:1px solid rgba(214,189,131,.28);border-radius:9px;background:rgba(255,255,255,.025);color:#c6b98f;font-size:9px;font-weight:900;letter-spacing:.1em}
 .casino-immersive-close .rift-hud-icon{width:16px;height:16px;flex-basis:16px}
 .casino-fullscreen-launch{display:flex;align-items:center;justify-content:center;min-height:38px;margin:0 0 9px;padding:7px 12px;border:1px solid rgba(209,180,111,.38);border-radius:10px;background:linear-gradient(125deg,rgba(154,121,54,.28),rgba(49,42,27,.56));color:#efd995;font-size:10px;font-weight:950;letter-spacing:.1em}
@@ -1480,7 +1500,7 @@ button:focus-visible{outline-color:#d6b66d}
 @media (orientation:portrait) and (max-width:700px){
   .casino-immersive{inset:auto;top:50%;left:50%;right:auto;bottom:auto;width:100dvh;height:100dvw;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center center}
   .casino-immersive.tg-safe-insets{padding-top:max(10px,var(--rift-tg-safe-right,0px));padding-right:max(10px,var(--rift-tg-safe-bottom,0px));padding-bottom:max(10px,var(--rift-tg-safe-left,0px));padding-left:max(10px,var(--rift-tg-safe-top,0px))}
-  .casino-immersive-layout,.casino-immersive-layout.slot-game-card{grid-template-columns:minmax(0,1fr) minmax(210px,31%);gap:8px}
+  .casino-immersive-layout,.casino-immersive-layout.slot-game-card{grid-template-columns:minmax(0,1fr) minmax(225px,35%);gap:8px}
   .casino-immersive-stage{padding:8px}
   .casino-immersive-controls{gap:7px;padding:8px}
   .casino-immersive-stage .roulette-wrap{width:min(74dvw,100%,320px)}
