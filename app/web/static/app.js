@@ -4045,6 +4045,8 @@
   function paintOutcome(result, options) {
     const box = $("#casinoOutcome");
     if (!box) return;
+    const slotStage = $("#casinoImmersive .casino-immersive-stage");
+    if (slotStage) slotStage.classList.toggle("slot-result-shown", Boolean(result && result.game === "slots"));
     if (!result) {
       box.className = "casino-outcome";
       box.textContent = "";
@@ -5294,9 +5296,9 @@
       void strip.offsetHeight;
       const firstCell = strip.firstElementChild;
       const gap = Number.parseFloat(getComputedStyle(strip).rowGap) || 0;
-      // offsetHeight is the reel's untransformed layout size; getBoundingClientRect()
-      // swaps axes when the old portrait-to-landscape CSS rotation is active.
-      const step = (firstCell ? firstCell.offsetHeight : 53) + gap;
+      // Slots now stay in native orientation. Keep the fractional pixel height so
+      // long reel strips settle exactly on the final three cells instead of clipping.
+      const step = (firstCell ? firstCell.getBoundingClientRect().height : 53) + gap;
       const duration = fastMode ? 135 + reel * 28 : 900 + reel * 170;
       const delay = fastMode ? reel * 25 : reel * 135;
       const distance = step * (sequence.length - config.rows);

@@ -1516,6 +1516,12 @@ button:focus-visible{outline-color:#d6b66d}
   .casino-immersive-layout:not(.slot-game-card){grid-template-columns:minmax(0,1fr) minmax(210px,31%);gap:8px}
   .casino-immersive-layout.slot-game-card{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) min(42dvh,340px);gap:8px}
   .casino-immersive-slots .casino-immersive-stage{padding:8px}
+  .casino-immersive-slots .casino-immersive-stage.slot-result-shown>.casino-immersive-heading{visibility:hidden}
+  .casino-immersive-slots .casino-immersive-stage>.casino-outcome{position:absolute;z-index:8;top:5px;left:10px;right:10px;margin:0;padding:0;box-sizing:border-box}
+  .casino-immersive-slots .casino-immersive-stage>.casino-outcome.show{max-height:58px;padding:5px 9px}
+  .casino-immersive-slots .casino-immersive-stage>.casino-outcome .line1{gap:6px;font-size:10px;line-height:1.15}
+  .casino-immersive-slots .casino-immersive-stage>.casino-outcome .line1 .big{font-size:14px;line-height:1.15}
+  .casino-immersive-slots .casino-immersive-stage>.casino-outcome .line2{margin-top:2px;font-size:11px;line-height:1.15}
   .casino-immersive-slots .casino-immersive-heading{flex-direction:row;align-items:center;justify-content:space-between;gap:6px;min-height:28px;padding:2px 4px 6px}
   .casino-immersive-slots .slot-kicker{font-size:8px;letter-spacing:.12em}
   .casino-immersive-slots .slot-title{margin:0;font-size:clamp(16px,4.8vw,22px);white-space:nowrap}
