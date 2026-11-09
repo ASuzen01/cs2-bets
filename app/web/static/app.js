@@ -441,10 +441,16 @@
     if (!state.user) return;
     state.user.balance = value;
     const pill = $("#balancePill");
-    pill.textContent = money(value);
-    pill.classList.remove("flash");
-    void pill.offsetWidth;
-    pill.classList.add("flash");
+    if (pill) {
+      pill.textContent = money(value);
+      pill.classList.remove("flash");
+      void pill.offsetWidth;
+      pill.classList.add("flash");
+    }
+    const slotFullscreenBalance = $("#casinoImmersiveBalance");
+    if (slotFullscreenBalance) slotFullscreenBalance.textContent = money(value);
+    const riftfallFullscreenBalance = $("#riftImmersiveBalance");
+    if (riftfallFullscreenBalance) riftfallFullscreenBalance.textContent = money(value);
   }
 
   // ------------------------------------------------------------------ рендер
@@ -6205,7 +6211,7 @@
     const balanceValue = el("b", null, money(balance()));
     balanceValue.id = "riftImmersiveBalance";
     balanceRow.append(balanceValue);
-    settingsScroll.append(betPanel, autoPanel, extra, balanceRow);
+    settingsScroll.append(betPanel, autoPanel, extra);
 
     const spin = el("button", "rift-immersive-spin");
     spin.id = "riftImmersiveSpin";
@@ -6214,7 +6220,7 @@
     const result = el("div", "rift-immersive-result");
     result.id = "riftImmersiveResult";
     result.textContent = "ГОТОВ К СПИНУ";
-    controls.append(close, settingsScroll, spin);
+    controls.append(close, settingsScroll, balanceRow, spin);
     stage.append(result);
     overlay.append(stage, controls);
     document.body.append(overlay);
@@ -6362,7 +6368,12 @@
         [meta, summary, history, info].filter(Boolean).forEach((node) => extra.append(node));
         scroll.append(extra);
       }
-      controls.append(scroll);
+      const balanceRow = el("div", "rift-immersive-balance casino-immersive-balance");
+      balanceRow.append(el("span", null, "БАЛАНС"));
+      const balanceValue = el("b", null, money(balance()));
+      balanceValue.id = "casinoImmersiveBalance";
+      balanceRow.append(balanceValue);
+      controls.append(scroll, balanceRow);
       if (play) controls.append(play);
       card.classList.add("casino-immersive-layout");
       card.replaceChildren(stage, controls);

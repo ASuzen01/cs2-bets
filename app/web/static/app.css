@@ -1599,6 +1599,7 @@ button:focus-visible{outline-color:#d6b66d}
 .rift-immersive-result.win{color:#e6cc82}.rift-immersive-result.loss{color:#aaa18a}
 .rift-immersive-balance{display:flex;align-items:center;justify-content:space-between;gap:4px;color:#827e6d;font-size:8px;font-weight:850;letter-spacing:.12em}
 .rift-immersive-balance b{color:#ded1ad;font-size:10px;letter-spacing:0}
+.casino-immersive-balance{flex:0 0 auto;min-height:25px;padding:4px 8px;border:1px solid rgba(207,177,105,.18);border-radius:8px;background:rgba(0,0,0,.14);box-sizing:border-box;font-size:10px}
 @keyframes riftSpinPulse{to{transform:rotate(20deg) scale(.9);opacity:.62}}
 @media (orientation:portrait) and (max-width:700px){
   .riftfall-immersive{--rift-cell-height:clamp(32px,min(12.8dvh,calc((100dvh - min(42dvh,400px) - var(--rift-tg-safe-top,0px) - 138px)/4)),128px);inset:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) min(42dvh,400px);gap:8px;width:100vw;height:100dvh;transform:none;padding:10px 12px}
@@ -1625,7 +1626,7 @@ button:focus-visible{outline-color:#d6b66d}
   .riftfall-immersive .rift-immersive-result.win{color:#ffe795}
   .riftfall-immersive .rift-immersive-result.loss{color:#dde5f2}
   .riftfall-immersive .rift-immersive-result.rift-result-visible{bottom:44px}
-  .rift-immersive-controls{display:grid;width:100%;min-width:0;min-height:0;max-height:none;grid-template-rows:minmax(0,1fr) auto;gap:6px;overflow:hidden;padding:37px 8px 8px}
+  .rift-immersive-controls{display:grid;width:100%;min-width:0;min-height:0;max-height:none;grid-template-rows:minmax(0,1fr) auto auto;gap:5px;overflow:hidden;padding:37px 8px 8px}
   .rift-immersive-settings-scroll{display:flex;min-width:0;min-height:0;flex-direction:column;gap:6px;overflow:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(202,174,112,.3) transparent}
   .rift-immersive-bet-panel{flex:0 0 auto;gap:5px;padding:7px}
   .rift-immersive-label{font-size:8px}
