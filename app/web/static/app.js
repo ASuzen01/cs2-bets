@@ -6162,8 +6162,29 @@
   async function requestCasinoTelegramFullscreen(session) {
     const telegram = session.telegram;
     let request = null;
+    if (session.game === "slots") {
+      // Telegram locks the current orientation; call it synchronously from the
+      // game-selection tap so iOS does not relayout the reels after opening.
+      try {
+        if (telegram && typeof telegram.lockOrientation === "function") {
+          telegram.lockOrientation();
+          session.telegramOrientationLocked = true;
+        }
+      } catch (_) { /* Older Telegram clients may not support orientation locking. */ }
+      if (!session.telegramOrientationLocked) {
+        try {
+          const orientation = window.screen && screen.orientation;
+          const current = orientation && String(orientation.type || "").split("-")[0];
+          if (orientation && typeof orientation.lock === "function"
+            && (current === "portrait" || current === "landscape")) {
+            session.screenOrientationLock = orientation.lock(current);
+            Promise.resolve(session.screenOrientationLock).catch(() => {});
+          }
+        } catch (_) { /* CSS keeps the layout stable if the browser denies the lock. */ }
+      }
+    }
     try {
-      // Native request is the first Telegram call and stays within the game-selection tap.
+      // Native request stays within the game-selection tap.
       if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
         request = telegram.requestFullscreen();
       }
@@ -6189,11 +6210,13 @@
       return;
     }
     syncCasinoFullscreenSafeArea(session);
-    try {
-      if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
-        await screen.orientation.lock("landscape");
-      }
-    } catch (_) { /* The CSS rotation remains available on iOS WebViews. */ }
+    if (session.game !== "slots") {
+      try {
+        if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
+          await screen.orientation.lock("landscape");
+        }
+      } catch (_) { /* The CSS rotation remains available on iOS WebViews. */ }
+    }
   }
 
   function openCasinoFullscreen(game) {
@@ -6209,7 +6232,10 @@
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-label", `${casinoFullscreenHeading(game).textContent} — полноэкранная игра`);
     const telegram = window.Telegram && window.Telegram.WebApp;
-    const session = { overlay, host, parent, nextSibling, game, telegram, telegramHandlers: [] };
+    const session = {
+      overlay, host, parent, nextSibling, game, telegram, telegramHandlers: [],
+      telegramOrientationLocked: false, screenOrientationLock: null,
+    };
     state.casinoFullscreen = session;
     clearCasinoDockTracking();
     overlay.append(host);
@@ -6251,6 +6277,13 @@
         Promise.resolve(session.telegram.exitFullscreen()).catch(() => {});
       }
     } catch (_) { /* Telegram fullscreen is optional on older clients. */ }
+    if (session.telegramOrientationLocked) {
+      try {
+        if (session.telegram && typeof session.telegram.unlockOrientation === "function") {
+          session.telegram.unlockOrientation();
+        }
+      } catch (_) { /* Optional API on Telegram clients without orientation lock support. */ }
+    }
     session.host.classList.remove("casino-immersive-host");
     session.parent.insertBefore(session.host, session.nextSibling && session.nextSibling.parentNode === session.parent
       ? session.nextSibling : null);
