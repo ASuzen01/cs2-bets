@@ -4109,7 +4109,9 @@
       const tagText = row.game === "roulette" ? "№ " + row.outcome
         : row.game === "plinko" ? `ячейка ${row.outcome} · ×${Number(row.odds).toFixed(2)}`
           : row.game === "baccarat" ? (row.outcome === "tie" ? "ничья" : row.outcome === "player" ? "игрок" : "банкир")
-            : row.game === "slots" ? `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`
+            : row.game === "slots" ? (slotResult && slotResult.selection === "chest_bonus"
+              ? `сундук №${slotResult.chest} · ×${Number(slotResult.multiplier).toFixed(1)}`
+              : `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`)
             : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
               : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
@@ -4180,7 +4182,7 @@
     if (game === "roulette") box.append(el("p", null, "Номер выбирается сервером криптографическим генератором из 0–36; колесо лишь анимирует уже выбранный результат."));
     if (game === "dice") box.append(el("p", null, "Оба кубика бросает сервер криптографическим генератором; анимация не влияет на результат."));
     if (game === "plinko") box.append(el("p", null, "Путь шарика определяется сервером до анимации; отрисовка не меняет ячейку или выплату."));
-    if (game === "slots") box.append(el("p", null, "Символы и выплаты определяет сервер. Ставка за весь спин, 243 ways; фри-спины используют сохранённую сервером ставку и не запускают бонус повторно."));
+    if (game === "slots") box.append(el("p", null, "Символы и выплаты определяет сервер. Ставка за весь спин, 243 ways; 3–5 Scatter дают 10/15/20 фри-спинов и 1/2/3 выбора сундука. Сначала открой все сундуки, затем крути сохранённые фри-спины; они не запускают бонус повторно."));
     return box;
   }
 
@@ -4192,7 +4194,7 @@
     const content = el("div", "game-info-content");
     content.append(rulesNode(game));
     if (game === "slots" && state.casino && state.casino.slots) {
-      content.append(slotPaytableNode(state.casino.slots));
+      content.append(slotPaytableNode(state.casino.slots), slotChestRulesNode(state.casino.slots));
     }
     details.append(content);
     return details;
@@ -5153,6 +5155,84 @@
     else if (result.awarded_free_spins) haptic("ok");
   }
 
+  async function pickSlotChest(chest) {
+    if (state.casinoBusy) return;
+    state.casinoBusy = true;
+    if (state.tab === "games" && state.game === "slots") renderSlots($("#games"));
+    try {
+      const data = await api("/api/casino/slots/chest", {
+        method: "POST",
+        body: { chest, token: newToken() },
+      });
+      setBalance(data.balance);
+      state.casino.slot_state = data.slot_state;
+      if (data.payout > 0) {
+        toast(`Сундук ${data.chest} · ×${Number(data.multiplier).toFixed(1)} · выплата ${money(data.payout)}`, "ok");
+        haptic("ok");
+      } else {
+        toast(`Сундук ${data.chest} · пусто · выборов осталось ${data.picks_remaining}`);
+        haptic("light");
+      }
+      await refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+      haptic("bad");
+    } finally {
+      state.casinoBusy = false;
+      if (state.tab === "games" && state.game === "slots") renderSlots($("#games"));
+    }
+  }
+
+  function slotChestBonusNode(config, bonus) {
+    if (!bonus) return null;
+    const panel = el("section", "slot-chest-bonus" + (bonus.status === "pending" ? " active" : ""));
+    const pending = bonus.status === "pending" && Number(bonus.picks_remaining) > 0;
+    panel.append(el("div", "slot-chest-title", pending
+      ? `🎁 SCATTER-БОНУС · выбери сундук (${bonus.picks_remaining} осталось)`
+      : "🎁 SCATTER-БОНУС · выбор завершён"));
+    if (pending) {
+      panel.append(el("p", "slot-chest-copy", `Один выбор даёт приз от ×0 до ×3 ставки ${money(bonus.wager)}. Фри-спины начнутся после открытия всех сундуков.`));
+      const opened = new Map((bonus.opened || []).map((item) => [Number(item.chest), item]));
+      const board = el("div", "slot-chest-board");
+      for (let chest = 1; chest <= 12; chest += 1) {
+        const result = opened.get(chest);
+        if (result) {
+          const revealed = el("div", "slot-chest-opened", result.multiplier > 0 ? `×${Number(result.multiplier).toFixed(1)}` : "пусто");
+          revealed.setAttribute("aria-label", `Сундук ${chest}: выплата ${money(result.payout)}`);
+          board.append(revealed);
+        } else {
+          const button = el("button", "slot-chest-button", "🎁");
+          button.type = "button";
+          button.disabled = state.casinoBusy;
+          button.setAttribute("aria-label", `Открыть сундук ${chest}`);
+          button.addEventListener("click", () => pickSlotChest(chest - 1));
+          board.append(button);
+        }
+      }
+      panel.append(board);
+    } else {
+      const opened = el("div", "slot-chest-results");
+      (bonus.opened || []).forEach((item) => {
+        opened.append(el("span", "slot-chest-result", `№${item.chest} · ×${Number(item.multiplier).toFixed(1)} · ${money(item.payout)}`));
+      });
+      panel.append(opened);
+    }
+    return panel;
+  }
+
+  function slotChestRulesNode(config) {
+    const details = el("details", "slot-chest-rules");
+    details.append(el("summary", null, "Scatter-бонус · правила сундуков"));
+    details.append(el("p", null,
+      `3 Scatter — 1 сундук, 4 — 2, 5+ — 3. Фри-спины: 10 / 15 / 20. Вклад сундуков ≈${Number(config.chest_rtp_points).toFixed(2)} п.п.; общий RTP слота уже их учитывает: ${Number(config.rtp).toFixed(1)}%.`));
+    const prizes = el("div", "slot-chest-prize-list");
+    (config.chest_prizes || []).forEach((prize) => {
+      prizes.append(el("span", null, `${Number(prize.count)} сундуков · ×${Number(prize.multiplier).toFixed(1)}`));
+    });
+    details.append(prizes);
+    return details;
+  }
+
   function slotPaytableNode(config) {
     const details = el("details", "slot-paytable");
     details.append(el("summary", null, "Таблица выплат · множители за way"));
@@ -5187,8 +5267,10 @@
       auto.classList.toggle("active", state.slotAutoRunning);
       auto.setAttribute("aria-pressed", String(state.slotAutoRunning));
       auto.textContent = state.slotAutoRunning ? "Остановить автоспин" : `Автоспин · ${countLabel}`;
-      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
-      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || (!freeSpins && !stakeOk("slots")));
+      const slotState = state.casino && state.casino.slot_state || {};
+      const freeSpins = Number(slotState.free_spins) || 0;
+      const chestPending = slotState.bonus && slotState.bonus.status === "pending";
+      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || chestPending || (!freeSpins && !stakeOk("slots")));
     }
     const info = $("#slotAutoInfo");
     if (info) {
@@ -5247,8 +5329,10 @@
       auto.classList.toggle("active", state.slotAutoRunning);
       auto.setAttribute("aria-pressed", String(state.slotAutoRunning));
       auto.textContent = state.slotAutoRunning ? "Остановить автоспин" : `Автоспин · ${countLabel}`;
-      const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
-      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || (!freeSpins && !stakeOk("slots")));
+      const slotState = state.casino && state.casino.slot_state || {};
+      const freeSpins = Number(slotState.free_spins) || 0;
+      const chestPending = slotState.bonus && slotState.bonus.status === "pending";
+      auto.disabled = !state.slotAutoRunning && (state.casinoBusy || chestPending || (!freeSpins && !stakeOk("slots")));
     }
     const info = panel.querySelector("#slotAutoInfo");
     if (info) {
@@ -5280,7 +5364,12 @@
       return;
     }
     if (state.casinoBusy) return;
-    const freeSpins = Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) || 0;
+    const currentSlotState = state.casino && state.casino.slot_state || {};
+    if (currentSlotState.bonus && currentSlotState.bonus.status === "pending") {
+      toast("Сначала открой сундуки Scatter-бонуса");
+      return;
+    }
+    const freeSpins = Number(currentSlotState.free_spins) || 0;
     if (!freeSpins && !stakeOk("slots")) {
       toast(stakeState("slots").poor ? "Не хватает монет" : "Проверь сумму ставки", "bad");
       return;
@@ -5340,14 +5429,19 @@
     card.append(el("p", "slot-copy", "Собирай одинаковые символы слева направо. Все 243 ways участвуют в каждом спине; ставка указана за весь спин."));
     card.append(slotGridNode(config, result));
 
-    const status = el("div", "slot-bonus-status" + (hasFreeSpins ? " active" : ""));
+    const chestBonus = saved.bonus || null;
+    const chestPending = chestBonus && chestBonus.status === "pending" && Number(chestBonus.picks_remaining) > 0;
+    const status = el("div", "slot-bonus-status" + (hasFreeSpins || chestPending ? " active" : ""));
     status.id = "slotBonusStatus";
-    status.textContent = hasFreeSpins
-      ? `✦ ФРИ-СПИНЫ · ${saved.free_spins} осталось · ставка ${money(saved.spin_bet)} зафиксирована`
-      : `SCATTER · 3 → 10 фри-спинов · 4 → 15 · 5+ → 20`;
+    status.textContent = chestPending
+      ? `✦ СНАЧАЛА СУНДУКИ · осталось выбрать ${chestBonus.picks_remaining}`
+      : hasFreeSpins
+        ? `✦ ФРИ-СПИНЫ · ${saved.free_spins} осталось · ставка ${money(saved.spin_bet)} зафиксирована`
+        : `SCATTER · 3 → 10 фри-спинов + 1 сундук · 4 → 15 + 2 · 5+ → 20 + 3`;
     card.append(status);
+    if (chestBonus) card.append(slotChestBonusNode(config, chestBonus));
     card.append(stakeRow("slots"));
-    if (hasFreeSpins || state.slotAutoRunning) {
+    if (hasFreeSpins || chestPending || state.slotAutoRunning) {
       card.querySelectorAll(".stake-chip, .stake-step, #stakeInput").forEach((control) => { control.disabled = true; });
     }
 
@@ -5361,7 +5455,7 @@
     play.type = "button";
     play.textContent = state.slotAutoRunning ? "АВТОСПИН ВЫПОЛНЯЕТСЯ…"
       : hasFreeSpins ? `КРУТИТЬ ФРИ-СПИН · ${saved.free_spins} ОСТАЛОСЬ` : `КРУТИТЬ · ${money(stakeFor("slots"))}`;
-    play.disabled = state.casinoBusy || state.slotAutoRunning || (!hasFreeSpins && !stakeOk("slots"));
+    play.disabled = state.casinoBusy || state.slotAutoRunning || chestPending || (!hasFreeSpins && !stakeOk("slots"));
     card.append(play, slotAutoControlsNode());
     card.append(outcomeNode(), summaryNode(), historyNode(), gameInfoNode("slots"));
     host.append(card);
@@ -5937,7 +6031,11 @@
     const fromAuto = Boolean(options && options.auto);
     if (state.casinoBusy || !state.casino || !state.user) return false;
     const game = state.game;
-    const slotState = state.casino && state.casino.slot_state || { free_spins: 0, spin_bet: 0 };
+    const slotState = state.casino && state.casino.slot_state || { free_spins: 0, spin_bet: 0, bonus: null };
+    if (game === "slots" && slotState.bonus && slotState.bonus.status === "pending") {
+      if (!fromAuto) toast("Сначала открой сундуки Scatter-бонуса");
+      return false;
+    }
     const usingSlotFreeSpin = game === "slots" && Number(slotState.free_spins) > 0;
     const selection = pickFor(game);
     const amount = usingSlotFreeSpin
@@ -5979,10 +6077,15 @@
 
       const roundAmount = Number(data.amount ?? amount);
       if (game === "slots") {
-        state.casino.slot_state = {
+        state.casino.slot_state = data.slot_state || {
           free_spins: Number(data.free_spins_remaining) || 0,
           spin_bet: Number(data.free_spin_bet) || 0,
+          bonus: slotState.bonus || null,
         };
+        if (fromAuto && state.casino.slot_state.bonus && state.casino.slot_state.bonus.status === "pending") {
+          toast("Автоспин остановлен · открой сундуки Scatter-бонуса");
+          stopSlotAutoSpin(true);
+        }
       }
       setBalance(data.balance);
       state.casinoResults[game] = data;
@@ -6043,6 +6146,7 @@
       state.casinoBusy = false;
       lockTable(false);
       refreshSide();
+      if (state.tab === "games" && state.game === "slots") renderSlots($("#games"));
       updateSlotAutoControls();
     }
   }

@@ -102,6 +102,7 @@ def register_routes(
     app.router.add_get("/api/bets", api_bets)
     app.router.add_get("/api/casino", api_casino_state)
     app.router.add_post("/api/casino/play", api_casino_play)
+    app.router.add_post("/api/casino/slots/chest", api_slot_chest)
     app.router.add_post("/api/blackjack/start", api_blackjack_start)
     app.router.add_post("/api/blackjack/action", api_blackjack_action)
     app.router.add_post("/api/drunkard/play", api_drunkard_play)
@@ -395,7 +396,7 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
         "games": {
             "slots": {
                 "rtp": round(slot_machine.RTP * 100, 1),
-                "note": "теоретическая цель таблицы выплат; 3 ряда, 5 барабанов, 243 линии, скаттеры дают фриспины; из-за целых монет отдельные ставки могут отличаться",
+                "note": "теоретическая цель общего RTP: основная игра, фри-спины и Scatter-сундуки; 3 ряда, 5 барабанов, 243 ways; округление целых монет может немного менять фактическую отдачу",
             },
             "plinko": {
                 "rtp": round(games.PLINKO_RTP * 100, 1),
@@ -1010,6 +1011,22 @@ async def api_casino_state(request: web.Request) -> web.Response:
     return web.json_response(
         {"ok": True, "balance": await db.get_balance(user_id), **await _casino_payload(db, user_id)}
     )
+
+
+async def api_slot_chest(request: web.Request) -> web.Response:
+    """Открывает один сундук Scatter-бонуса, заранее зафиксированного сервером."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    try:
+        result = await db.pick_slot_chest(
+            user_id,
+            _as_int(body.get("chest")),
+            body.get("token"),
+        )
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, **result})
 
 
 async def api_casino_play(request: web.Request) -> web.Response:

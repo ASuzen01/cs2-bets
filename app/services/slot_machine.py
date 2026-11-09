@@ -25,6 +25,9 @@ SYMBOLS: tuple[dict[str, Any], ...] = (
 )
 SCATTER_CODE = "scatter"
 SCATTER_AWARDS = {3: 10, 4: 15, 5: 20}
+CHEST_PICKS = {3: 1, 4: 2, 5: 3}
+# 12 public prizes; shuffled server-side and saved before the player chooses.
+CHEST_PRIZES: tuple[tuple[float, int], ...] = ((0.0, 6), (0.5, 3), (1.0, 2), (3.0, 1))
 # Unscaled payout per one way / one coin wager, for exact 3, 4, or 5 matches.
 BASE_PAYOUTS: dict[str, tuple[float, float, float]] = {
     "cherry": (0.35, 1.10, 4.50),
@@ -40,6 +43,27 @@ def _scatter_award(count: int) -> int:
     if count < 3:
         return 0
     return SCATTER_AWARDS.get(count, 20)
+
+
+def _chest_pick_count(count: int) -> int:
+    if count < 3:
+        return 0
+    return CHEST_PICKS.get(count, 3)
+
+
+def _expected_chest_return() -> float:
+    scatter_probability = next(item["weight"] for item in SYMBOLS if item["code"] == SCATTER_CODE) / WEIGHT_SCALE
+    average_prize = sum(multiplier * count for multiplier, count in CHEST_PRIZES) / sum(
+        count for _, count in CHEST_PRIZES
+    )
+    return sum(
+        math.comb(ROWS * REELS, count)
+        * scatter_probability**count
+        * (1 - scatter_probability) ** (ROWS * REELS - count)
+        * _chest_pick_count(count)
+        * average_prize
+        for count in range(ROWS * REELS + 1)
+    )
 
 
 def _expected_free_spins() -> float:
@@ -72,11 +96,14 @@ def _expected_return_per_way(paytable: dict[str, tuple[float, float, float]]) ->
 def _build_paytable() -> dict[str, tuple[float, float, float]]:
     """Normalize base-game paytable so base spins plus free spins target 95.5% RTP.
 
-    Free spins use the triggering spin's total wager and do not retrigger. The
-    expected number of awarded spins is therefore a finite binomial expectation.
+    Free spins use the triggering spin's total wager and do not retrigger. Chest
+    rewards are also tied to that wager; their expected value is reserved before
+    scaling the line paytable so the combined paid spins, free spins, and chest
+    picks still target the configured RTP.
     """
     expected_bonus_spins = _expected_free_spins()
-    desired_paid_spin_return = RTP / (1 + expected_bonus_spins)
+    expected_chest_return = _expected_chest_return()
+    desired_paid_spin_return = (RTP - expected_chest_return) / (1 + expected_bonus_spins)
     raw_return = _expected_return_per_way(BASE_PAYOUTS)
     scale = desired_paid_spin_return / raw_return
     table: dict[str, tuple[float, float, float]] = {}
@@ -92,6 +119,13 @@ def _build_paytable() -> dict[str, tuple[float, float, float]]:
 
 
 PAYTABLE = _build_paytable()
+
+
+def new_chest_board() -> list[float]:
+    """Create a private, fixed board so retries and reloads cannot reroll it."""
+    board = [multiplier for multiplier, count in CHEST_PRIZES for _ in range(count)]
+    secrets.SystemRandom().shuffle(board)
+    return board
 
 
 def _draw_symbol() -> str:
@@ -124,6 +158,12 @@ def slot_config() -> dict[str, Any]:
             for symbol, values in PAYTABLE.items()
         },
         "scatter_awards": {str(count): award for count, award in SCATTER_AWARDS.items()},
+        "chest_picks": {str(count): picks for count, picks in CHEST_PICKS.items()},
+        "chest_prizes": [
+            {"multiplier": multiplier, "count": count}
+            for multiplier, count in CHEST_PRIZES
+        ],
+        "chest_rtp_points": round(_expected_chest_return() * 100, 4),
     }
 
 
@@ -136,6 +176,7 @@ def spin(amount: int, *, free_spin: bool = False) -> dict[str, Any]:
     grid = [[_draw_symbol() for _ in range(REELS)] for _ in range(ROWS)]
     scatter_count = sum(cell == SCATTER_CODE for row in grid for cell in row)
     awarded = 0 if free_spin else _scatter_award(scatter_count)
+    chest_picks = 0 if free_spin else _chest_pick_count(scatter_count)
 
     # A way selects one of three row positions from each reel, left to right.
     # The wager is the total spin budget, shared uniformly by the 243 ways.
@@ -168,7 +209,7 @@ def spin(amount: int, *, free_spin: bool = False) -> dict[str, Any]:
         for (symbol, length), count in sorted(groups.items(), key=lambda item: (item[0][1], item[0][0]))
     ]
     if awarded:
-        outcome = f"Scatter ×{scatter_count} · {awarded} фри-спинов"
+        outcome = f"Scatter ×{scatter_count} · {awarded} фри-спинов · сундуки ×{chest_picks}"
     elif wins:
         outcome = f"{sum(item['ways'] for item in wins)} выигрышных ways"
     else:
@@ -178,6 +219,7 @@ def spin(amount: int, *, free_spin: bool = False) -> dict[str, Any]:
         "grid": grid,
         "scatter_count": scatter_count,
         "awarded_free_spins": awarded,
+        "awarded_chest_picks": chest_picks,
         "wins": wins,
         "win_count": sum(item["ways"] for item in wins),
         "winning_cells": [list(cell) for cell in sorted(winning_cells)],
@@ -197,8 +239,10 @@ __all__ = [
     "SCATTER_AWARDS",
     "SYMBOLS",
     "WAYS",
+    "_expected_chest_return",
     "_expected_free_spins",
     "_expected_return_per_way",
+    "new_chest_board",
     "slot_config",
     "spin",
 ]
