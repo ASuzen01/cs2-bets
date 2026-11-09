@@ -5894,11 +5894,31 @@
     session.overlay.classList.add("tg-safe-insets");
   }
 
-  async function requestRiftfallLandscape() {
-    const telegram = window.Telegram && window.Telegram.WebApp;
+  async function requestRiftfallFullscreen() {
+    const session = state.riftfallFullscreen;
+    const telegram = session && session.telegram;
     let fullscreenRequest = null;
     try {
-      // Fire the native request first, in the same user gesture that opens Riftfall.
+      // Freeze the current phone orientation from the opening tap. Portrait CSS
+      // remains portrait-native; do not force a late landscape relayout.
+      if (telegram && typeof telegram.lockOrientation === "function") {
+        telegram.lockOrientation();
+        session.telegramOrientationLocked = true;
+      }
+    } catch (_) { /* Older Telegram clients may not expose orientation locking. */ }
+    if (!session.telegramOrientationLocked) {
+      try {
+        const orientation = window.screen && screen.orientation;
+        const current = orientation && String(orientation.type || "").split("-")[0];
+        if (orientation && typeof orientation.lock === "function"
+          && (current === "portrait" || current === "landscape")) {
+          session.screenOrientationLock = orientation.lock(current);
+          Promise.resolve(session.screenOrientationLock).catch(() => {});
+        }
+      } catch (_) { /* Keep the responsive layout if the browser denies locking. */ }
+    }
+    try {
+      // Fire the native request in the same user gesture that opens Riftfall.
       if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
         fullscreenRequest = telegram.requestFullscreen();
       }
@@ -5930,13 +5950,6 @@
     }
     if (!state.riftfallFullscreen) return;
     syncRiftfallTelegramSafeArea(telegram);
-    try {
-      if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
-        await screen.orientation.lock("landscape");
-      }
-    } catch (_) {
-      // CSS fallback below keeps the whole game inside Telegram's content safe area.
-    }
   }
 
   function syncRiftfallFullscreenHud(result) {
@@ -5975,12 +5988,19 @@
     const close = $("#riftImmersiveClose");
     if (close) close.disabled = state.casinoBusy || state.riftfallAutoRunning;
     const resultNode = $("#riftImmersiveResult");
-    if (resultNode && result) {
-      resultNode.classList.toggle("win", Number(result.payout) > Number(result.amount));
-      resultNode.classList.toggle("loss", Number(result.payout) <= Number(result.amount));
-      resultNode.textContent = result.cascade_count
-        ? `${result.cascade_count} каскада · ${money(result.payout)}`
-        : `Выплата · ${money(result.payout)}`;
+    const stage = session.overlay.querySelector(".rift-immersive-stage");
+    if (stage) stage.classList.toggle("rift-result-shown", Boolean(result));
+    if (resultNode) {
+      resultNode.classList.toggle("rift-result-visible", Boolean(result));
+      resultNode.classList.toggle("win", Number(result && result.payout) > Number(result && result.amount));
+      resultNode.classList.toggle("loss", Number(result && result.payout) <= Number(result && result.amount));
+      if (result) {
+        resultNode.textContent = result.cascade_count
+          ? `${result.cascade_count} каскада · выплата ${money(result.payout)}`
+          : `Без каскадов · выплата ${money(result.payout)}`;
+      } else {
+        resultNode.textContent = "ГОТОВ К СПИНУ";
+      }
     }
   }
 
@@ -6061,7 +6081,8 @@
     const balanceValue = el("b", null, money(balance()));
     balanceValue.id = "riftImmersiveBalance";
     balanceRow.append(balanceValue);
-    controls.append(close, controlBrand, betPanel, spin, actions, result, balanceRow);
+    controls.append(close, controlBrand, betPanel, spin, actions, balanceRow);
+    stage.append(result);
     overlay.append(stage, controls);
     document.body.append(overlay);
     document.body.classList.add("riftfall-fullscreen-open");
@@ -6069,6 +6090,8 @@
       overlay, stageSlot, chainSlot, statusSlot, stageNode, chainNode, statusNode,
       telegram: window.Telegram && window.Telegram.WebApp,
       telegramHandlers: [],
+      telegramOrientationLocked: false,
+      screenOrientationLock: null,
     };
     const telegram = state.riftfallFullscreen.telegram;
     if (telegram && typeof telegram.onEvent === "function") {
@@ -6083,7 +6106,7 @@
     syncRiftfallTelegramSafeArea(telegram);
     syncRiftfallFullscreenHud(state.casinoResults.riftfall);
     window.scrollTo(0, 0);
-    requestRiftfallLandscape();
+    requestRiftfallFullscreen();
     haptic("light");
   }
 
@@ -6110,6 +6133,13 @@
         Promise.resolve(session.telegram.exitFullscreen()).catch(() => {});
       }
     } catch (_) { /* Telegram fullscreen is optional on older clients. */ }
+    if (session.telegramOrientationLocked) {
+      try {
+        if (session.telegram && typeof session.telegram.unlockOrientation === "function") {
+          session.telegram.unlockOrientation();
+        }
+      } catch (_) { /* Optional API on older Telegram clients. */ }
+    }
     session.overlay.remove();
     state.riftfallFullscreen = null;
     document.body.classList.remove("riftfall-fullscreen-open");
