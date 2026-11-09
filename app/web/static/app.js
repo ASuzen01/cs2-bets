@@ -5699,16 +5699,57 @@
     return svg;
   }
 
+  function syncRiftfallTelegramSafeArea(telegram) {
+    const session = state.riftfallFullscreen;
+    if (!session) return;
+    const safe = telegram && telegram.safeAreaInset || {};
+    const content = telegram && telegram.contentSafeAreaInset || {};
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    ["top", "right", "bottom", "left"].forEach((side) => {
+      const cssSafe = parseFloat(rootStyle.getPropertyValue(`--tg-safe-area-inset-${side}`)) || 0;
+      const cssContent = parseFloat(rootStyle.getPropertyValue(`--tg-content-safe-area-inset-${side}`)) || 0;
+      const inset = Math.max(0, Number(safe[side]) || 0, Number(content[side]) || 0, cssSafe, cssContent);
+      session.overlay.style.setProperty(`--rift-tg-safe-${side}`, `${inset}px`);
+    });
+    session.overlay.classList.toggle("tg-native-fullscreen", Boolean(telegram && telegram.isFullscreen));
+    session.overlay.classList.toggle("tg-safe-rotate", !(telegram && telegram.isFullscreen));
+  }
+
   async function requestRiftfallLandscape() {
     const telegram = window.Telegram && window.Telegram.WebApp;
-    if (telegram && typeof telegram.expand === "function") telegram.expand();
-    if (telegram && typeof telegram.disableVerticalSwipes === "function") telegram.disableVerticalSwipes();
+    try { if (telegram && typeof telegram.expand === "function") telegram.expand(); } catch (_) { /* Optional Telegram API. */ }
+    try {
+      if (telegram && typeof telegram.disableVerticalSwipes === "function") telegram.disableVerticalSwipes();
+    } catch (_) { /* Optional Telegram API. */ }
+    try { if (telegram && typeof telegram.requestSafeArea === "function") telegram.requestSafeArea(); } catch (_) { /* Optional Telegram API. */ }
+    try {
+      if (telegram && typeof telegram.requestContentSafeArea === "function") telegram.requestContentSafeArea();
+    } catch (_) { /* Optional Telegram API. */ }
+    syncRiftfallTelegramSafeArea(telegram);
+    try {
+      // Telegram fullscreen hides its floating close/menu toolbar; do this directly
+      // from the player's tap before trying the browser's orientation lock.
+      if (telegram && !telegram.isFullscreen && typeof telegram.requestFullscreen === "function") {
+        await telegram.requestFullscreen();
+        if (!state.riftfallFullscreen) {
+          if (telegram.isFullscreen && typeof telegram.exitFullscreen === "function") {
+            Promise.resolve(telegram.exitFullscreen()).catch(() => {});
+          }
+          return;
+        }
+        syncRiftfallTelegramSafeArea(telegram);
+      }
+    } catch (_) {
+      // Older Telegram/iOS versions may reject fullscreen; use safe-area CSS fallback.
+    }
+    if (!state.riftfallFullscreen) return;
+    syncRiftfallTelegramSafeArea(telegram);
     try {
       if (window.screen && screen.orientation && typeof screen.orientation.lock === "function") {
         await screen.orientation.lock("landscape");
       }
     } catch (_) {
-      // iOS Telegram WebView does not expose orientation lock; CSS rotates the playfield.
+      // CSS fallback below keeps the whole game inside Telegram's content safe area.
     }
   }
 
@@ -5838,7 +5879,22 @@
     overlay.append(stage, controls);
     document.body.append(overlay);
     document.body.classList.add("riftfall-fullscreen-open");
-    state.riftfallFullscreen = { overlay, stageSlot, chainSlot, statusSlot, stageNode, chainNode, statusNode };
+    state.riftfallFullscreen = {
+      overlay, stageSlot, chainSlot, statusSlot, stageNode, chainNode, statusNode,
+      telegram: window.Telegram && window.Telegram.WebApp,
+      telegramHandlers: [],
+    };
+    const telegram = state.riftfallFullscreen.telegram;
+    if (telegram && typeof telegram.onEvent === "function") {
+      ["safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged", "fullscreenFailed"].forEach((eventName) => {
+        const handler = () => syncRiftfallTelegramSafeArea(telegram);
+        try {
+          telegram.onEvent(eventName, handler);
+          state.riftfallFullscreen.telegramHandlers.push([eventName, handler]);
+        } catch (_) { /* Event may not exist in older Telegram clients. */ }
+      });
+    }
+    syncRiftfallTelegramSafeArea(telegram);
     syncRiftfallFullscreenHud(state.casinoResults.riftfall);
     window.scrollTo(0, 0);
     requestRiftfallLandscape();
@@ -5855,6 +5911,19 @@
     session.stageSlot.append(session.stageNode);
     session.chainSlot.append(session.chainNode);
     session.statusSlot.append(session.statusNode);
+    session.telegramHandlers.forEach(([eventName, handler]) => {
+      try {
+        if (session.telegram && typeof session.telegram.offEvent === "function") {
+          session.telegram.offEvent(eventName, handler);
+        }
+      } catch (_) { /* Event cleanup is optional on older Telegram clients. */ }
+    });
+    try {
+      if (session.telegram && session.telegram.isFullscreen
+        && typeof session.telegram.exitFullscreen === "function") {
+        Promise.resolve(session.telegram.exitFullscreen()).catch(() => {});
+      }
+    } catch (_) { /* Telegram fullscreen is optional on older clients. */ }
     session.overlay.remove();
     state.riftfallFullscreen = null;
     document.body.classList.remove("riftfall-fullscreen-open");
@@ -5863,8 +5932,9 @@
         screen.orientation.unlock();
       }
     } catch (_) { /* Orientation lock is not available in every WebView. */ }
-    const telegram = window.Telegram && window.Telegram.WebApp;
-    if (telegram && typeof telegram.enableVerticalSwipes === "function") telegram.enableVerticalSwipes();
+    if (session.telegram && typeof session.telegram.enableVerticalSwipes === "function") {
+      session.telegram.enableVerticalSwipes();
+    }
   }
 
   function adjustRiftfallStake(direction) {
