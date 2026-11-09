@@ -105,6 +105,7 @@ def register_routes(
     app.router.add_post("/api/blackjack/start", api_blackjack_start)
     app.router.add_post("/api/blackjack/action", api_blackjack_action)
     app.router.add_post("/api/drunkard/play", api_drunkard_play)
+    app.router.add_post("/api/drunkard/step", api_drunkard_step)
     app.router.add_post("/api/drunkard/invite", api_drunkard_invite)
     app.router.add_post("/api/drunkard/accept", api_drunkard_accept)
     app.router.add_post("/api/drunkard/close", api_drunkard_close)
@@ -1120,7 +1121,7 @@ async def api_blackjack_action(request: web.Request) -> web.Response:
 
 
 async def api_drunkard_play(request: web.Request) -> web.Response:
-    """Полная серверная партия «Пьяница» против компьютера."""
+    """Начинает интерактивную серверную партию «Пьяница» против компьютера."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     body = await _json_body(request)
@@ -1135,7 +1136,27 @@ async def api_drunkard_play(request: web.Request) -> web.Response:
         return _bad("Недостаточно монет на балансе")
     except InvalidBet as exc:
         return _bad(str(exc))
-    metrics.count_casino()
+    return web.json_response({
+        "ok": True,
+        **result,
+        "drunkard": await db.drunkard_state(user_id),
+    })
+
+
+async def api_drunkard_step(request: web.Request) -> web.Response:
+    """Открывает одну следующую раздачу или войну в активной партии."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    if game_id <= 0:
+        return _bad("Активная партия не найдена")
+    try:
+        result = await db.advance_drunkard(user_id, game_id, body.get("token"))
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    if result["game"].get("status") == "finished":
+        metrics.count_casino()
     return web.json_response({
         "ok": True,
         **result,
@@ -1164,7 +1185,7 @@ async def api_drunkard_invite(request: web.Request) -> web.Response:
 
 
 async def api_drunkard_accept(request: web.Request) -> web.Response:
-    """Принимает приглашение; ставки обоих игроков списываются вместе."""
+    """Принимает приглашение и начинает живую партию; ставки списываются вместе."""
     db: Database = request.app[DB_KEY]
     user_id = int(request[USER_KEY]["user_id"])
     game_id = _as_int((await _json_body(request)).get("game_id"))
@@ -1176,7 +1197,6 @@ async def api_drunkard_accept(request: web.Request) -> web.Response:
         return _bad(str(exc))
     except InvalidBet as exc:
         return _bad(str(exc))
-    metrics.count_casino()
     return web.json_response({
         "ok": True,
         **result,

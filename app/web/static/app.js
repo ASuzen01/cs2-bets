@@ -4165,7 +4165,7 @@
       box.append(el("p", null, "Положение приза генерируется сервером криптографическим генератором; браузер не выбирает и не меняет исход."));
     } else if (game === "drunkard") {
       box.append(el("b", null, "Пьяница · полная партия, колода пополам. "));
-      box.append(document.createTextNode("24 карты: 9–туз; 36: 6–туз; 52: 2–туз. Туз старший, масти равны. При равенстве каждый кладёт одну карту рубашкой вверх и открывает следующую; победитель забирает весь спор. Карты выигрыша перемешиваются перед тем, как уйти в низ колоды. Партия автоматически идёт до конца или до повторения позиции; при повторе — ничья и возврат ставки. Против игрока обе ставки одинаковы и списываются только после принятия вызова."));
+      box.append(document.createTextNode("24 карты: 9–туз; 36: 6–туз; 52: 2–туз. Туз старший, масти равны. Каждый ход нажимай «Открыть следующие карты»: открывается одна пара, а победитель забирает весь спор. При равенстве начинается война — с каждой стороны кладётся закрытая карта и открывается следующая; повторные равенства продолжают войну. Выигранные карты перемешиваются перед тем, как уйти в низ колоды. Игра продолжается ход за ходом до победы или ничьей из-за нехватки карт для войны. Против игрока обе ставки одинаковы; они списываются после принятия вызова."));
       box.append(el("p", null, "Победа возвращает свою ставку и ставку соперника (2×); поражение теряет ставку; ничья возвращает ставку. Колода и порядок перемешиваются на сервере."));
     } else if (game === "blackjack") {
       box.append(el("b", null, "Блэкджек · одна колода из 52 карт. "));
@@ -5430,10 +5430,11 @@
         setBalance(data.balance);
       }
       if (action === "play" || action === "invite") state.drunkardToken = null;
-      if (action === "play") toast("Партия завершена", "ok");
+      if (action === "play") toast("Партия началась · открывай карты", "ok");
       else if (action === "invite") toast("Вызов отправлен · монеты пока не списаны", "ok");
-      else if (action === "accept") toast("Партия завершена", "ok");
-      else toast("Приглашение закрыто");
+      else if (action === "accept") toast("Вызов принят · партия началась", "ok");
+      else if (action === "step" && data.game && data.game.status === "finished") toast("Партия завершена", "ok");
+      else if (action !== "step") toast("Приглашение закрыто");
       haptic("light");
       await refreshState({ silent: true });
     } catch (err) {
@@ -5487,18 +5488,79 @@
     return card;
   }
 
+  function renderDrunkardActive(game) {
+    const panel = el("section", "drunkard-card drunkard-active-game");
+    const youAreCreator = game.your_side === "player";
+    const you = "Вы";
+    const other = game.other_name || "Соперник";
+    const gameState = game.game_state || {};
+    panel.append(el("div", "drunkard-kicker", "ПАРТИЯ ИДЁТ · ОТКРОЙ СЛЕДУЮЩУЮ ПАРУ"));
+    panel.append(el("h2", "drunkard-title", `${game.deck_size} карт · ставка ${money(game.stake)}`));
+    const myCards = youAreCreator ? gameState.cards_player : gameState.cards_opponent;
+    const otherCards = youAreCreator ? gameState.cards_opponent : gameState.cards_player;
+    panel.append(el("div", "drunkard-counts",
+      `${you}: ${Number(myCards || 0)} карт · ${other}: ${Number(otherCards || 0)} карт`));
+
+    const battle = gameState.last_battle;
+    if (battle && Array.isArray(battle.pairs) && battle.pairs.length) {
+      const history = el("div", "drunkard-battle");
+      history.append(el("div", "drunkard-label", battle.pairs.length > 1 ? "ВОЙНА · ОТКРЫТЫЕ КАРТЫ" : "ПОСЛЕДНЯЯ РАЗДАЧА"));
+      if (battle.hidden_pairs) {
+        history.append(el("p", "hint", `Перед открытием каждый положил закрытых карт: ${Number(battle.hidden_pairs)}.`));
+      }
+      battle.pairs.forEach((pair) => {
+        const row = el("div", "drunkard-last-cards");
+        const yourCard = youAreCreator ? pair.player : pair.opponent;
+        const theirCard = youAreCreator ? pair.opponent : pair.player;
+        [[you, yourCard], [other, theirCard]].forEach(([name, face]) => {
+          const playing = el("div", "drunkard-face");
+          playing.append(el("small", null, name), el("b", null, face || "—"));
+          row.append(playing);
+        });
+        history.append(row);
+      });
+      if (battle.winner === "draw") history.append(el("p", "drunkard-copy", "Карты закончились у обоих во время войны — ничья."));
+      else if (battle.winner) {
+        const victor = (battle.winner === "player") === youAreCreator ? you : other;
+        history.append(el("p", "drunkard-copy", `${victor} забирает спор из ${Number(battle.pot_size)} карт.`));
+      }
+      panel.append(history);
+    } else {
+      panel.append(el("p", "drunkard-copy", "Карты уже сданы и перемешаны. Нажми, чтобы открыть первую пару."));
+    }
+
+    const advance = el("button", "btn play drunkard-step", state.drunkardBusy ? "Открываем…" : "Открыть следующие карты");
+    advance.type = "button";
+    advance.disabled = state.drunkardBusy;
+    advance.addEventListener("click", () => drunkardRequest("step", {
+      game_id: game.id, token: newToken(),
+    }));
+    panel.append(advance);
+    panel.append(el("div", "hint", "Каждое нажатие открывает одну раздачу. При равенстве сервер проводит войну: закрытая карта, затем открытая; при новой ничьей война продолжается."));
+    return panel;
+  }
+
   function renderDrunkard(host) {
     if (!host) return;
     host.textContent = "";
     host.append(gameBackButton());
     const card = el("section", "drunkard-card");
-    card.append(el("div", "drunkard-kicker", "КАРТЫ · СЕРВЕРНАЯ СДАЧА"));
+    card.append(el("div", "drunkard-kicker", "КАРТЫ · ИГРАЙ РАЗДАЧУ ЗА РАЗДАЧЕЙ"));
     card.append(el("h2", "drunkard-title", "Пьяница"));
     card.append(el("p", "drunkard-copy",
-      "Колода делится поровну. Старшая карта забирает спор; при равенстве — закрытая карта и новая открытая до победителя."));
+      "Нажимай «Открыть следующие карты»: вы с компьютером или соперником играете до тех пор, пока один не соберёт всю колоду. При равенстве начинается война."));
+    host.append(card);
 
+    const stateData = state.drunkard || { incoming: [], outgoing: [], active: null, last: null };
+    if (stateData.active) {
+      host.append(renderDrunkardActive(stateData.active));
+      host.append(gameInfoNode("drunkard"));
+      return;
+    }
+
+    const setup = el("section", "drunkard-card");
     const deckLabel = el("div", "drunkard-label", "Колода");
-    card.append(deckLabel);
+    setup.append(deckLabel);
     const deckRow = el("div", "drunkard-choice-row");
     [24, 36, 52].forEach((size) => {
       const button = el("button", "drunkard-choice" + (Number(state.drunkardDeckSize) === size ? " active" : ""), `${size} карты`);
@@ -5511,10 +5573,9 @@
       });
       deckRow.append(button);
     });
-    card.append(deckRow);
+    setup.append(deckRow);
 
-    const stakeLabel = el("div", "drunkard-label", "Ставка");
-    card.append(stakeLabel);
+    setup.append(el("div", "drunkard-label", "Ставка"));
     const presets = el("div", "drunkard-stakes");
     [10, 50, 100, 250, 500].forEach((amount) => {
       const button = el("button", "stake-chip" + (Number(state.drunkardStake) === amount ? " active" : ""), String(amount));
@@ -5527,8 +5588,8 @@
       });
       presets.append(button);
     });
-    card.append(presets);
-    card.append(el("div", "hint", "Или введи свою сумму"));
+    setup.append(presets);
+    setup.append(el("div", "hint", "Или введи свою сумму"));
     const custom = el("input", "stake-input drunkard-custom-stake");
     custom.type = "number";
     custom.inputMode = "numeric";
@@ -5545,7 +5606,7 @@
       syncDrunkardActionButton();
     });
     custom.addEventListener("blur", () => { state.drunkardTyping = false; });
-    card.append(custom);
+    setup.append(custom);
 
     const modeRow = el("div", "drunkard-choice-row drunkard-mode-row");
     [["bot", "Компьютер"], ["invite", "Игрок по приглашению"]].forEach(([mode, label]) => {
@@ -5559,19 +5620,19 @@
       });
       modeRow.append(button);
     });
-    card.append(modeRow);
+    setup.append(modeRow);
 
     const amount = Number(state.drunkardStake);
     const stakeValid = Number.isInteger(amount) && amount >= 10 && amount <= balance();
     if (state.drunkardMode === "bot") {
       const play = el("button", "btn play drunkard-play", state.drunkardBusy
-        ? "Сдаём карты…" : `Играть с компьютером · ${money(Math.max(0, amount))}`);
+        ? "Раздаём…" : `Начать партию · ${money(Math.max(0, amount))}`);
       play.type = "button";
       play.disabled = state.drunkardBusy || !stakeValid;
       play.addEventListener("click", () => drunkardRequest("play", {
         amount, deck_size: state.drunkardDeckSize, token: state.drunkardToken || (state.drunkardToken = newToken()),
       }));
-      card.append(play);
+      setup.append(play);
     } else {
       const opponent = el("input", "stake-input drunkard-opponent");
       opponent.type = "text";
@@ -5587,8 +5648,8 @@
         syncDrunkardActionButton();
       });
       opponent.addEventListener("blur", () => { state.drunkardTyping = false; });
-      card.append(opponent);
-      card.append(el("div", "hint", "Соперник должен хотя бы раз открыть бота. Ставка спишется у обоих только после принятия вызова."));
+      setup.append(opponent);
+      setup.append(el("div", "hint", "Соперник должен хотя бы раз открыть бота. Ставки списываются после принятия вызова."));
       const invite = el("button", "btn play drunkard-play", state.drunkardBusy
         ? "Отправляем вызов…" : `Вызвать игрока · ${money(Math.max(0, amount))}`);
       invite.type = "button";
@@ -5597,19 +5658,18 @@
         opponent: state.drunkardOpponent.trim(), amount,
         deck_size: state.drunkardDeckSize, token: state.drunkardToken || (state.drunkardToken = newToken()),
       }));
-      card.append(invite);
+      setup.append(invite);
     }
-    card.append(el("div", "drunkard-payout-note",
+    setup.append(el("div", "drunkard-payout-note",
       "Победа — выплата 2× ставки (включая её возврат); поражение — ставка теряется; ничья — возврат. Туз старший. Монеты виртуальные."));
-    host.append(card);
+    host.append(setup);
 
-    const stateData = state.drunkard || { incoming: [], outgoing: [], last: null };
     (stateData.incoming || []).forEach((invite) => {
       const panel = el("section", "drunkard-invite");
       panel.append(el("b", null, `Вызов от ${invite.creator_name}`));
       panel.append(el("p", null, `${invite.deck_size} карт · ставка ${money(invite.stake)}`));
       const actions = el("div", "drunkard-actions");
-      const accept = el("button", "btn play", state.drunkardBusy ? "Подождите…" : "Принять · сыграть");
+      const accept = el("button", "btn play", state.drunkardBusy ? "Подождите…" : "Принять · начать партию");
       accept.type = "button";
       accept.disabled = state.drunkardBusy || Number(invite.stake) > balance();
       accept.addEventListener("click", () => drunkardRequest("accept", { game_id: invite.id }));

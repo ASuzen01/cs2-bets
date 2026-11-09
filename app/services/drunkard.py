@@ -30,6 +30,89 @@ def _deck(size: int) -> list[dict[str, Any]]:
     ]
 
 
+def new_game_state(size: int) -> dict[str, Any]:
+    """Создаёт скрытые серверные руки для интерактивной партии."""
+    cards = _deck(int(size))
+    secrets.SystemRandom().shuffle(cards)
+    return {
+        "version": 1,
+        "deck_size": int(size),
+        "hands": {"player": cards[::2], "opponent": cards[1::2]},
+        "rounds": 0,
+        "wars": 0,
+        "last_battle": None,
+        "winner": None,
+        "tie_reason": None,
+    }
+
+
+def advance_round(state: dict[str, Any]) -> dict[str, Any]:
+    """Открывает одну обычную раздачу и, при равенстве, всю последовательность войны."""
+    hands = state["hands"]
+    player = hands["player"]
+    opponent = hands["opponent"]
+    if state.get("winner") is not None or not player or not opponent:
+        return state
+
+    pot: list[dict[str, Any]] = []
+    pairs: list[dict[str, Any]] = []
+    hidden_pairs = 0
+    first, second = player.pop(0), opponent.pop(0)
+    pot.extend((first, second))
+    pairs.append({"player": first["text"], "opponent": second["text"]})
+    state["rounds"] += 1
+    winner = "player" if first["value"] > second["value"] else "opponent" if first["value"] < second["value"] else None
+
+    while winner is None:
+        state["wars"] += 1
+        if len(player) < 2 and len(opponent) < 2:
+            pot.extend(player)
+            pot.extend(opponent)
+            player.clear()
+            opponent.clear()
+            state["tie_reason"] = "war_exhausted"
+            state["winner"] = "draw"
+            break
+        if len(player) < 2:
+            pot.extend(player)
+            player.clear()
+            winner = "opponent"
+            break
+        if len(opponent) < 2:
+            pot.extend(opponent)
+            opponent.clear()
+            winner = "player"
+            break
+
+        # Each side burns one facedown card, then reveals one.
+        pot.extend((player.pop(0), opponent.pop(0)))
+        hidden_pairs += 1
+        first, second = player.pop(0), opponent.pop(0)
+        pot.extend((first, second))
+        pairs.append({"player": first["text"], "opponent": second["text"]})
+        if first["value"] != second["value"]:
+            winner = "player" if first["value"] > second["value"] else "opponent"
+
+    if state.get("winner") != "draw":
+        rng = secrets.SystemRandom()
+        rng.shuffle(pot)
+        hands[winner].extend(pot)
+        if not player:
+            state["winner"] = "opponent"
+        elif not opponent:
+            state["winner"] = "player"
+
+    state["last_battle"] = {
+        "pairs": pairs,
+        "hidden_pairs": hidden_pairs,
+        "winner": state.get("winner") or winner,
+        "pot_size": len(pot),
+        "cards_player": len(player),
+        "cards_opponent": len(opponent),
+    }
+    return state
+
+
 def simulate_game(size: int) -> dict[str, Any]:
     """Сыграть полную партию на сервере; один из победителей забирает всю колоду."""
     cards = _deck(int(size))
