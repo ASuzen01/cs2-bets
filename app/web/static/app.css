@@ -1680,3 +1680,52 @@ button:focus-visible{outline-color:#d6b66d}
   .rift-immersive-readout{min-height:26px}
 }
 @media(prefers-reduced-motion:reduce){.rift-immersive-spin.busy .rift-hud-icon{animation:none}}
+
+/* «Мины» — квадратное поле с серверными раскрытиями и кассой. */
+.game-tile[data-game="mines"]{--game-accent:#8bd6b5;background:radial-gradient(ellipse at 50% 35%,#29443b,#151c27 72%)}
+.mines-card{margin:12px 0 22px;padding:17px 15px 15px;overflow:hidden;border:1px solid #51472f;border-radius:21px;
+  background:radial-gradient(ellipse at 50% -18%,rgba(94,133,99,.17),transparent 60%),linear-gradient(155deg,#1b1d1a,#111515 74%);
+  box-shadow:0 15px 38px rgba(0,0,0,.26)}
+.mines-kicker{color:#c8b575;font-size:9px;font-weight:900;letter-spacing:.18em;text-align:center}
+.mines-title{margin:4px 0 3px;color:#f0eadb;font-family:Georgia,serif;font-size:26px;text-align:center}
+.mines-copy{margin:0 0 12px;color:#aaa391;font-size:11px;line-height:1.45;text-align:center}
+.mines-meter{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px;padding:10px 12px;
+  border:1px solid rgba(202,177,109,.2);border-radius:13px;background:rgba(8,12,11,.42)}
+.mines-meter-main{display:grid;gap:3px;min-width:0}.mines-meter-main span{color:#aaa391;font-size:8px;font-weight:900;letter-spacing:.13em}
+.mines-meter-main b{overflow:hidden;color:#f0dfab;font-size:20px;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap}
+.mines-multiplier{padding:5px 9px;border:1px solid rgba(139,214,181,.25);border-radius:999px;color:#a8e6c5;background:rgba(65,137,101,.12);font-size:13px;font-weight:900;font-variant-numeric:tabular-nums}
+.mines-safe-progress{color:#bcb49e;font-size:10px;font-weight:800;text-align:right}
+.mines-board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;width:min(100%,390px);margin:0 auto;padding:10px;
+  border:1px solid rgba(197,169,98,.18);border-radius:17px;background:linear-gradient(145deg,rgba(29,37,33,.88),rgba(17,23,23,.95));
+  box-shadow:inset 0 0 25px rgba(0,0,0,.2)}
+.mines-cell{display:grid;place-items:center;aspect-ratio:1;min-width:0;padding:0;border:1px solid #594c31;border-radius:10px;color:#cbb476;
+  background:linear-gradient(145deg,#29291f,#1b201d);box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 3px 7px rgba(0,0,0,.2);
+  transition:transform .14s,border-color .16s,background .16s,box-shadow .16s}
+.mines-cell:not(:disabled):active{transform:scale(.94);border-color:#d8bf7a;background:#383222}
+.mines-cell:focus-visible{outline:2px solid #9de0bd;outline-offset:2px}
+.mines-cell:disabled{cursor:default}
+.mines-cell-mark{font-family:Georgia,serif;font-size:clamp(17px,5.5vw,24px);line-height:1;text-shadow:0 1px 8px rgba(220,192,121,.22)}
+.mines-cell.safe{border-color:#40795b;color:#a6edc0;background:linear-gradient(145deg,#1c4938,#183328);box-shadow:inset 0 0 14px rgba(98,218,157,.08)}
+.mines-cell.safe .mines-cell-mark{filter:drop-shadow(0 0 5px rgba(139,231,176,.4))}
+.mines-cell.mine{border-color:#8b5142;color:#e5a48e;background:linear-gradient(145deg,#512f2a,#332322);box-shadow:inset 0 0 16px rgba(218,113,88,.12)}
+.mines-cell.mine .mines-cell-mark{font-family:Arial,sans-serif;font-size:clamp(14px,4.5vw,20px);text-shadow:0 0 8px rgba(231,137,105,.34)}
+.mines-cashout,.mines-start{display:block;width:100%;min-height:48px;margin:12px 0 0;border:1px solid #d3b66f;border-radius:13px;color:#17150f;
+  background:linear-gradient(125deg,#ecd99d,#b58a45);box-shadow:0 8px 22px rgba(173,139,73,.16);font-size:12px;font-weight:900;letter-spacing:.045em}
+.mines-cashout:active,.mines-start:active{filter:brightness(1.08)}
+.mines-cashout:disabled,.mines-start:disabled{opacity:.46}
+.mines-note{margin:9px 0 2px;color:#b8ad8e;font-size:10px;line-height:1.45;text-align:center}
+.mines-result{margin:11px 0 4px;padding:10px 11px;border:1px solid #665533;border-radius:11px;color:#e2d09c;background:rgba(164,130,60,.1);font-size:11px;line-height:1.45;text-align:center}
+.mines-result.lost{border-color:#65403a;color:#d9a49a;background:rgba(115,54,45,.13)}
+.mines-option-row{display:grid;gap:7px;margin-top:13px}.mines-option-row>span{color:#b6ad95;font-size:10px;font-weight:800}
+.mines-presets{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.mines-chip{min-width:0;height:34px;padding:0 5px;border:1px solid #49432f;border-radius:9px;color:#d2c9ae;background:#1d1e19;font-size:11px;font-weight:800}
+.mines-chip.active{border-color:#b89a54;color:#f0dca0;background:rgba(174,139,65,.16)}
+.mines-chip:disabled{opacity:.4}
+.mines-count-input,.mines-stake-input{width:100%;min-width:0;height:36px;padding:0 8px;border:1px solid #4a4432;border-radius:9px;outline:none;color:#eee5ce;background:#151714;
+  font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
+.mines-count-input:focus,.mines-stake-input:focus{border-color:#b99b57;box-shadow:0 0 0 2px rgba(185,155,87,.12)}
+.mines-presets.stake{grid-template-columns:repeat(4,minmax(0,1fr))}
+.mines-stake-input{height:40px;text-align:left;padding:0 11px}
+.mines-card .game-history,.mines-card .game-info{margin-top:9px}
+@media(max-width:360px){.mines-card{padding:15px 11px}.mines-board{gap:5px;padding:7px;border-radius:14px}.mines-cell{border-radius:8px}.mines-presets{gap:4px}.mines-chip{font-size:10px}}
+@media(prefers-reduced-motion:reduce){.mines-cell{transition:none}}

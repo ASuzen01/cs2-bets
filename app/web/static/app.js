@@ -61,6 +61,11 @@
     ladderStake: 10,
     ladderBusy: false,
     crash: null,               // активный/последний полёт «Самолётика» с сервера
+    mines: null,               // серверный раунд «Мин», без скрытого расклада до финала
+    minesStake: 50,
+    minesCount: 3,
+    minesBusy: false,
+    minesTyping: false,
     drunkard: null,            // приглашения и последняя партия «Пьяницы»
     drunkardStake: 50,
     drunkardDeckSize: 36,
@@ -1745,6 +1750,7 @@
         plinko: "Плинко",
         ladder: "Лесенка",
         crash: "Самолётик",
+        mines: "Мины",
         blackjack: "Блэкджек",
       };
       for (const [key, label] of Object.entries(gameLabels)) {
@@ -3396,6 +3402,11 @@
       state.blackjack = data.blackjack || null;
       state.ladder = data.ladder || null;
       state.crash = data.crash || null;
+      if (data.mines && !state.mines) {
+        state.minesCount = Number(data.mines.mine_count) || state.minesCount;
+        state.minesStake = Number(data.mines.stake) || state.minesStake;
+      }
+      state.mines = data.mines || null;
       state.drunkard = data.drunkard || { incoming: [], outgoing: [], last: null };
       syncCrashClock(state.crash);
       // новое достижение — единственный тост, который приятно получить неожиданно
@@ -3418,7 +3429,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.drunkardBusy && !state.drunkardTyping) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -4134,7 +4145,7 @@
         : row.game === "ladder" ? "лесенка"
           : row.game === "drunkard" ? "пьяница"
             : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
-            : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
+            : row.game === "mines" ? "мины" : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
               : row.game === "riftfall" ? "Золотой разлом"
                 : row.game === "baccarat" ? "баккара" : "кости"));
       const tagText = row.game === "roulette" ? "№ " + row.outcome
@@ -4144,7 +4155,8 @@
             : row.game === "slots" ? (slotResult && slotResult.selection === "chest_bonus"
               ? `сундук №${slotResult.chest} · ×${Number(slotResult.multiplier).toFixed(1)}`
               : `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`)
-            : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
+            : row.game === "mines" ? row.outcome
+              : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
               : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
@@ -4197,6 +4209,11 @@
       ));
       box.append(el("span", "edge", "Игрок ×2 · Банкир ×1,95 (5% комиссия) · Ничья ×9 gross (8:1 net)"));
       box.append(el("p", null, "Карты перемешиваются на сервере перед каждой раздачей; анимация только показывает уже определённые карты."));
+    } else if (game === "mines") {
+      box.append(el("b", null, "Мины · поле 5×5. "));
+      box.append(document.createTextNode("Выбери от 2 до 24 мин и открой безопасные клетки. После первого безопасного открытия можно забрать потенциальную выплату или продолжить; попадание на мину завершает раунд без выплаты. Множитель зависит от числа мин и безопасных открытий; выплата включает ставку и округляется вниз до целой монеты."));
+      box.append(el("span", "edge", "теоретический RTP 95,5 % · минимум ставки 10 🪙"));
+      box.append(el("p", null, "Расположение мин определяет сервер. В активном раунде браузер не получает закрытый расклад; после завершения поле раскрывается."));
     } else if (game === "ladder") {
       box.append(el("b", null, "Лесенка · до восьми этажей. "));
       box.append(document.createTextNode("На каждом этаже выбери дверь: за одной спрятан приз. После удачного выбора можно забрать выплату или продолжить; промах завершает игру без выплаты. Число дверей растёт с этажом, выплаты учитывают вероятность прохождения."));
@@ -4509,6 +4526,147 @@
       state.crashPolling = false;
     }
   }, 700);
+
+  async function minesRequest(action, payload) {
+    if (state.minesBusy) return;
+    state.minesBusy = true;
+    renderMines($("#games"));
+    try {
+      const data = await api(`/api/mines/${action}`, { method: "POST", body: payload });
+      state.mines = data.game || null;
+      if (data.balance !== undefined) setBalance(data.balance);
+      if (state.mines && state.mines.status === "lost") {
+        toast("Мина! Ставка потеряна", "bad"); haptic("bad");
+      } else if (state.mines && ["cashed", "cleared"].includes(state.mines.status)) {
+        toast(`Забрано ${money(state.mines.payout)}`, "ok"); haptic("ok");
+      } else {
+        haptic("light");
+      }
+      refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      state.minesBusy = false;
+      renderMines($("#games"));
+    }
+  }
+
+  function renderMines(host) {
+    if (!host) return;
+    host.textContent = "";
+    host.append(gameBackButton());
+    const game = state.mines;
+    const active = Boolean(game && game.status === "active");
+    const card = el("section", "mines-card" + (active ? " active" : ""));
+    card.append(el("div", "mines-kicker", "КАССА · ВЫБОР ЗА ТОБОЙ"));
+    card.append(el("h2", "mines-title", "Мины"));
+    card.append(el("p", "mines-copy", "Открывай безопасные клетки. Забери выплату или рискни ещё раз."));
+
+    const mineCount = active ? Number(game.mine_count) : Number(state.minesCount || (game && game.mine_count) || 3);
+    const boardMineCount = game ? Number(game.mine_count) : mineCount;
+    const safeCount = Number(game && game.safe_count || 0);
+    const potential = active ? Number(game.potential_payout || 0) : 0;
+    const meter = el("div", "mines-meter");
+    const meterMain = el("div", "mines-meter-main");
+    meterMain.append(el("span", null, active && safeCount ? "МОЖНО ЗАБРАТЬ" : "МИНЫ НА ПОЛЕ"));
+    meterMain.append(el("b", null, active && safeCount ? money(potential) : String(mineCount)));
+    meter.append(meterMain);
+    if (active && safeCount) {
+      meter.append(el("span", "mines-multiplier", `×${Number(game.multiplier || 0).toFixed(2)}`));
+    } else {
+      meter.append(el("span", "mines-safe-progress", active ? "Открой первую клетку" : "Поле 5 × 5"));
+    }
+    card.append(meter);
+
+    const opened = new Set((game && game.opened_cells) || []);
+    const revealedMines = new Set((game && game.mine_positions) || []);
+    const board = el("div", "mines-board");
+    board.setAttribute("role", "group");
+    board.setAttribute("aria-label", `Игровое поле 5 на 5, ${boardMineCount} мин`);
+    for (let cell = 0; cell < 25; cell += 1) {
+      const isOpen = opened.has(cell);
+      const isMine = revealedMines.has(cell);
+      const button = el("button", "mines-cell");
+      button.type = "button";
+      button.dataset.minesCell = String(cell);
+      button.disabled = !active || state.minesBusy || isOpen;
+      if (isOpen && isMine) button.classList.add("mine");
+      else if (isOpen || (!active && game && game.mine_positions && !isMine)) button.classList.add("safe");
+      else if (isMine && game && game.status !== "active") button.classList.add("mine");
+      const symbol = isMine && game && game.status !== "active" ? "✹"
+        : isOpen || (!active && game && game.mine_positions) ? "◆" : "✦";
+      button.append(el("span", "mines-cell-mark", symbol));
+      button.setAttribute("aria-label", isOpen || (game && game.status !== "active")
+        ? `Клетка ${cell + 1}: ${isMine ? "мина" : "безопасно"}`
+        : `Открыть клетку ${cell + 1}`);
+      board.append(button);
+    }
+    card.append(board);
+
+    if (active && safeCount > 0) {
+      const cash = el("button", "btn mines-cashout", `ЗАБРАТЬ · ${money(potential)}`);
+      cash.dataset.minesAction = "cashout";
+      cash.disabled = state.minesBusy;
+      card.append(cash);
+      card.append(el("div", "mines-note", "Продолжить — нажми любую закрытую клетку."));
+    } else if (active) {
+      card.append(el("div", "mines-note", "Выбери первую клетку — после безопасного открытия появится cashout."));
+    } else {
+      if (game && game.status === "lost") {
+        card.append(el("div", "mines-result lost", `Попалась мина после ${safeCount} безопасных открытий. Ставка ${money(game.stake)} потеряна.`));
+      } else if (game && game.status === "cashed") {
+        card.append(el("div", "mines-result won", `Забрано ${money(game.payout)} · чистый результат ${moneySigned(game.payout - game.stake)}.`));
+      } else if (game && game.status === "cleared") {
+        card.append(el("div", "mines-result won", `Все безопасные клетки открыты! Выплата ${money(game.payout)}.`));
+      }
+
+      const minePicker = el("div", "mines-option-row");
+      minePicker.append(el("span", null, "Количество мин"));
+      const presets = el("div", "mines-presets");
+      [2, 3, 5, 10].forEach((value) => {
+        const chip = el("button", "mines-chip mines-count-chip" + (mineCount === value ? " active" : ""), String(value));
+        chip.type = "button";
+        chip.dataset.minesCount = String(value);
+        chip.disabled = state.minesBusy;
+        presets.append(chip);
+      });
+      const countInput = el("input", "mines-count-input");
+      countInput.type = "number"; countInput.inputMode = "numeric";
+      countInput.min = "2"; countInput.max = "24"; countInput.step = "1";
+      countInput.value = String(mineCount); countInput.dataset.minesCountInput = "true";
+      countInput.setAttribute("aria-label", "Количество мин от 2 до 24");
+      countInput.disabled = state.minesBusy;
+      presets.append(countInput);
+      minePicker.append(presets);
+      card.append(minePicker);
+
+      const amount = Number(state.minesStake || 50);
+      const stakePicker = el("div", "mines-option-row");
+      stakePicker.append(el("span", null, "Ставка"));
+      const stakePresets = el("div", "mines-presets stake");
+      [10, 25, 50, 100].forEach((value) => {
+        const chip = el("button", "mines-chip mines-stake-chip" + (amount === value ? " active" : ""), String(value));
+        chip.type = "button"; chip.dataset.minesStake = String(value);
+        chip.disabled = state.minesBusy || balance() < value;
+        stakePresets.append(chip);
+      });
+      const stakeInput = el("input", "mines-stake-input");
+      stakeInput.type = "number"; stakeInput.inputMode = "numeric";
+      stakeInput.min = "10"; stakeInput.value = String(amount);
+      stakeInput.dataset.minesStakeInput = "true";
+      stakeInput.setAttribute("aria-label", "Ставка в Минах");
+      stakeInput.disabled = state.minesBusy;
+      stakePicker.append(stakePresets, stakeInput);
+      card.append(stakePicker);
+
+      const start = el("button", "btn mines-start", `НАЧАТЬ · ${money(Math.max(0, amount))}`);
+      start.dataset.minesAction = "start";
+      start.disabled = state.minesBusy || amount < 10 || amount > balance() || mineCount < 2 || mineCount > 24;
+      card.append(start);
+    }
+    card.append(historyNode(), gameInfoNode("mines"));
+    host.append(card);
+  }
 
   function ladderDoorCount(count) {
     const value = Math.abs(Number(count)) % 100;
@@ -7061,6 +7219,10 @@
       host.append(gameBackButton(), el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
       return;
     }
+    if (state.game === "mines") {
+      renderMines(host);
+      return;
+    }
     if (state.game === "ladder") {
       renderLadder(host);
       return;
@@ -7415,7 +7577,7 @@
     document.querySelectorAll("#gameSwitch .game-tile").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (state.game === btn.dataset.game) return;
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.drunkardBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.minesBusy || state.drunkardBusy) {
           // посреди раунда игру не меняем: иначе результат одной игры
           // оказался бы на экране другой
           haptic("bad");
@@ -7448,7 +7610,7 @@
       if (node.dataset.backToGames !== undefined) {
         if (state.slotAutoRunning) stopSlotAutoSpin(true);
         if (state.casinoFullscreen && !closeCasinoFullscreen()) return;
-        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.drunkardBusy) {
+        if (state.casinoBusy || state.ladderBusy || state.blackjackBusy || state.crashBusy || state.minesBusy || state.drunkardBusy) {
           toast("Дождись конца хода", "bad");
           return;
         }
@@ -7459,6 +7621,41 @@
         return;
       }
 
+      if (node.dataset.minesCell !== undefined && state.mines) {
+        minesRequest("pick", {
+          game_id: state.mines.id,
+          cell: Number(node.dataset.minesCell),
+          expected_open_count: (state.mines.opened_cells || []).length,
+          token: newToken(),
+        });
+        return;
+      }
+      if (node.dataset.minesCount) {
+        state.minesCount = Number(node.dataset.minesCount);
+        renderMines(host);
+        return;
+      }
+      if (node.dataset.minesStake) {
+        state.minesStake = Number(node.dataset.minesStake);
+        renderMines(host);
+        return;
+      }
+      if (node.dataset.minesAction) {
+        if (node.dataset.minesAction === "start") {
+          minesRequest("start", {
+            amount: Number(state.minesStake || 10),
+            mine_count: Number(state.minesCount || 3),
+            token: newToken(),
+          });
+        } else if (node.dataset.minesAction === "cashout" && state.mines) {
+          minesRequest("cashout", {
+            game_id: state.mines.id,
+            expected_open_count: (state.mines.opened_cells || []).length,
+            token: newToken(),
+          });
+        }
+        return;
+      }
       if (node.dataset.crashAction) {
         crashRequest(node.dataset.crashAction);
         return;
@@ -7541,12 +7738,35 @@
         syncStakeUI(game);
       }
     });
+    host.addEventListener("focusin", (event) => {
+      if (event.target.closest("[data-mines-stake-input], [data-mines-count-input]")) state.minesTyping = true;
+    });
+    host.addEventListener("focusout", (event) => {
+      if (event.target.closest("[data-mines-stake-input], [data-mines-count-input]")) state.minesTyping = false;
+    });
     host.addEventListener("input", (event) => {
-      const input = event.target.closest("[data-crash-input], [data-ladder-input]");
+      const input = event.target.closest("[data-crash-input], [data-ladder-input], [data-mines-stake-input], [data-mines-count-input]");
       if (!input) return;
       const parsed = Number.parseInt(input.value, 10);
       const amount = Number.isFinite(parsed) ? parsed : 0;
-      if (input.dataset.crashInput) {
+      if (input.dataset.minesCountInput) {
+        state.minesCount = amount;
+        document.querySelectorAll(".mines-count-chip").forEach((chip) => {
+          chip.classList.toggle("active", Number(chip.dataset.minesCount) === amount);
+        });
+        const start = $(".mines-start");
+        if (start) start.disabled = state.minesBusy || Number(state.minesStake) < 10 || Number(state.minesStake) > balance() || amount < 2 || amount > 24;
+      } else if (input.dataset.minesStakeInput) {
+        state.minesStake = amount;
+        const start = $(".mines-start");
+        if (start) {
+          start.textContent = `НАЧАТЬ · ${money(Math.max(0, amount))}`;
+          start.disabled = state.minesBusy || amount < 10 || amount > balance() || Number(state.minesCount) < 2 || Number(state.minesCount) > 24;
+        }
+        document.querySelectorAll(".mines-stake-chip").forEach((chip) => {
+          chip.classList.toggle("active", Number(chip.dataset.minesStake) === amount);
+        });
+      } else if (input.dataset.crashInput) {
         state.crashStake = amount;
         const start = $(".crash-start");
         if (start) {

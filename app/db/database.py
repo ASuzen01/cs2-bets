@@ -88,6 +88,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "ladder_games",
     "blackjack_games",
     "crash_games",
+    "mines_games",
     "quests",
     "quest_chain",
     "achievements",
@@ -125,6 +126,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("ladder_games", "user_id"),
     ("blackjack_games", "user_id"),
     ("crash_games", "user_id"),
+    ("mines_games", "user_id"),
     ("achievements", "user_id"),
     ("quest_chain", "user_id"),
     ("referrals", "invited_id"),
@@ -548,7 +550,7 @@ class Database:
         missing = set(BACKUP_TABLES) - set(data)
         # Older backups may predate these new game tables; restore those as empty,
         # while keeping every established table omission strict.
-        legacy_optional = {"crash_games", "drunkard_games"}
+        legacy_optional = {"crash_games", "drunkard_games", "mines_games"}
         if missing and missing <= legacy_optional:
             data = {**data, **{table: [] for table in missing}}
             missing = set()
@@ -2361,6 +2363,252 @@ class Database:
                 await self._remember_token(conn, user_id, channel, tap, game_id)
             balance = await self._balance_in(conn, user_id)
         return {"game": blackjack.public_state(game_id, state, balance), "balance": balance}
+
+    async def mines_state(self, user_id: int) -> dict[str, Any] | None:
+        """Последний раунд; расположение мин скрыто, пока он активен."""
+        row = await self._fetchone(
+            "SELECT * FROM mines_games WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
+        )
+        return self._mines_payload(row) if row is not None else None
+
+    @staticmethod
+    def _mines_payload(game: Any, balance: int | None = None) -> dict[str, Any]:
+        from app.services import mines as mines_game
+
+        status = str(game["status"])
+        mine_count = int(game["mine_count"])
+        opened = [int(cell) for cell in json.loads(str(game["opened_cells"] or "[]"))]
+        mine_positions = [int(cell) for cell in json.loads(str(game["mine_positions"]))]
+        safe_count = sum(cell not in mine_positions for cell in opened)
+        settled = status in {"lost", "cashed", "cleared"}
+        potential = (
+            int(game["payout"]) if status in {"cashed", "cleared"}
+            else mines_game.payout(int(game["stake"]), mine_count, safe_count)
+            if status == "active" and safe_count else 0
+        )
+        payload: dict[str, Any] = {
+            "id": int(game["id"]),
+            "stake": int(game["stake"]),
+            "mine_count": mine_count,
+            "opened_cells": opened,
+            "safe_count": safe_count,
+            "status": status,
+            "payout": int(game["payout"]),
+            "potential_payout": potential,
+            "multiplier": round(
+                mines_game.multiplier(mine_count, safe_count) if safe_count else 0.0, 4
+            ),
+            "updated_at": int(game["updated_at"]),
+        }
+        if settled:
+            payload["mine_positions"] = mine_positions
+        if balance is not None:
+            payload["balance"] = int(balance)
+        return payload
+
+    async def start_mines(
+        self,
+        user_id: int,
+        stake: int,
+        mine_count: int,
+        mine_positions: list[int],
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Списывает ставку и атомарно сохраняет серверный расклад."""
+        from app.services import mines as mines_game
+
+        try:
+            wager = mines_game.validate_stake(stake)
+            mines = mines_game.validate_mine_count(mine_count)
+            layout = mines_game.validate_layout(mines, mine_positions)
+        except ValueError as exc:
+            raise InvalidBet(str(exc)) from exc
+
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "mines-start", tap, now)
+            if duplicate is not None:
+                previous = duplicate or await self._previous_id(conn, user_id, "mines-start", tap)
+                if previous:
+                    row = await (await conn.execute(
+                        "SELECT * FROM mines_games WHERE id = ? AND user_id = ?",
+                        (previous, user_id),
+                    )).fetchone()
+                    if row is not None:
+                        return self._mines_payload(row, await self._balance_in(conn, user_id))
+
+            active = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            )).fetchone()
+            if active is not None:
+                game_id = int(active["id"])
+                if tap:
+                    await self._remember_token(conn, user_id, "mines-start", tap, game_id)
+                return self._mines_payload(active, await self._balance_in(conn, user_id))
+
+            debit = await conn.execute(
+                "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                (wager, user_id, wager),
+            )
+            if debit.rowcount == 0:
+                raise InsufficientFunds("Недостаточно монет на балансе")
+            await self._ledger(conn, user_id, -wager, "ставка · Мины · старт", now)
+            created = await conn.execute(
+                """INSERT INTO mines_games
+                    (user_id, stake, mine_count, mine_positions, opened_cells, status,
+                     payout, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, '[]', 'active', 0, ?, ?) RETURNING id""",
+                (user_id, wager, mines, json.dumps(layout), now, now),
+            )
+            result = await created.fetchone()
+            game_id = int(result["id"]) if result else int(created.lastrowid or 0)
+            row = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE id = ?", (game_id,)
+            )).fetchone()
+            assert row is not None
+            if tap:
+                await self._remember_token(conn, user_id, "mines-start", tap, game_id)
+            balance = await self._balance_in(conn, user_id)
+            return self._mines_payload(row, balance)
+
+    async def pick_mines(
+        self,
+        user_id: int,
+        game_id: int,
+        cell: int,
+        expected_open_count: int,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Reveals one cell and settles a mine/complete board atomically."""
+        from app.services import mines as mines_game
+
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            row = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            )).fetchone()
+            if row is None:
+                raise InvalidBet("Раунд «Мины» не найден")
+            channel = f"mines-pick-{game_id}"
+            duplicate = await self._claim_token(conn, user_id, channel, tap, now)
+            if duplicate is not None:
+                return self._mines_payload(row, await self._balance_in(conn, user_id))
+            if str(row["status"]) != "active":
+                return self._mines_payload(row, await self._balance_in(conn, user_id))
+
+            opened = [int(item) for item in json.loads(str(row["opened_cells"] or "[]"))]
+            if len(opened) != int(expected_open_count):
+                raise InvalidBet("Поле уже обновилось — проверь открытые клетки")
+            if not 0 <= int(cell) < mines_game.CELLS or int(cell) in opened:
+                raise InvalidBet("Выбери закрытую клетку на поле")
+            mines = [int(item) for item in json.loads(str(row["mine_positions"]))]
+            opened.append(int(cell))
+            mine_count = int(row["mine_count"])
+            safe_count = sum(item not in mines for item in opened)
+            status = "active"
+            payout = 0
+            if int(cell) in mines:
+                status = "lost"
+            elif safe_count == mines_game.CELLS - mine_count:
+                status = "cleared"
+                payout = mines_game.payout(int(row["stake"]), mine_count, safe_count)
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id)
+                )
+                await self._ledger(conn, user_id, payout, "выигрыш · Мины · все клетки", now)
+
+            await conn.execute(
+                "UPDATE mines_games SET opened_cells = ?, status = ?, payout = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(opened), status, payout, now, game_id),
+            )
+            if status in {"lost", "cleared"}:
+                outcome = (
+                    f"мина · {safe_count} безопасных" if status == "lost"
+                    else f"все клетки · {safe_count} безопасных"
+                )
+                await self._record_mines_history(conn, row, safe_count, payout, outcome, now)
+                await self._bump_quest(conn, user_id, "casino", now)
+            updated = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE id = ?", (game_id,)
+            )).fetchone()
+            assert updated is not None
+            if tap:
+                await self._remember_token(conn, user_id, channel, tap, game_id)
+            return self._mines_payload(updated, await self._balance_in(conn, user_id))
+
+    async def cashout_mines(
+        self,
+        user_id: int,
+        game_id: int,
+        expected_open_count: int,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Cash out the server-calculated gross return exactly once."""
+        from app.services import mines as mines_game
+
+        now = int(time.time())
+        tap = self._clean_token(token)
+        async with self.transaction() as conn:
+            row = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE id = ? AND user_id = ?", (game_id, user_id)
+            )).fetchone()
+            if row is None:
+                raise InvalidBet("Раунд «Мины» не найден")
+            channel = f"mines-cashout-{game_id}"
+            duplicate = await self._claim_token(conn, user_id, channel, tap, now)
+            if duplicate is not None or str(row["status"]) in {"cashed", "lost", "cleared"}:
+                return self._mines_payload(row, await self._balance_in(conn, user_id))
+            if str(row["status"]) != "active":
+                raise InvalidBet("Раунд больше нельзя продолжить")
+            opened = [int(item) for item in json.loads(str(row["opened_cells"] or "[]"))]
+            if len(opened) != int(expected_open_count):
+                raise InvalidBet("Поле уже обновилось — проверь открытые клетки")
+            mines = [int(item) for item in json.loads(str(row["mine_positions"]))]
+            safe_count = sum(item not in mines for item in opened)
+            if safe_count < 1:
+                raise InvalidBet("Сначала открой хотя бы одну безопасную клетку")
+            payout = mines_game.payout(int(row["stake"]), int(row["mine_count"]), safe_count)
+            await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+            await self._ledger(
+                conn, user_id, payout,
+                f"выигрыш · Мины · забрано ×{payout / int(row['stake']):.2f}", now,
+            )
+            await conn.execute(
+                "UPDATE mines_games SET status = 'cashed', payout = ?, updated_at = ? WHERE id = ?",
+                (payout, now, game_id),
+            )
+            await self._record_mines_history(
+                conn, row, safe_count, payout, f"забрано · {safe_count} безопасных", now
+            )
+            await self._bump_quest(conn, user_id, "casino", now)
+            updated = await (await conn.execute(
+                "SELECT * FROM mines_games WHERE id = ?", (game_id,)
+            )).fetchone()
+            assert updated is not None
+            if tap:
+                await self._remember_token(conn, user_id, channel, tap, game_id)
+            return self._mines_payload(updated, await self._balance_in(conn, user_id))
+
+    async def _record_mines_history(
+        self, conn: Any, game: Any, safe_count: int, payout: int, outcome: str, now: int
+    ) -> None:
+        from app.services import mines as mines_game
+
+        stake = int(game["stake"])
+        multiplier = mines_game.multiplier(int(game["mine_count"]), safe_count) if safe_count else 1.0
+        label = f"Мины · {int(game['mine_count'])} мин · {outcome}"
+        await conn.execute(
+            """INSERT INTO casino_bets
+                (user_id, game, selection, label, amount, odds, outcome, win, payout, created_at)
+                VALUES (?, 'mines', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(game["user_id"]), f"mines:{int(game['mine_count'])}", label, stake,
+                multiplier, outcome, 1 if payout > stake else 0, int(payout), now,
+            ),
+        )
 
     async def ladder_state(self, user_id: int) -> dict[str, Any] | None:
         """Последняя партия: текущую дверь никогда не раскрываем до выбора игрока."""

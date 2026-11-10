@@ -26,6 +26,7 @@ from app.services import achievements, baccarat, games, riftfall, slot_machine
 from app.services import blackjack as blackjack_game
 from app.services import crash as crash_game
 from app.services import ladder as ladder_game
+from app.services import mines as mines_game
 from app.services.bonus import (
     TEASE_PRIZE,
     TEASE_TAPS,
@@ -117,6 +118,10 @@ def register_routes(
     app.router.add_post("/api/crash/start", api_crash_start)
     app.router.add_get("/api/crash/state", api_crash_state)
     app.router.add_post("/api/crash/cashout", api_crash_cashout)
+    app.router.add_get("/api/mines/state", api_mines_state)
+    app.router.add_post("/api/mines/start", api_mines_start)
+    app.router.add_post("/api/mines/pick", api_mines_pick)
+    app.router.add_post("/api/mines/cashout", api_mines_cashout)
     return app
 
 
@@ -313,6 +318,7 @@ async def api_state(request: web.Request) -> web.Response:
             "blackjack": await db.blackjack_state(user_id),
             "ladder": await db.ladder_state(user_id),
             "crash": await db.crash_state(user_id),
+            "mines": await db.mines_state(user_id),
             "drunkard": await db.drunkard_state(user_id),
             "limits": {
                 "min_bet": settings.min_bet,
@@ -411,6 +417,10 @@ async def honesty_payload(db: Database) -> dict[str, Any]:
                 "cashout_2x_return": 95.0248,
                 "cashout_2x_win_probability": 47.5124,
                 "note": "множитель растёт до скрытого crash-point; валовая выплата — ставка × множитель при cash-out раньше точки. Точка округлена вниз до 0,01; при cash-out ровно ×2 возврат 95,0248%",
+            },
+            "mines": {
+                "rtp": round(mines_game.RTP * 100, 1),
+                "note": "поле 5×5, от 2 до 24 мин; вероятность безопасных открытий считается без возвращения, cashout доступен после первого безопасного открытия; выплата округляется вниз до целой монеты",
             },
             "blackjack": {
                 "rtp": None,
@@ -978,6 +988,7 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
         "plinko": games.plinko_config(),
         "slots": slot_machine.slot_config(),
         "riftfall": riftfall.slot_config(),
+        "mines": mines_game.config(),
         "slot_state": await db.slot_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
@@ -1349,6 +1360,69 @@ async def api_crash_cashout(request: web.Request) -> web.Response:
     except InvalidBet as exc:
         return _bad(str(exc))
     return web.json_response({"ok": True, "game": result, "balance": result["balance"]})
+
+
+async def api_mines_state(request: web.Request) -> web.Response:
+    """Возвращает свой последний раунд, не раскрывая мины в активной игре."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    return web.json_response({"ok": True, "game": await db.mines_state(user_id), "balance": await db.get_balance(user_id)})
+
+
+async def api_mines_start(request: web.Request) -> web.Response:
+    """Сервер генерирует расклад и атомарно списывает ставку."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    try:
+        stake = mines_game.validate_stake(_as_int(body.get("amount")))
+        mine_count = mines_game.validate_mine_count(_as_int(body.get("mine_count")))
+        game = await db.start_mines(
+            user_id, stake, mine_count, mines_game.place_mines(mine_count), body.get("token"),
+        )
+    except ValueError as exc:
+        return _bad(str(exc))
+    except InsufficientFunds:
+        return _bad("Недостаточно монет на балансе")
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    metrics.count_casino()
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_mines_pick(request: web.Request) -> web.Response:
+    """Открывает ровно одну клетку; координаты мин клиенту не доверяются."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    if game_id <= 0:
+        return _bad("Раунд «Мины» не найден")
+    try:
+        game = await db.pick_mines(
+            user_id, game_id, _as_int(body.get("cell")),
+            _as_int(body.get("expected_open_count")), body.get("token"),
+        )
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
+
+
+async def api_mines_cashout(request: web.Request) -> web.Response:
+    """Забирает выплату по серверному множителю и ожидаемой версии поля."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    body = await _json_body(request)
+    game_id = _as_int(body.get("game_id"))
+    if game_id <= 0:
+        return _bad("Раунд «Мины» не найден")
+    try:
+        game = await db.cashout_mines(
+            user_id, game_id, _as_int(body.get("expected_open_count")), body.get("token"),
+        )
+    except InvalidBet as exc:
+        return _bad(str(exc))
+    return web.json_response({"ok": True, "game": game, "balance": game["balance"]})
 
 
 __all__ = ["DB_KEY", "STATIC_DIR", "USER_KEY", "build_app", "register_routes", "render_index"]

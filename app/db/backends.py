@@ -252,6 +252,23 @@ CREATE INDEX IF NOT EXISTS idx_crash_user ON crash_games(user_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_one_active ON crash_games(user_id)
     WHERE status = 'flying';
 
+-- «Мины»: полный расклад хранится только на сервере до завершения раунда
+CREATE TABLE IF NOT EXISTS mines_games (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    stake          INTEGER NOT NULL,
+    mine_count     INTEGER NOT NULL,
+    mine_positions TEXT NOT NULL,
+    opened_cells   TEXT NOT NULL DEFAULT '[]',
+    status         TEXT NOT NULL,
+    payout         INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mines_user ON mines_games(user_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mines_one_active ON mines_games(user_id)
+    WHERE status = 'active';
+
 -- задания дня: прогресс и награда, по строке на игрока в сутки
 CREATE TABLE IF NOT EXISTS quests (
     user_id    INTEGER NOT NULL,
