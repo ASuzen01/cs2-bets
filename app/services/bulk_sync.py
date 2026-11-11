@@ -189,17 +189,24 @@ async def bulk_upsert_maps(db: Any, items: Sequence[Mapping[str, Any]]) -> None:
                       THEN COALESCE(excluded.odds_a, match_maps.odds_a) ELSE match_maps.odds_a END,
         odds_b = CASE WHEN match_maps.status IN ('open', 'live')
                       THEN COALESCE(excluded.odds_b, match_maps.odds_b) ELSE match_maps.odds_b END,
-        score_a = CASE WHEN match_maps.status IN ('open', 'live')
+        score_a = CASE WHEN match_maps.status IN ('open', 'live', 'awaiting')
                        THEN COALESCE(excluded.score_a, match_maps.score_a) ELSE match_maps.score_a END,
-        score_b = CASE WHEN match_maps.status IN ('open', 'live')
+        score_b = CASE WHEN match_maps.status IN ('open', 'live', 'awaiting')
                        THEN COALESCE(excluded.score_b, match_maps.score_b) ELSE match_maps.score_b END
     """
     changed = """
-        match_maps.status IN ('open', 'live') AND (
-            match_maps.odds_a IS DISTINCT FROM COALESCE(excluded.odds_a, match_maps.odds_a) OR
-            match_maps.odds_b IS DISTINCT FROM COALESCE(excluded.odds_b, match_maps.odds_b) OR
-            match_maps.score_a IS DISTINCT FROM COALESCE(excluded.score_a, match_maps.score_a) OR
-            match_maps.score_b IS DISTINCT FROM COALESCE(excluded.score_b, match_maps.score_b)
+        (
+            match_maps.status IN ('open', 'live') AND (
+                match_maps.odds_a IS DISTINCT FROM COALESCE(excluded.odds_a, match_maps.odds_a) OR
+                match_maps.odds_b IS DISTINCT FROM COALESCE(excluded.odds_b, match_maps.odds_b) OR
+                match_maps.score_a IS DISTINCT FROM COALESCE(excluded.score_a, match_maps.score_a) OR
+                match_maps.score_b IS DISTINCT FROM COALESCE(excluded.score_b, match_maps.score_b)
+            )
+        ) OR (
+            match_maps.status = 'awaiting' AND (
+                match_maps.score_a IS DISTINCT FROM COALESCE(excluded.score_a, match_maps.score_a) OR
+                match_maps.score_b IS DISTINCT FROM COALESCE(excluded.score_b, match_maps.score_b)
+            )
         )
     """
 

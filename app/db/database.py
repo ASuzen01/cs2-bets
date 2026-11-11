@@ -3728,6 +3728,20 @@ class Database:
                 "SELECT * FROM match_maps WHERE id = ?", (existing["id"],)
             )
             return refreshed or existing, False
+        if existing["status"] == "awaiting":
+            # Odds stay frozen once a map awaits manual confirmation, but the
+            # feed may later provide a final score that makes auto-settlement safe.
+            new_score_a = score_a if score_a is not None else existing["score_a"]
+            new_score_b = score_b if score_b is not None else existing["score_b"]
+            if (new_score_a, new_score_b) != (existing["score_a"], existing["score_b"]):
+                await self._write(
+                    "UPDATE match_maps SET score_a = ?, score_b = ? WHERE id = ?",
+                    (new_score_a, new_score_b, existing["id"]),
+                )
+                refreshed = await self._fetchone(
+                    "SELECT * FROM match_maps WHERE id = ?", (existing["id"],)
+                )
+                return refreshed or existing, False
         return existing, False
 
     async def match_maps(self, match_id: int) -> list[Any]:

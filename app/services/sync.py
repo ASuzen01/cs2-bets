@@ -459,7 +459,7 @@ class MatchSyncer:
             for card in cards:
                 by_event[card.event_id] = card
 
-        for row in await self.db.maps_by_status(["open", "live"]):
+        for row in await self.db.maps_by_status(["open", "live", "awaiting"]):
             card = by_event.get(int(row["fonbet_id"]))
             if card is not None and card.score_a is not None and card.score_b is not None:
                 # _store has already batch-upserted the feed. Keep this fallback

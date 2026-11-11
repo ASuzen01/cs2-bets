@@ -12,6 +12,7 @@ import time
 import pytest
 
 from app.db import Database
+from app.services.bulk_sync import bulk_upsert_maps
 from app.services.fonbet import FonbetMap
 from app.services.maps import finish_maps_of_match
 from app.services.sync import MatchSyncer
@@ -161,6 +162,49 @@ async def test_sync_settles_map_by_round_score(db: Database) -> None:
     assert stats["maps_settled"] == 1
     assert str((await db.get_map(int(card["id"])))["status"]) == "finished"
     assert await db.get_balance(2) == 1070
+
+
+async def test_awaiting_map_settles_when_later_feed_has_final_score(db: Database) -> None:
+    """Ожидающая карта получает финальный счёт позже и автоматически рассчитывается."""
+    match = await _match(db)
+    card = await _map(db, int(match["id"]), score=(12, 12))
+    await db.place_map_bet(int(card["id"]), 2, None, "b", 100)
+    await db.set_map_status(int(card["id"]), "awaiting")
+
+    feed_card = FonbetMap(
+        event_id=100001,
+        parent_id=int(match["fonbet_id"]),
+        map_number=1,
+        odds_a=9.9,
+        odds_b=9.8,
+        score_a=14,
+        score_b=16,
+        finished=False,
+    )
+    await bulk_upsert_maps(
+        db,
+        [{
+            "match_id": int(match["id"]),
+            "fonbet_id": feed_card.event_id,
+            "map_number": feed_card.map_number,
+            "odds_a": feed_card.odds_a,
+            "odds_b": feed_card.odds_b,
+            "score_a": feed_card.score_a,
+            "score_b": feed_card.score_b,
+        }],
+    )
+
+    stats = {"maps_settled": 0}
+    await MatchSyncer(bot=None, db=db)._settle_maps(
+        {int(match["fonbet_id"]): [feed_card]}, stats
+    )
+
+    settled = await db.get_map(int(card["id"]))
+    assert stats["maps_settled"] == 1
+    assert settled["status"] == "finished" and settled["winner"] == "b"
+    assert (settled["score_a"], settled["score_b"]) == (14, 16)
+    assert (float(settled["odds_a"]), float(settled["odds_b"])) == (1.70, 2.10)
+    assert await db.get_balance(2) == 1110
 
 
 async def test_sync_keeps_map_open_for_live_betting_when_feed_lost_it(db: Database) -> None:
