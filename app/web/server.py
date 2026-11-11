@@ -83,6 +83,7 @@ def register_routes(
     app.router.add_get("/static/{name}", static_file)
 
     app.router.add_get("/api/state", api_state)
+    app.router.add_get("/api/lines", api_lines)
     app.router.add_post("/api/bet", api_bet)
     app.router.add_post("/api/express", api_express)
     app.router.add_post("/api/bonus", api_bonus)
@@ -192,12 +193,7 @@ async def _miniapp_lines(db: Database) -> dict[str, list[dict[str, Any]]]:
     Do not cache across requests: admin actions and tests may insert or change a
     match between two API calls, and the mini-app should observe it immediately.
     """
-    rows_by_kind = {
-        "matches": await db.open_matches(limit=60, sport="cs2"),
-        "live": await db.live_matches(limit=40),
-        "football": await db.open_matches(limit=200, sport="football"),
-        "hockey": await db.open_matches(limit=120, sport="hockey"),
-    }
+    rows_by_kind = await db.miniapp_matches()
     all_rows = [row for rows in rows_by_kind.values() for row in rows]
     maps = await db.maps_for_matches([int(row["id"]) for row in all_rows])
     return {
@@ -328,6 +324,13 @@ async def api_state(request: web.Request) -> web.Response:
             },
         }
     )
+
+
+async def api_lines(request: web.Request) -> web.Response:
+    """Fast line-only refresh; avoids fetching per-user game/profile state."""
+    db: Database = request.app[DB_KEY]
+    lines = await _miniapp_lines(db)
+    return web.json_response({"ok": True, **lines})
 
 
 async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:

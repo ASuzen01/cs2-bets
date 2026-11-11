@@ -161,6 +161,7 @@ class MatchSyncer:
 
     async def _run(self) -> None:
         while True:
+            started = time.monotonic()
             try:
                 await self.tick()
             except asyncio.CancelledError:
@@ -168,7 +169,12 @@ class MatchSyncer:
             except Exception as exc:  # сеть/парсинг — не роняем бота
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 log.exception("Синхронизация линии упала")
-            await asyncio.sleep(max(30, settings.sync_interval))
+            # Cadence is measured start-to-start. A slow tick is never overlapped,
+            # and the small floor avoids hammering upstream when a cycle exceeds
+            # its configured target period.
+            interval = max(15, int(settings.sync_interval))
+            elapsed = time.monotonic() - started
+            await asyncio.sleep(max(5.0, interval - elapsed))
 
     # ----------------------------------------------------------------- tick
     @staticmethod

@@ -15,6 +15,15 @@ from typing import Any
 # SQLite historically has a 999-bind-variable limit. At 13 parameters per match,
 # 40 rows stay comfortably below it and still cut hundreds of statements to a few.
 MAX_BATCH_ROWS = 40
+MAX_POSTGRES_BATCH_ROWS = 500
+
+
+def _batch_rows(db: Any) -> int:
+    """Use SQLite's conservative bind limit, but amortize Postgres round-trips."""
+    checker = getattr(db, "is_postgres", None)
+    return MAX_POSTGRES_BATCH_ROWS if callable(checker) and checker() else MAX_BATCH_ROWS
+
+
 MATCH_COLUMNS = (
     "fonbet_id",
     "tournament",
@@ -61,7 +70,7 @@ async def load_matches_by_fonbet_ids(db: Any, fonbet_ids: Sequence[int]) -> dict
     """Load the existing rows needed for old-line filtering in a few queries."""
     ids = list(dict.fromkeys(int(value) for value in fonbet_ids))
     found: dict[int, Any] = {}
-    for batch in _chunks(ids):
+    for batch in _chunks(ids, _batch_rows(db)):
         placeholders = ",".join("?" for _ in batch)
         async with db.conn.execute(
             f"SELECT * FROM matches WHERE fonbet_id IN ({placeholders})", tuple(batch)
@@ -125,7 +134,7 @@ async def bulk_upsert_matches(
         )
     """
 
-    for batch in _chunks(prepared):
+    for batch in _chunks(prepared, _batch_rows(db)):
         values = [
             (
                 int(item["fonbet_id"]),
@@ -194,7 +203,7 @@ async def bulk_upsert_maps(db: Any, items: Sequence[Mapping[str, Any]]) -> None:
         )
     """
 
-    for batch in _chunks(prepared):
+    for batch in _chunks(prepared, _batch_rows(db)):
         values = [
             (
                 int(item["match_id"]),

@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     # а снимаем через stale_match_hours.
     hockey_manual_settle: bool = True
 
-    sync_interval: int = 45              # период обновления линии, сек (лайв — кэфы свежее)
+    sync_interval: int = 20              # цель периода линии, сек; тики не накладываются
     # ставки по ходу матча: кэф берётся текущий, приём идёт до конца игры
     live_betting: bool = True
     autopost_matches: bool = True        # постить новые матчи в чаты

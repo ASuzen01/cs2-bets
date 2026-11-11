@@ -90,6 +90,18 @@ async def test_state_returns_matches_and_balance(client: TestClient, match) -> N
     assert payload["limits"]["min_bet"] == settings.min_bet
 
 
+async def test_lines_endpoint_returns_only_competition_data(client: TestClient, match) -> None:
+    response = await client.get("/api/lines")
+    payload = await response.json()
+
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert payload["matches"][0]["team_a"] == "Aurora"
+    assert payload["live"] == []
+    assert "user" not in payload
+    assert "casino" not in payload
+
+
 async def test_place_bet_over_http(client: TestClient, match, db: Database) -> None:
     response = await client.post(
         "/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 200}

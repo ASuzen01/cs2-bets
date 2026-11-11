@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS matches (
     finished_at       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status, start_time);
+CREATE INDEX IF NOT EXISTS idx_matches_sport_status_start ON matches(sport, status, start_time, id);
 CREATE INDEX IF NOT EXISTS idx_matches_fonbet ON matches(fonbet_id);
 
 CREATE TABLE IF NOT EXISTS match_maps (

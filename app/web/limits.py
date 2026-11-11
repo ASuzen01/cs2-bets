@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections import defaultdict, deque
 from typing import Final
@@ -27,6 +28,7 @@ RULES: Final[dict[str, tuple[int, int]]] = {
     "/api/achievements": (30, 60),
     "/api/honesty": (30, 60),
     "/api/state": (120, 60),
+    "/api/lines": (30, 60),
     "/api/stats": (60, 60),
     "/api/bets": (60, 60),
     "/api/history": (60, 60),
@@ -86,6 +88,7 @@ class Metrics:
         self.duration_count: dict[str, int] = defaultdict(int)
         self.duration_sum: dict[str, float] = defaultdict(float)
         self.duration_max: dict[str, float] = defaultdict(float)
+        self.duration_window: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=1000))
         self.bets = 0
         self.express = 0
         self.casino = 0
@@ -104,6 +107,18 @@ class Metrics:
         self.duration_count[path] += 1
         self.duration_sum[path] += duration
         self.duration_max[path] = max(self.duration_max[path], duration)
+        self.duration_window[path].append(duration)
+
+    @staticmethod
+    def _percentile(samples: deque[float], percentile: float) -> float:
+        """Linear-interpolated percentile over the retained rolling sample."""
+        ordered = sorted(samples)
+        if not ordered:
+            return 0.0
+        position = (len(ordered) - 1) * percentile
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
     def count_bet(self) -> None:
         self.bets += 1
@@ -151,6 +166,18 @@ class Metrics:
             lines.append(
                 f'app_request_duration_seconds_max{{path="{label}"}} '
                 f'{self.duration_max[path]:.6f}'
+            )
+            samples = self.duration_window[path]
+            lines.append(
+                f'app_request_duration_seconds_window_samples{{path="{label}"}} {len(samples)}'
+            )
+            lines.append(
+                f'app_request_duration_seconds_p50{{path="{label}"}} '
+                f'{self._percentile(samples, 0.50):.6f}'
+            )
+            lines.append(
+                f'app_request_duration_seconds_p95{{path="{label}"}} '
+                f'{self._percentile(samples, 0.95):.6f}'
             )
         return "\n".join(lines) + "\n"
 

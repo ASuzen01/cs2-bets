@@ -17,6 +17,8 @@ services:
         sync: false
       - key: WEBHOOK_PATH
         value: /webhook
+      - key: SYNC_INTERVAL
+        value: "20"
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: BOT_TOKEN

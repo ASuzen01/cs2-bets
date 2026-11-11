@@ -460,6 +460,52 @@ class Database:
             (user_id, delta, reason, now or int(time.time())),
         )
 
+    async def _apply_settlement_payouts(
+        self,
+        conn: Any,
+        bet_payouts: Sequence[tuple[int, int]],
+        user_payouts: dict[int, int],
+        reason: str,
+        now: int,
+    ) -> None:
+        """Apply a match result with bounded multi-row SQL instead of N round-trips."""
+        batch_size = 2_000 if self.is_postgres() else 200
+        for offset in range(0, len(bet_payouts), batch_size):
+            batch = bet_payouts[offset : offset + batch_size]
+            cases = " ".join("WHEN ? THEN ?" for _ in batch)
+            ids = ",".join("?" for _ in batch)
+            params = tuple(value for row in batch for value in row) + tuple(
+                bet_id for bet_id, _ in batch
+            )
+            await conn.execute(
+                f"UPDATE bets SET payout = CASE id {cases} ELSE payout END WHERE id IN ({ids})",
+                params,
+            )
+
+        users = list(user_payouts.items())
+        for offset in range(0, len(users), batch_size):
+            batch = users[offset : offset + batch_size]
+            cases = " ".join("WHEN ? THEN ?" for _ in batch)
+            ids = ",".join("?" for _ in batch)
+            params = tuple(value for row in batch for value in row) + tuple(
+                user_id for user_id, _ in batch
+            )
+            await conn.execute(
+                "UPDATE users SET balance = balance + CASE user_id "
+                f"{cases} ELSE 0 END WHERE user_id IN ({ids})",
+                params,
+            )
+            values = ",".join("(?, ?, ?, ?)" for _ in batch)
+            ledger_params = tuple(
+                value
+                for user_id, amount in batch
+                for value in (user_id, amount, reason, now)
+            )
+            await conn.execute(
+                f"INSERT INTO ledger (user_id, delta, reason, created_at) VALUES {values}",
+                ledger_params,
+            )
+
     # ----------------------------------------------------------------- users
     async def upsert_user(self, user_id: int, username: str | None, full_name: str | None) -> None:
         now = int(time.time())
@@ -3449,6 +3495,67 @@ class Database:
             (limit,),
         )
 
+    async def miniapp_matches(self) -> dict[str, list[Any]]:
+        """Fetch the four public line groups in one indexed query.
+
+        The WebApp refreshes these groups frequently. Combining per-sport open
+        limits and the global live limit avoids four sequential Postgres trips.
+        """
+        if not self.is_postgres():
+            # SQLite calls are in-process, so four index-backed LIMIT queries
+            # beat the UNION/CTE planner overhead; keep the lower-latency path.
+            rows_by_kind = {
+                "matches": await self.open_matches(limit=60, sport="cs2"),
+                "live": await self.live_matches(limit=40),
+                "football": await self.open_matches(limit=200, sport="football"),
+                "hockey": await self.open_matches(limit=120, sport="hockey"),
+            }
+            return rows_by_kind
+
+        rows = await self._fetchall(
+            """
+            WITH
+                cs2_line AS (
+                    SELECT matches.*, 'matches' AS _miniapp_group FROM matches
+                    WHERE status = 'open' AND sport = 'cs2'
+                    ORDER BY start_time ASC, id ASC LIMIT 60
+                ),
+                live_line AS (
+                    SELECT matches.*, 'live' AS _miniapp_group FROM matches
+                    WHERE status = 'live'
+                    ORDER BY start_time DESC, id DESC LIMIT 40
+                ),
+                football_line AS (
+                    SELECT matches.*, 'football' AS _miniapp_group FROM matches
+                    WHERE status = 'open' AND sport = 'football'
+                    ORDER BY start_time ASC, id ASC LIMIT 200
+                ),
+                hockey_line AS (
+                    SELECT matches.*, 'hockey' AS _miniapp_group FROM matches
+                    WHERE status = 'open' AND sport = 'hockey'
+                    ORDER BY start_time ASC, id ASC LIMIT 120
+                )
+            SELECT * FROM cs2_line
+            UNION ALL SELECT * FROM live_line
+            UNION ALL SELECT * FROM football_line
+            UNION ALL SELECT * FROM hockey_line
+            """
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "matches": [], "live": [], "football": [], "hockey": [],
+        }
+        for item in rows:
+            row = dict(item)
+            group = str(row.pop("_miniapp_group"))
+            grouped[group].append(row)
+
+        grouped["live"].sort(
+            key=lambda row: (int(row["start_time"]), int(row["id"])), reverse=True
+        )
+        for kind in ("matches", "football", "hockey"):
+            grouped[kind].sort(key=lambda row: (int(row["start_time"]), int(row["id"])))
+        return grouped
+
     async def status_counts(self, sport: str | None = None) -> dict[str, int]:
         """Сколько матчей в каждом статусе — для /health и админской диагностики."""
         sql = "SELECT status, COUNT(*) AS n FROM matches "
@@ -3789,6 +3896,7 @@ class Database:
             paid = 0
             payouts: dict[int, int] = {}
             settlements: list[dict[str, Any]] = []
+            bet_payouts: list[tuple[int, int]] = []
             for bet in bets:
                 amount = int(bet["amount"])
                 win = bet["side"] == winner
@@ -3807,21 +3915,19 @@ class Database:
                         "won": win,
                     }
                 )
-                await conn.execute(
-                    "UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"])
-                )
+                bet_payouts.append((int(bet["id"]), payout))
 
-            for user_id, total in payouts.items():
-                await conn.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
-                )
-                await self._ledger(
-                    conn, user_id, total, f"выплата · карта {int(card['map_number'])} · {match_tag(match)}"
-                )
-
+            settled_at = int(time.time())
+            await self._apply_settlement_payouts(
+                conn,
+                bet_payouts,
+                payouts,
+                f"выплата · карта {int(card['map_number'])} · {match_tag(match)}",
+                settled_at,
+            )
             await conn.execute(
                 "UPDATE match_maps SET status = 'finished', winner = ?, finished_at = ? WHERE id = ?",
-                (winner, int(time.time()), map_id),
+                (winner, settled_at, map_id),
             )
 
         team_a = str(match["team_a"]) if match is not None else ""
@@ -4019,6 +4125,7 @@ class Database:
             refunded = 0
             payouts: dict[int, int] = {}
             settlements: list[dict[str, Any]] = []
+            bet_payouts: list[tuple[int, int]] = []
 
             for bet in bets:
                 amount = int(bet["amount"])
@@ -4055,21 +4162,19 @@ class Database:
                         "void": outcome == "void",
                     }
                 )
-                await conn.execute("UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"]))
+                bet_payouts.append((int(bet["id"]), payout))
 
-            for user_id, total in payouts.items():
-                await conn.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
-                )
-                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
-
+            settled_at = int(time.time())
+            await self._apply_settlement_payouts(
+                conn, bet_payouts, payouts, f"выплата · {match_tag(match)}", settled_at
+            )
             await conn.execute(
                 """
                 UPDATE matches SET status = 'finished', winner = ?, result_source = ?,
                                    score_a = ?, score_b = ?, finished_at = ?
                 WHERE id = ?
                 """,
-                (winner, source, score_a, score_b, int(time.time()), match_id),
+                (winner, source, score_a, score_b, settled_at, match_id),
             )
             expresses = await self._resolve_expresses(conn, match_id, winner)
 
@@ -4197,6 +4302,7 @@ class Database:
             refunded = 0
             payouts: dict[int, int] = {}
             settlements: list[dict[str, Any]] = []
+            bet_payouts: list[tuple[int, int]] = []
 
             for bet in bets:
                 amount = int(bet["amount"])
@@ -4235,21 +4341,19 @@ class Database:
                         "void": outcome == "void",
                     }
                 )
-                await conn.execute("UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"]))
+                bet_payouts.append((int(bet["id"]), payout))
 
-            for user_id, total in payouts.items():
-                await conn.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
-                )
-                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
-
+            settled_at = int(time.time())
+            await self._apply_settlement_payouts(
+                conn, bet_payouts, payouts, f"выплата · {match_tag(match)}", settled_at
+            )
             await conn.execute(
                 """
                 UPDATE matches SET status = 'finished', winner = ?, result_source = ?,
                                    score_a = ?, score_b = ?, reg_a = ?, reg_b = ?, finished_at = ?
                 WHERE id = ?
                 """,
-                (winner, source, final_a, final_b, reg_a, reg_b, int(time.time()), match_id),
+                (winner, source, final_a, final_b, reg_a, reg_b, settled_at, match_id),
             )
             # ноги экспресса — это «победа команды» без варианта ничьей, поэтому
             # считаем их по итоговому счёту: иначе команда, выигравшая в овертайме,
@@ -4677,6 +4781,7 @@ class Database:
             paid = 0
             payouts: dict[int, int] = {}
             settlements: list[dict[str, Any]] = []
+            bet_payouts: list[tuple[int, int]] = []
 
             for bet in bets:
                 amount = int(bet["amount"])
@@ -4697,22 +4802,18 @@ class Database:
                         "won": win,
                     }
                 )
-                await conn.execute(
-                    "UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"])
-                )
+                bet_payouts.append((int(bet["id"]), payout))
 
-            for user_id, total in payouts.items():
-                await conn.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
-                )
-                await self._ledger(conn, user_id, total, f"выплата · {match_tag(match)}")
-
+            settled_at = int(time.time())
+            await self._apply_settlement_payouts(
+                conn, bet_payouts, payouts, f"выплата · {match_tag(match)}", settled_at
+            )
             await conn.execute(
                 """
                 UPDATE matches SET status = 'finished', winner = ?, result_source = ?, finished_at = ?
                 WHERE id = ?
                 """,
-                (winner, source, int(time.time()), match_id),
+                (winner, source, settled_at, match_id),
             )
 
             expresses = await self._resolve_expresses(conn, match_id, winner)

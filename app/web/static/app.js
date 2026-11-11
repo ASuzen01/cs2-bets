@@ -109,7 +109,9 @@
     diceShown: null,
   };
 
-  const POLL_MS = 40000;  // как часто подтягиваем свежие кэфы, пока приложение открыто
+  const POLL_MS = 40000;  // тяжёлые данные профиля/игр обновляем отдельно от линии
+  let lineRefreshInFlight = false;
+  let lineRefreshRevision = 0;
   window.setInterval(() => {
     if (state.tab === "games" && state.game === "drunkard" && !state.drunkardBusy && !state.drunkardTyping) {
       refreshState({ silent: true });
@@ -2985,6 +2987,7 @@
     if (tab === "express") renderExpress();
     if (tab === "bonus") renderBonus();
     if (tab === "games") { renderGames(); refreshState({ silent: true }); }
+    if ((tab === "matches" || tab === "express") && state.user) refreshLines();
     renderBonusDots();   // подсветить конверт, если открыт экран бонусов
     state.teaseTaps = 0;   // «подряд» считается в пределах одного экрана
     haptic("light");
@@ -3374,18 +3377,23 @@
 
   async function refreshState(options) {
     const silent = Boolean(options && options.silent);  // тихий поллинг: без тостов об ошибках
+    const lineRevisionAtRequest = lineRefreshRevision;
     try {
       const data = await api("/api/state");
-      const liveMatches = data.live || [];
-      const football = data.football || [];
-      const hockey = data.hockey || [];
-      const matchesJson = JSON.stringify([data.matches, liveMatches, football, hockey]);
+      // /api/state дороже и может закончиться позже /api/lines; не позволяйте
+      // его более старому снимку перезаписать уже полученные свежие коэффициенты.
+      const acceptStateLine = lineRevisionAtRequest === lineRefreshRevision;
+      const matches = acceptStateLine ? data.matches : state.matches;
+      const liveMatches = acceptStateLine ? (data.live || []) : state.liveMatches;
+      const football = acceptStateLine ? (data.football || []) : state.football;
+      const hockey = acceptStateLine ? (data.hockey || []) : state.hockey;
+      const matchesJson = JSON.stringify([matches, liveMatches, football, hockey]);
       const matchesChanged = matchesJson !== state.matchesJson;
       const balanceBefore = state.user ? state.user.balance : null;
 
       state.user = data.user;
       state.authPending = false;
-      state.matches = data.matches;
+      state.matches = matches;
       state.football = football;
       state.hockey = hockey;
       state.liveMatches = liveMatches;
@@ -3445,6 +3453,35 @@
         return;
       }
       renderFatal(err.message || "Сервер недоступен");
+    }
+  }
+
+  async function refreshLines() {
+    if (lineRefreshInFlight || !state.user) return;
+    lineRefreshInFlight = true;
+    lineRefreshRevision += 1;
+    try {
+      const data = await api("/api/lines");
+      const matches = data.matches || [];
+      const live = data.live || [];
+      const football = data.football || [];
+      const hockey = data.hockey || [];
+      const snapshot = JSON.stringify([matches, live, football, hockey]);
+      const changed = snapshot !== state.matchesJson;
+      state.matches = matches;
+      state.liveMatches = live;
+      state.football = football;
+      state.hockey = hockey;
+      state.matchesJson = snapshot;
+      state.live = true;
+      syncCart();
+      if (changed) renderMatches();
+      renderCartBar();
+      if (state.tab === "express") renderExpress();
+    } catch (err) {
+      if (err.status === 401) await refreshState({ silent: true });
+    } finally {
+      lineRefreshInFlight = false;
     }
   }
 
@@ -7817,7 +7854,7 @@
         state.segment = btn.dataset.segment;
         haptic("light");
         renderMatches();
-        if (state.segment === "live") refreshState({ silent: true });  // свежий счёт сразу
+        if (state.segment === "live") refreshLines();  // свежий счёт и кэфы без полного запроса состояния
       });
     });
     const favChip = $("#favFilter");
@@ -7848,16 +7885,28 @@
     refreshState();
     loadBets();   // заодно ставит бейдж с числом ставок в игре
 
-    // автообновление: кэфы и статусы матчей подтягиваются без перезахода.
-    // В live-разделе линия ходит быстро, поэтому там опрашиваем чаще
+    // Профиль и игровые состояния обновляются отдельно от частого polling линии.
     const pollTick = () => {
-      const live = state.segment === "live" || state.segment === "all";
+      const delay = state.segment === "live" ? Math.round(POLL_MS / 2.5) : POLL_MS;
       setTimeout(async () => {
         if (!document.hidden) await refreshState({ silent: true });
         pollTick();
-      }, live ? Math.round(POLL_MS / 2.5) : POLL_MS);
+      }, delay);
     };
     pollTick();
+
+    // Линию обновляем отдельно: в live — каждые 8 с, вне live — каждые 20 с.
+    // Так свежие кэфы не ждут дорогую сборку всех данных профиля и игр.
+    const linePollTick = () => {
+      const delay = state.segment === "live" ? 8000 : 20000;
+      setTimeout(async () => {
+        if (!document.hidden && (state.tab === "matches" || state.tab === "express")) {
+          await refreshLines();
+        }
+        linePollTick();
+      }, delay);
+    };
+    linePollTick();
 
     // вернулись в приложение — сразу свежая линия
     document.addEventListener("visibilitychange", () => {

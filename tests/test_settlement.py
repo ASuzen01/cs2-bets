@@ -49,6 +49,37 @@ def _syncer(db: Database) -> MatchSyncer:
     return MatchSyncer(bot=None, db=db)  # bot не нужен: проверяем только расчёт
 
 
+async def test_large_match_settlement_batches_payouts_without_changing_totals(db: Database) -> None:
+    match = await _match(db)
+    now = int(time.time())
+    async with db.transaction() as conn:
+        for index in range(250):
+            user_id = 10_000 + index
+            await conn.execute(
+                "INSERT INTO users (user_id, balance, created_at, last_seen_at) VALUES (?, 1000, ?, ?)",
+                (user_id, now, now),
+            )
+            await conn.execute(
+                "INSERT INTO bets (match_id, user_id, side, amount, odds, created_at) "
+                "VALUES (?, ?, 'a', 10, 2.0, ?)",
+                (int(match["id"]), user_id, now),
+            )
+
+    result = await db.settle_match(int(match["id"]), "a")
+    balances = await db._fetchall(
+        "SELECT balance FROM users WHERE user_id >= 10000 ORDER BY user_id"
+    )
+    ledger = await db._fetchall(
+        "SELECT delta FROM ledger WHERE user_id >= 10000 ORDER BY user_id"
+    )
+
+    assert result["bets"] == 250
+    assert result["paid"] == 5_000
+    assert len(result["payouts"]) == 250
+    assert len(ledger) == 250 and all(int(row["delta"]) == 20 for row in ledger)
+    assert len(balances) == 250 and all(int(row["balance"]) == 1_020 for row in balances)
+
+
 def test_required_maps_by_format() -> None:
     assert MatchSyncer._required_maps("Counter-Strike. IEM. Bo1") == 1
     assert MatchSyncer._required_maps("Counter-Strike. IEM. Bo3") == 2
