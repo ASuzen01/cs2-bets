@@ -28,7 +28,7 @@ from app.services.football import FootballMatch, is_placeholder_team, parse_foot
 from app.services.hockey import HockeyMatch, parse_hockey
 from app.services.khl_results import KhlResult, KhlResultsClient
 from app.services.maps import finish_maps_of_match, settle_map_by_score
-from app.services.notify import notify_bettors
+from app.services.notify import notify_bettors, notify_match_followers
 from app.services.results import FootballResult, ResultsClient
 
 log = logging.getLogger(__name__)
@@ -914,6 +914,7 @@ class MatchSyncer:
         # матч переезжает из линии в live; при live_betting приём ставок при этом не закрывается
         for match in await self.db.close_started_matches():
             stats["closed"] += 1
+            await notify_match_followers(self.bot, self.db, match)
             await self.db.start_maps_of_match(int(match["id"]))
             await self._edit_card(int(match["id"]))
             # обновим карточку и в остальных чатах: там своя клавиатура без кнопок
