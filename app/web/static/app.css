@@ -1452,6 +1452,7 @@ button:focus-visible{outline-color:#d6b66d}
 .rift-diamond .rift-symbol-icon{color:#f0dfac;text-shadow:0 0 13px rgba(255,230,164,.4)}
 .rift-crown .rift-symbol-icon{color:#e3c783}
 .rift-cell.rift-wild{z-index:1;border-color:#edcf7b;background:radial-gradient(ellipse at 50% 25%,rgba(251,226,153,.54),rgba(151,111,45,.38) 38%,#332817 100%);box-shadow:inset 0 0 14px rgba(255,223,133,.28),0 0 13px rgba(238,196,93,.36);color:#fff1bd}
+.rift-cell.rift-scatter,.rift-cell[class*="rift-multiplier_"]{border-color:rgba(241,207,119,.72);background:radial-gradient(ellipse at 50% 30%,rgba(182,139,55,.28),#171b19 72%);box-shadow:inset 0 0 13px rgba(232,193,91,.14),0 0 8px rgba(232,193,91,.14)}
 .rift-wild .rift-symbol-icon{font-family:Arial,sans-serif;font-size:clamp(11px,3.7vw,16px);letter-spacing:.08em;color:#ffe8a3;text-shadow:0 1px 0 #755321,0 0 12px rgba(255,215,112,.55)}
 .rift-wild-mark{position:absolute;right:2px;bottom:2px;color:#fff0b8;font-size:4px;font-weight:1000;letter-spacing:.11em;opacity:.8}
 .rift-reel.wild-reel .rift-cell{border-color:rgba(231,197,110,.42);background-color:#302919}

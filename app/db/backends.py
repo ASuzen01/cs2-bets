@@ -218,6 +218,15 @@ CREATE TABLE IF NOT EXISTS slot_states (
     updated_at INTEGER NOT NULL
 );
 
+-- незавершённый бонус «Золотого разлома»: выигрыш и накопитель множителя
+CREATE TABLE IF NOT EXISTS riftfall_states (
+    user_id     INTEGER PRIMARY KEY,
+    free_spins  INTEGER NOT NULL DEFAULT 0,
+    spin_bet    INTEGER NOT NULL DEFAULT 0,
+    bonus_json  TEXT,
+    updated_at  INTEGER NOT NULL
+);
+
 -- активная партия «Лесенки»: скрытое окно хранится только на сервере
 CREATE TABLE IF NOT EXISTS ladder_games (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

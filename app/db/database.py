@@ -87,6 +87,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "casino_bets",
     "drunkard_games",
     "slot_states",
+    "riftfall_states",
     "ladder_games",
     "blackjack_games",
     "crash_games",
@@ -125,6 +126,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("drunkard_games", "creator_id"),
     ("drunkard_games", "opponent_id"),
     ("slot_states", "user_id"),
+    ("riftfall_states", "user_id"),
     ("ladder_games", "user_id"),
     ("blackjack_games", "user_id"),
     ("crash_games", "user_id"),
@@ -652,7 +654,8 @@ class Database:
         # Older backups may predate these new game tables; restore those as empty,
         # while keeping every established table omission strict.
         legacy_optional = {
-            "crash_games", "drunkard_games", "mines_games", "match_follows", "user_preferences"
+            "crash_games", "drunkard_games", "mines_games", "match_follows", "user_preferences",
+            "riftfall_states",
         }
         if missing and missing <= legacy_optional:
             data = {**data, **{table: [] for table in missing}}
@@ -1613,6 +1616,183 @@ class Database:
                 for item in (bonus.get("opened") or [])
             ],
         }
+
+    @staticmethod
+    def _riftfall_bonus_payload(raw: str | None) -> dict[str, Any] | None:
+        if not raw:
+            return None
+        bonus = json.loads(raw)
+        return {
+            "status": str(bonus.get("status") or "active"),
+            "spins_total": int(bonus.get("spins_total", 0)),
+            "spins_remaining": int(bonus.get("spins_remaining", 0)),
+            "spin_bet": int(bonus.get("spin_bet", 0)),
+            "base_win_total": int(bonus.get("base_win_total", 0)),
+            "multiplier_bank": float(bonus.get("multiplier_bank", 1.0)),
+            "multiplier_tokens": int(bonus.get("multiplier_tokens", 0)),
+            "scatter_count": int(bonus.get("scatter_count", 0)),
+        }
+
+    async def riftfall_state(self, user_id: int) -> dict[str, Any]:
+        row = await self._fetchone(
+            "SELECT free_spins, spin_bet, bonus_json FROM riftfall_states WHERE user_id = ?",
+            (user_id,),
+        )
+        if row is None:
+            return {"free_spins": 0, "spin_bet": 0, "bonus": None}
+        return {
+            "free_spins": int(row["free_spins"]),
+            "spin_bet": int(row["spin_bet"]),
+            "bonus": self._riftfall_bonus_payload(str(row["bonus_json"]) if row["bonus_json"] else None),
+        }
+
+    async def play_riftfall(
+        self,
+        user_id: int,
+        amount: int,
+        *,
+        spin: Callable[[int, bool], dict[str, Any]],
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Charge paid spin once; persist bonus progress and settle accumulated multiplier at finish."""
+        if amount <= 0:
+            raise InvalidBet("Сумма должна быть положительной")
+        tap = self._clean_token(token)
+        now = int(time.time())
+        async with self.transaction() as conn:
+            duplicate = await self._claim_token(conn, user_id, "riftfall", tap, now)
+            if duplicate is not None:
+                previous = duplicate or await self._previous_id(conn, user_id, "riftfall", tap)
+                row = await (await conn.execute(
+                    "SELECT outcome FROM casino_bets WHERE id = ? AND user_id = ? AND game = 'riftfall'",
+                    (previous, user_id),
+                )).fetchone()
+                if row is None:
+                    raise InvalidBet("Этот раунд уже обработан")
+                response = json.loads(str(row["outcome"]))
+                response["round"] = previous
+                response["balance"] = await self._balance_in(conn, user_id)
+                saved = await (await conn.execute(
+                    "SELECT free_spins, spin_bet, bonus_json FROM riftfall_states WHERE user_id = ?",
+                    (user_id,),
+                )).fetchone()
+                response["riftfall_state"] = {
+                    "free_spins": int(saved["free_spins"]) if saved else 0,
+                    "spin_bet": int(saved["spin_bet"]) if saved else 0,
+                    "bonus": self._riftfall_bonus_payload(str(saved["bonus_json"]) if saved and saved["bonus_json"] else None),
+                }
+                return response
+
+            saved = await (await conn.execute(
+                "SELECT free_spins, spin_bet, bonus_json FROM riftfall_states WHERE user_id = ?",
+                (user_id,),
+            )).fetchone()
+            spins_available = int(saved["free_spins"]) if saved else 0
+            bonus = json.loads(str(saved["bonus_json"])) if saved and saved["bonus_json"] else None
+            is_free = spins_available > 0
+            wager = int(saved["spin_bet"]) if is_free and saved else int(amount)
+            if wager <= 0:
+                raise InvalidBet("Ставка бонуса не найдена")
+
+            if not is_free:
+                debit = await conn.execute(
+                    "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+                    (wager, user_id, wager),
+                )
+                if debit.rowcount == 0:
+                    raise InsufficientFunds("Недостаточно монет на балансе")
+                await self._ledger(conn, user_id, -wager, "ставка · Золотой разлом", now)
+                await self._bump_quest(conn, user_id, "casino", now)
+
+            result = spin(wager, is_free)
+            base_payout = int(result.get("base_payout", result.get("payout", 0)))
+            if base_payout < 0:
+                raise InvalidBet("Выплата не может быть отрицательной")
+            awarded = int(result.get("awarded_free_spins", 0)) if not is_free else 0
+            payout = base_payout if not is_free else 0
+            remaining = max(0, spins_available - 1) if is_free else awarded
+            completed_bonus = None
+            if is_free:
+                bonus = bonus or {
+                    "status": "active", "spins_total": spins_available,
+                    "spins_remaining": spins_available, "spin_bet": wager,
+                    "base_win_total": 0, "multiplier_bank": 1.0,
+                    "multiplier_tokens": 0, "scatter_count": 0,
+                }
+                bonus["base_win_total"] = int(bonus.get("base_win_total", 0)) + base_payout
+                awards = [max(0, int(value)) for value in (result.get("multiplier_awards") or [])]
+                bonus["multiplier_bank"] = float(bonus.get("multiplier_bank", 1.0)) + sum(awards)
+                bonus["multiplier_tokens"] = int(bonus.get("multiplier_tokens", 0)) + len(awards)
+                bonus["spins_remaining"] = remaining
+                payout = int(float(bonus["base_win_total"]) * float(bonus["multiplier_bank"]) + 0.5) if remaining == 0 else 0
+                result["multiplier_awards"] = awards
+                result["bonus_base_total"] = int(bonus["base_win_total"])
+                result["bonus_multiplier"] = round(float(bonus["multiplier_bank"]), 2)
+                result["bonus_spins_total"] = int(bonus.get("spins_total", spins_available))
+                result["bonus_spins_remaining"] = remaining
+                result["bonus_completed"] = remaining == 0
+                if remaining == 0:
+                    completed_bonus = {
+                        "base_win_total": int(bonus["base_win_total"]),
+                        "multiplier_bank": round(float(bonus["multiplier_bank"]), 2),
+                        "multiplier_tokens": int(bonus["multiplier_tokens"]),
+                        "spins_total": int(bonus.get("spins_total", spins_available)),
+                        "final_payout": payout,
+                    }
+                    bonus = None
+            elif awarded:
+                bonus = {
+                    "status": "active", "spins_total": awarded, "spins_remaining": awarded,
+                    "spin_bet": wager, "base_win_total": 0, "multiplier_bank": 1.0,
+                    "multiplier_tokens": 0, "scatter_count": int(result.get("scatter_count", 0)),
+                }
+            else:
+                bonus = None
+
+            if payout:
+                await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+                reason = "выигрыш бонуса · Золотой разлом" if is_free else "выигрыш · Золотой разлом"
+                await self._ledger(conn, user_id, payout, reason, now)
+
+            round_amount = 0 if is_free else wager
+            selection = "free_spin" if is_free else "spin"
+            label = "Золотой разлом · фри-спин" if is_free else "Золотой разлом · платный спин"
+            new_state = {
+                "free_spins": remaining,
+                "spin_bet": wager if remaining else 0,
+                "bonus": self._riftfall_bonus_payload(json.dumps(bonus, ensure_ascii=False, separators=(",", ":")) if bonus else None),
+            }
+            response = {
+                **result,
+                "game": "riftfall", "selection": selection, "label": label,
+                "amount": round_amount, "spin_bet": wager,
+                "base_payout": base_payout, "payout": payout,
+                "odds": round(payout / wager, 4) if wager else 0,
+                "win": payout > 0, "free_spin": is_free,
+                "free_spins_remaining": remaining, "riftfall_state": new_state,
+                "bonus_summary": completed_bonus,
+            }
+            await conn.execute(
+                """INSERT INTO riftfall_states (user_id, free_spins, spin_bet, bonus_json, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET free_spins=excluded.free_spins,
+                     spin_bet=excluded.spin_bet, bonus_json=excluded.bonus_json, updated_at=excluded.updated_at""",
+                (user_id, remaining, wager if remaining else 0,
+                 json.dumps(bonus, ensure_ascii=False, separators=(",", ":")) if bonus else None, now),
+            )
+            inserted = await conn.execute(
+                """INSERT INTO casino_bets (user_id, game, selection, label, amount, odds, outcome, win, payout, result_json, created_at)
+                   VALUES (?, 'riftfall', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, selection, label, round_amount, response["odds"],
+                 json.dumps(response, ensure_ascii=False, separators=(",", ":")),
+                 1 if response["win"] else 0, payout,
+                 json.dumps(response, ensure_ascii=False, separators=(",", ":")), now),
+            )
+            round_id = int(inserted.lastrowid or 0)
+            await self._remember_token(conn, user_id, "riftfall", tap, round_id)
+            response["round"] = round_id
+            response["balance"] = await self._balance_in(conn, user_id)
+            return response
 
     async def slot_state(self, user_id: int) -> dict[str, Any]:
         """Saved free spins, their locked wager, and any pending chest bonus."""

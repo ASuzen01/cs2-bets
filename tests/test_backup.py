@@ -93,11 +93,13 @@ async def test_restore_accepts_backup_without_new_game_tables(db) -> None:
     data = await db.dump_rows()
     data.pop("crash_games")
     data.pop("drunkard_games")
+    data.pop("riftfall_states")
 
     counts = await db.restore_rows(data)
 
     assert counts["crash_games"] == 0
     assert counts["drunkard_games"] == 0
+    assert counts["riftfall_states"] == 0
 
 
 async def test_restore_replaces_current_data(db, tmp_path) -> None:

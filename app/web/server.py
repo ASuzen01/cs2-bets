@@ -1030,6 +1030,7 @@ async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
         "riftfall": riftfall.slot_config(),
         "mines": mines_game.config(),
         "slot_state": await db.slot_state(user_id),
+        "riftfall_state": await db.riftfall_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
         "summary": {
@@ -1105,9 +1106,18 @@ async def api_casino_play(request: web.Request) -> web.Response:
     metrics.count_casino()
     if game == "riftfall":
         try:
-            result = riftfall.spin(amount)
-        except ValueError as exc:
+            result = await db.play_riftfall(
+                user_id,
+                amount,
+                spin=lambda wager, free: riftfall.spin(wager, free_spin=free),
+                token=body.get("token"),
+            )
+        except InsufficientFunds:
+            return _bad("Недостаточно монет на балансе")
+        except InvalidBet as exc:
             return _bad(str(exc))
+        await db.pay_referral(user_id, settings.referral_bonus, settings.referral_welcome)
+        return web.json_response({"ok": True, **result})
     elif game == "slots":
         try:
             result = await db.play_slot(

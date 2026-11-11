@@ -3553,6 +3553,9 @@
       if (state.casino && Number(state.casino.slot_state && state.casino.slot_state.free_spins) > 0) {
         state.casinoStake.slots = Number(state.casino.slot_state.spin_bet) || state.casinoStake.slots || 50;
       }
+      if (state.casino && Number(state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0) {
+        state.casinoStake.riftfall = Number(state.casino.riftfall_state.spin_bet) || state.casinoStake.riftfall || 50;
+      }
       state.live = true;
 
       renderHeader();
@@ -3747,15 +3750,19 @@
       Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0
       || state.slotAutoRunning
     );
+    const riftState = state.casino && state.casino.riftfall_state || { free_spins: 0, spin_bet: 0, bonus: null };
+    const riftBonusActive = game === "riftfall" && Number(riftState.free_spins) > 0;
+    const lockRiftStake = game === "riftfall" && (riftBonusActive || state.riftfallAutoRunning);
+    const lockStake = lockSlotStake || lockRiftStake;
     document.querySelectorAll("#games .stake-chip").forEach((chip) => {
       chip.classList.toggle("active", Number(chip.dataset.stake) === info.raw);
-      chip.disabled = state.casinoBusy || lockSlotStake;
+      chip.disabled = state.casinoBusy || lockStake;
     });
     const minus = document.querySelector('#games .stake-step[data-step="-1"]');
-    if (minus) minus.disabled = state.casinoBusy || lockSlotStake || info.raw <= info.min;
+    if (minus) minus.disabled = state.casinoBusy || lockStake || info.raw <= info.min;
     const plus = document.querySelector('#games .stake-step[data-step="1"]');
-    if (plus) plus.disabled = state.casinoBusy || lockSlotStake || info.raw >= info.max;
-    if (input) input.disabled = state.casinoBusy || lockSlotStake;
+    if (plus) plus.disabled = state.casinoBusy || lockStake || info.raw >= info.max;
+    if (input) input.disabled = state.casinoBusy || lockStake;
 
     const estimate = potential(game);
     const meta = $("#betMeta");
@@ -3772,8 +3779,12 @@
           ? `${slotState.free_spins} фри-спинов · ставка зафиксирована ${money(slotState.spin_bet)}`
           : `Общая ставка за спин · ${state.casino.slots.ways} ways`));
       } else if (game === "riftfall") {
-        meta.append(el("span", null, "Ставка за раунд: " + money(info.raw || 0)));
-        meta.append(el("span", null, "5×4 · каскады и расширяющийся Wild · RTP 95,5%"));
+        meta.append(el("span", null, riftBonusActive
+          ? `${riftState.free_spins} фри-спинов · ставка зафиксирована ${money(riftState.spin_bet)}`
+          : "Ставка за раунд: " + money(info.raw || 0)));
+        meta.append(el("span", null, riftBonusActive
+          ? `Накопитель ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)} · выигрыш умножится в конце бонуса`
+          : "5×4 · каскады · Scatter запускает фри-спины · RTP 95,5%"));
       } else {
         fillBetMeta(meta, game, info.raw || 0);
       }
@@ -3783,11 +3794,13 @@
     const play = $("#playBtn");
     if (play) {
       const freeSpins = game === "slots" && Number(state.casino && state.casino.slot_state && state.casino.slot_state.free_spins) > 0;
+      const riftFreeSpin = game === "riftfall" && Number(riftState.free_spins) > 0;
       const autoRunning = game === "slots" && state.slotAutoRunning;
-      const ok = freeSpins || stakeOk(game);
+      const ok = freeSpins || riftFreeSpin || stakeOk(game);
       play.disabled = state.casinoBusy || autoRunning || !ok;
       if (autoRunning) play.textContent = "Автоспин выполняется…";
       else if (freeSpins) play.textContent = `Крутить фри-спин · осталось ${state.casino.slot_state.free_spins}`;
+      else if (riftFreeSpin) play.textContent = `ФРИ-СПИН · осталось ${riftState.free_spins} · ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)}`;
       else if (info.low) play.textContent = `Минимум — ${money(info.min)}`;
       else if (info.high) play.textContent = `Максимум — ${money(info.max)}`;
       else if (info.poor) play.textContent = "Не хватает монет";
@@ -4277,7 +4290,12 @@
     if (result.game === "slots") {
       return result.outcome || (result.win_count ? `${result.win_count} выигрышных ways` : "Без выигрыша");
     }
-    if (result.game === "riftfall") return result.outcome || "Каскад завершён";
+    if (result.game === "riftfall") {
+      const bonusTokens = (result.multiplier_awards || []).reduce((sum, value) => sum + Number(value || 0), 0);
+      return result.free_spin
+        ? `${result.outcome || "Фри-спин"}${bonusTokens ? ` · множители +${bonusTokens}×` : ""}`
+        : `${result.outcome || "Каскад завершён"}${result.awarded_free_spins ? ` · Scatter: ${result.scatter_count} · +${result.awarded_free_spins} фри-спинов` : ""}`;
+    }
     return `${result.dice[0]} + ${result.dice[1]} = ${result.total}`;
   }
 
@@ -4293,7 +4311,8 @@
       return;
     }
     const pop = options && options.pop;
-    box.className = "casino-outcome show " + (result.win ? "win" : "lose") + (pop ? " pop" : "");
+    const visualWin = Boolean(result.win || (result.game === "riftfall" && (result.free_spin || result.awarded_free_spins)));
+    box.className = "casino-outcome show " + (visualWin ? "win" : "lose") + (pop ? " pop" : "");
     box.textContent = "";
 
     const what = outcomeText(result);
@@ -4304,7 +4323,11 @@
     const line2 = el("div", "line2", result.game === "plinko"
       ? `×${Number(result.multiplier).toFixed(2)} · выплата ${money(result.payout)} · результат ${moneySigned(result.payout - result.amount)}`
       : result.game === "riftfall"
-        ? `${result.cascade_count} каскад(а) · выигрыш ${money(result.payout)} · итог ${moneySigned(result.payout - result.amount)}`
+        ? result.free_spin
+          ? result.bonus_completed
+            ? `Бонус завершён · ${money(result.bonus_summary && result.bonus_summary.base_win_total || 0)} × ${Number(result.bonus_summary && result.bonus_summary.multiplier_bank || 1).toFixed(0)} · выплата ${money(result.payout)}`
+            : `В копилку бонуса +${money(result.base_payout)} · накопитель ×${Number(result.bonus_multiplier || 1).toFixed(0)} · осталось ${Number(result.bonus_spins_remaining || 0)} фри-спинов`
+          : `${result.cascade_count} каскада · выплата ${money(result.payout)}${result.awarded_free_spins ? ` · бонус: ${result.awarded_free_spins} фри-спинов` : ""}`
       : result.game === "baccarat"
         ? result.result === "tie" && result.selection !== "tie"
           ? `Ничья · ставка возвращена ${money(result.payout)}`
@@ -4414,9 +4437,10 @@
       box.append(el("span", "edge", "целевой RTP 95,5 % · округление монет может немного снизить фактическую отдачу"));
     } else if (game === "riftfall") {
       box.append(el("b", null, "Золотой разлом · 5 барабанов × 4 символа. "));
-      box.append(document.createTextNode("Собирай группы от 5 одинаковых символов, соединённых по вертикали или горизонтали. Если на барабане появляется золотой Wild, он расширяется на весь барабан и заменяет символы в комбинациях. Выигравшие символы исчезают, оставшиеся падают вниз, а сверху приходят новые. Каждый каскад повышает множитель; до четырёх каскадов за один спин. Вся ставка списывается один раз, итог определяет сервер до анимации."));
-      box.append(el("span", "edge", "целевой RTP 95,5% · множители цепочки 1× / 1,5× / 2,25× / 3,5×"));
-      box.append(el("p", null, "Каждый золотой Wild раскрывает весь свой барабан. Он может участвовать в группах разных типов; выигрышные клетки убираются один раз перед падением символов."));
+      box.append(document.createTextNode("Собирай группы от 5 одинаковых символов, соединённых по вертикали или горизонтали. Золотой Wild раскрывает весь барабан и заменяет символы в группах. Выигравшие символы исчезают, оставшиеся падают вниз, сверху приходят новые; до 4 каскадов за спин."));
+      box.append(el("p", null, "3 Scatter запускают 8 фри-спинов, 4 — 12, 5 или больше — 16. Во фри-спинах появляются жетоны +1×, +2× и +3×: их значения суммируются к стартовому накопителю ×1. Выплаты кластеров за бонус суммируются и в конце умножаются на накопитель; ставка фиксируется на время бонуса."));
+      box.append(el("span", "edge", "целевой RTP 95,5% · цепочки ×1 / ×1,5 / ×2,25 / ×3,5"));
+      box.append(el("p", null, "Wild может входить в группы разных типов; выигрышные клетки очищаются один раз перед падением. Фри-спины не требуют повторной ставки; сервер сохраняет прогресс, если закрыть приложение."));
     } else if (game === "slots") {
       box.append(el("b", null, "Слот-машина · 5 барабанов, 3 ряда, 243 ways. "));
       box.append(document.createTextNode(
@@ -6079,6 +6103,16 @@
       add("path", { d: "M32 5 39 22 57 14 49 31 63 39 44 42 48 60 32 48 16 60 20 42 1 39 15 31 7 14 25 22z", fill: "#bd9950", stroke: "#f8e6aa", "stroke-width": "2.2", "stroke-linejoin": "round" });
       add("circle", { cx: 32, cy: 34, r: 10, fill: "#372b17", stroke: "#f2d88f", "stroke-width": "2" });
       add("path", { d: "M32 27v14M27 32h10", stroke: "#fff0b9", "stroke-width": "2", "stroke-linecap": "round" });
+    } else if (code === "scatter") {
+      add("path", { d: "M32 4 38 23 58 18 45 33 60 46 40 42 32 61 24 42 4 46 19 33 6 18 26 23z", fill: "#c59a42", stroke: "#ffe5a0", "stroke-width": "2.4", "stroke-linejoin": "round" });
+      add("circle", { cx: 32, cy: 33, r: 8, fill: "#2b2418", stroke: "#ffeab1", "stroke-width": "2" });
+    } else if (code.startsWith("multiplier_")) {
+      const value = Number(code.split("_")[1]) || 1;
+      add("circle", { cx: 32, cy: 32, r: 25, fill: "#342817", stroke: "#f0d178", "stroke-width": "3" });
+      add("circle", { cx: 32, cy: 32, r: 19, fill: "none", stroke: "#b59449", "stroke-width": "1.4" });
+      const text = svgNode("text", { x: "32", y: "39", "text-anchor": "middle", fill: "#fff0b7", "font-size": "21", "font-weight": "900", "font-family": "Arial,sans-serif" });
+      text.textContent = `+${value}×`;
+      svg.append(text);
     }
     return svg;
   }
@@ -6225,9 +6259,19 @@
       haptic("ok");
     }
     const final = $("#riftChainStatus");
-    if (final) final.textContent = result.cascade_count
-      ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
-      : "НОВЫЙ РАУНД · ИЩИ СОВПАДЕНИЯ";
+    if (final) {
+      if (result.free_spin) {
+        final.textContent = result.bonus_completed
+          ? `БОНУС ЗАВЕРШЁН · ×${Number(result.bonus_summary && result.bonus_summary.multiplier_bank || 1).toFixed(0)} · ВЫПЛАТА ${money(result.payout)}`
+          : `ФРИ-СПИН · НАКОПИТЕЛЬ ×${Number(result.bonus_multiplier || 1).toFixed(0)} · ОСТАЛОСЬ ${Number(result.bonus_spins_remaining || 0)}`;
+      } else if (result.awarded_free_spins) {
+        final.textContent = `SCATTER ×${result.scatter_count} · НАЧИСЛЕНО ${result.awarded_free_spins} ФРИ-СПИНОВ`;
+      } else {
+        final.textContent = result.cascade_count
+          ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
+          : "НОВЫЙ РАУНД · ИЩИ СОВПАДЕНИЯ";
+      }
+    }
     const finalGrid = $("#riftfallGrid");
     if (finalGrid) {
       finalGrid.querySelectorAll(".rift-reel-strip").forEach((strip, reel) => {
@@ -6345,9 +6389,11 @@
     const session = state.riftfallFullscreen;
     if (!session) return;
     const info = stakeState("riftfall");
+    const riftState = state.casino && state.casino.riftfall_state || { free_spins: 0, spin_bet: 0, bonus: null };
+    const bonusActive = Number(riftState.free_spins) > 0;
     const amount = $("#riftImmersiveStakeInput");
-    if (amount && document.activeElement !== amount) amount.value = String(info.raw || info.min);
-    const stakeLocked = state.casinoBusy || state.riftfallAutoRunning;
+    if (amount && document.activeElement !== amount) amount.value = String(bonusActive ? riftState.spin_bet : (info.raw || info.min));
+    const stakeLocked = state.casinoBusy || state.riftfallAutoRunning || bonusActive;
     document.querySelectorAll("#riftImmersivePresets .stake-chip").forEach((chip) => {
       const value = Number(chip.dataset.stake);
       const isAll = chip.dataset.riftStakeAll === "true";
@@ -6361,17 +6407,19 @@
     if (amount) {
       amount.disabled = stakeLocked;
       amount.max = String(Math.max(info.min, Math.floor(balance())));
-      amount.setAttribute("aria-invalid", String(!stakeOk("riftfall")));
+      amount.setAttribute("aria-invalid", String(!bonusActive && !stakeOk("riftfall")));
     }
     const balanceNode = $("#riftImmersiveBalance");
     if (balanceNode) balanceNode.textContent = money(balance());
     const spin = $("#riftImmersiveSpin");
     if (spin) {
-      spin.disabled = state.casinoBusy || state.riftfallAutoRunning || !stakeOk("riftfall");
+      spin.disabled = state.casinoBusy || state.riftfallAutoRunning || (!bonusActive && !stakeOk("riftfall"));
       spin.classList.toggle("busy", state.casinoBusy);
       spin.innerHTML = "";
       spin.append(riftfallHudIcon("spin"), el("span", null,
-        state.casinoBusy ? "РАУНД ИДЁТ" : `КРУТИТЬ · ${money(stakeFor("riftfall"))}`));
+        state.casinoBusy ? "РАУНД ИДЁТ" : bonusActive
+          ? `ФРИ-СПИН · ${riftState.free_spins} ОСТАЛОСЬ · ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)}`
+          : `КРУТИТЬ · ${money(stakeFor("riftfall"))}`));
     }
     document.querySelectorAll("#riftImmersiveAutoCounts [data-rift-auto-count]").forEach((button) => {
       const selected = Number(button.dataset.riftAutoCount) === state.riftfallAutoCount;
@@ -6389,7 +6437,7 @@
     const auto = $("#riftImmersiveAuto");
     if (auto) {
       auto.disabled = (state.casinoBusy && !state.riftfallAutoRunning)
-        || (!state.riftfallAutoRunning && !stakeOk("riftfall"));
+        || (!state.riftfallAutoRunning && !bonusActive && !stakeOk("riftfall"));
       auto.classList.toggle("active", state.riftfallAutoRunning);
       auto.setAttribute("aria-pressed", String(state.riftfallAutoRunning));
       const countLabel = state.riftfallAutoCount === 0 ? "∞" : String(state.riftfallAutoCount);
@@ -6399,9 +6447,11 @@
     const autoInfo = $("#riftImmersiveAutoInfo");
     if (autoInfo) {
       const countLabel = state.riftfallAutoCount === 0 ? "∞" : String(state.riftfallAutoCount);
-      autoInfo.textContent = state.riftfallAutoRunning
-        ? state.riftfallAutoCount === 0 ? "Автоспин без лимита" : `Осталось спинов: ${state.riftfallAutoRemaining}`
-        : `Серия: ${countLabel} платных спинов`;
+      autoInfo.textContent = bonusActive
+        ? `БОНУС: осталось ${riftState.free_spins} фри-спинов · накопитель ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)}`
+        : state.riftfallAutoRunning
+          ? state.riftfallAutoCount === 0 ? "Автоспин без лимита" : `Осталось спинов: ${state.riftfallAutoRemaining}`
+          : `Серия: ${countLabel} платных спинов`;
     }
     if (result && !state.casinoBusy) {
       const currentSummary = $("#riftImmersiveSummary");
@@ -6987,7 +7037,8 @@
       syncRiftfallFullscreenHud();
       return;
     }
-    if (state.casinoBusy || !stakeOk("riftfall")) return;
+    const activeBonus = Number(state.casino && state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0;
+    if (state.casinoBusy || (!activeBonus && !stakeOk("riftfall"))) return;
     state.riftfallAutoRunning = true;
     state.riftfallAutoRemaining = state.riftfallAutoCount;
     const runId = ++state.riftfallAutoRunId;
@@ -6995,7 +7046,9 @@
     (async () => {
       try {
         while (state.riftfallAutoRunning && runId === state.riftfallAutoRunId
-          && (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0)) {
+          && (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0
+            || Number(state.casino && state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0)) {
+          const bonusWasActive = Number(state.casino && state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0;
           const played = await playCasinoRound({ auto: true });
           if (played && typeof played === "object" && played.retryAfter) {
             toast(`Автоспин продолжится через ${played.retryAfter} сек`);
@@ -7003,9 +7056,10 @@
             continue;
           }
           if (!played || !state.riftfallAutoRunning || runId !== state.riftfallAutoRunId) break;
-          if (state.riftfallAutoCount > 0) state.riftfallAutoRemaining -= 1;
+          if (state.riftfallAutoCount > 0 && !bonusWasActive) state.riftfallAutoRemaining -= 1;
           syncRiftfallFullscreenHud();
-          if (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0) await pause(1600);
+          if (state.riftfallAutoCount === 0 || state.riftfallAutoRemaining > 0
+            || Number(state.casino && state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0) await pause(1600);
         }
       } finally {
         if (runId === state.riftfallAutoRunId) {
@@ -7026,6 +7080,8 @@
       return;
     }
     const result = state.casinoResults.riftfall;
+    const riftState = state.casino && state.casino.riftfall_state || { free_spins: 0, spin_bet: 0, bonus: null };
+    const activeBonus = Number(riftState.free_spins) > 0;
     const fallback = [
       ["coin", "bull", "briefcase", "diamond", "crown"],
       ["diamond", "coin", "bull", "briefcase", "diamond"],
@@ -7037,7 +7093,7 @@
     const card = el("section", "riftfall-game-card");
     card.append(el("div", "riftfall-kicker", "PRIVATE RESERVE · CASCADE ENGINE"));
     card.append(el("h2", "riftfall-title", "Золотой разлом"));
-    card.append(el("p", "riftfall-copy", "Поймай волну каскадов. Золотой Wild раскрывает целый барабан — и рынок отвечает движением."));
+    card.append(el("p", "riftfall-copy", "Кластеры запускают каскады. 3/4/5 Scatter дают 8/12/16 фри-спинов с накоплением множителей."));
     const topper = el("div", "riftfall-topline");
     topper.append(el("span", null, "RIFT INDEX"), el("b", null, "95.5"), el("i", null, "RTP"));
     const stageSlot = el("div", "riftfall-stage-slot");
@@ -7053,24 +7109,32 @@
     chainSlot.append(chain);
     const status = el("div", "riftfall-chain-status");
     status.id = "riftChainStatus";
-    status.textContent = result
-      ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
-      : "READY · ОЖИДАЕМ СИГНАЛ РЫНКА";
+    status.textContent = activeBonus
+      ? `ФРИ-СПИНЫ: ${riftState.free_spins} · НАКОПИТЕЛЬ ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)}`
+      : result
+        ? `${result.cascade_count} КАСКАДА · ВЫПЛАТА ${money(result.payout)}`
+        : "НОВЫЙ РАУНД · ИЩИ СОВПАДЕНИЯ";
     const statusSlot = el("div", "riftfall-status-slot");
     statusSlot.id = "riftfallStatusSlot";
     statusSlot.append(status);
     card.append(chainSlot, statusSlot, stakeRow("riftfall"));
     const meta = el("div", "bet-meta riftfall-meta");
     meta.id = "betMeta";
-    meta.append(el("span", null, `Ставка: ${money(stakeFor("riftfall"))} · вся сумма за один спин`));
-    meta.append(el("span", null, `Целевой RTP ${Number(config.rtp).toFixed(1)}% · до ${config.max_cascades} каскадов`));
+    meta.append(el("span", null, activeBonus
+      ? `${riftState.free_spins} фри-спинов · ставка зафиксирована ${money(riftState.spin_bet)}`
+      : `Ставка: ${money(stakeFor("riftfall"))} · вся сумма за один спин`));
+    meta.append(el("span", null, activeBonus
+      ? `Накопитель ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)} · выигрыш выплатится после бонуса`
+      : `Целевой RTP ${Number(config.rtp).toFixed(1)}% · до ${config.max_cascades} каскадов`));
     card.append(meta);
     const play = el("button", "btn play riftfall-spin-button");
     play.id = "playBtn";
     play.type = "button";
-    play.textContent = `ОТКРЫТЬ СЛОТ · ${money(stakeFor("riftfall"))}`;
+    play.textContent = activeBonus
+      ? `ФРИ-СПИН · ${riftState.free_spins} · ×${Number(riftState.bonus && riftState.bonus.multiplier_bank || 1).toFixed(0)}`
+      : `ОТКРЫТЬ СЛОТ · ${money(stakeFor("riftfall"))}`;
     play.dataset.riftOpen = "true";
-    play.disabled = state.casinoBusy || !stakeOk("riftfall");
+    play.disabled = state.casinoBusy || (!activeBonus && !stakeOk("riftfall"));
     card.append(play, outcomeNode(), summaryNode(), historyNode(), gameInfoNode("riftfall"));
     host.append(card);
     if (result) paintOutcome(result);
@@ -7680,15 +7744,19 @@
       if (!fromAuto) toast("Сначала открой сундуки Scatter-бонуса");
       return false;
     }
+    const riftfallState = state.casino && state.casino.riftfall_state || { free_spins: 0, spin_bet: 0, bonus: null };
     const usingSlotFreeSpin = game === "slots" && Number(slotState.free_spins) > 0;
+    const usingRiftfallFreeSpin = game === "riftfall" && Number(riftfallState.free_spins) > 0;
+    const usingFreeSpin = usingSlotFreeSpin || usingRiftfallFreeSpin;
     const selection = pickFor(game);
     const amount = usingSlotFreeSpin
       ? Number(slotState.spin_bet)
-      : Math.round(Number(state.casinoStake[game]) || 0);
+      : usingRiftfallFreeSpin ? Number(riftfallState.spin_bet)
+        : Math.round(Number(state.casinoStake[game]) || 0);
     const info = stakeState(game);
-    if (!usingSlotFreeSpin && info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return false; }
-    if (!usingSlotFreeSpin && info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return false; }
-    if (!usingSlotFreeSpin && (!canBet() || amount > balance())) {
+    if (!usingFreeSpin && info.low) { toast(`Минимум — ${money(info.min)}`, "bad"); haptic("bad"); return false; }
+    if (!usingFreeSpin && info.high) { toast(`Максимум за раунд — ${money(info.max)}`, "bad"); haptic("bad"); return false; }
+    if (!usingFreeSpin && (!canBet() || amount > balance())) {
       haptic("bad");
       openNoCoinsSheet(minBet());
       return false;
@@ -7731,6 +7799,8 @@
           toast("Автоспин остановлен · открой сундуки Scatter-бонуса");
           stopSlotAutoSpin(true);
         }
+      } else if (game === "riftfall") {
+        state.casino.riftfall_state = data.riftfall_state || { free_spins: 0, spin_bet: 0, bonus: null };
       }
       setBalance(data.balance);
       state.casinoResults[game] = data;
@@ -7741,12 +7811,16 @@
       } else {
         // результат некуда рисовать — говорим тостом, но именно про эту игру
         const name = game === "roulette" ? "Рулетка" : game === "plinko" ? "Плинко" : game === "slots" ? "Слот-машина" : game === "riftfall" ? "Золотой разлом" : "Кости";
+        const freeSpinInProgress = game === "riftfall" && data.free_spin && !data.bonus_completed;
+        const bonusStarted = game === "riftfall" && Number(data.awarded_free_spins) > 0;
         toast(`${name} · ${outcomeText(data)} · ` +
-          (data.win
-            ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`
-            : `проигрыш ${money(roundAmount)}`), data.win ? "ok" : "bad");
+          (freeSpinInProgress
+            ? `накопитель ×${Number(data.bonus_multiplier || 1).toFixed(0)}`
+            : data.win
+              ? `выплата ${money(data.payout)} · чистая прибыль ${moneySigned(data.payout - roundAmount)}`
+              : bonusStarted ? "бонус запущен" : `проигрыш ${money(roundAmount)}`), data.win || freeSpinInProgress || bonusStarted ? "ok" : "bad");
       }
-      haptic(data.win ? "ok" : "bad");
+      haptic(data.win ? "ok" : game === "riftfall" && (data.free_spin || data.awarded_free_spins) ? "light" : "bad");
 
       if (game === "roulette" && state.game === game) {
         pushNumber(data.number);
