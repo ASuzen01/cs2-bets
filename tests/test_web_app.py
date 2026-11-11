@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from aiogram import Bot, Dispatcher
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -52,3 +55,19 @@ def test_render_index_versions_static_assets(monkeypatch) -> None:
     html = render_index({"user": None, "dev": False})
     assert '/static/app.css?v=abcdef123456' in html
     assert '/static/app.js?v=abcdef123456' in html
+
+
+def test_mobile_viewport_does_not_disable_zoom() -> None:
+    html = (Path(__file__).resolve().parents[1] / "app/web/index.html").read_text()
+    viewport = re.search(r'<meta name="viewport" content="([^"]+)"', html)
+    assert viewport is not None
+    assert "user-scalable=no" not in viewport.group(1)
+    assert not re.search(r"maximum-scale=0?1(?:\.0*)?(?:,|$)", viewport.group(1))
+
+
+def test_game_catalog_count_matches_visible_tiles() -> None:
+    html = (Path(__file__).resolve().parents[1] / "app/web/index.html").read_text()
+    tiles = re.findall(r'<button class="game-tile"', html)
+    label = re.search(r"·\s*(\d+) ИГР", html)
+    assert label is not None
+    assert int(label.group(1)) == len(tiles)

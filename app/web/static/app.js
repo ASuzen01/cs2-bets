@@ -4634,10 +4634,11 @@
       countInput.type = "number"; countInput.inputMode = "numeric";
       countInput.min = "2"; countInput.max = "24"; countInput.step = "1";
       countInput.value = String(mineCount); countInput.dataset.minesCountInput = "true";
-      countInput.setAttribute("aria-label", "Количество мин от 2 до 24");
+      countInput.setAttribute("aria-label", "Своё количество мин, от 2 до 24");
       countInput.disabled = state.minesBusy;
-      presets.append(countInput);
-      minePicker.append(presets);
+      const customCount = el("label", "mines-custom-field");
+      customCount.append(el("span", null, "Своё количество"), countInput);
+      minePicker.append(presets, customCount);
       card.append(minePicker);
 
       const amount = Number(state.minesStake || 50);
@@ -4654,9 +4655,11 @@
       stakeInput.type = "number"; stakeInput.inputMode = "numeric";
       stakeInput.min = "10"; stakeInput.value = String(amount);
       stakeInput.dataset.minesStakeInput = "true";
-      stakeInput.setAttribute("aria-label", "Ставка в Минах");
+      stakeInput.setAttribute("aria-label", "Своя ставка в Минах");
       stakeInput.disabled = state.minesBusy;
-      stakePicker.append(stakePresets, stakeInput);
+      const customStake = el("label", "mines-custom-field");
+      customStake.append(el("span", null, "Своя ставка"), stakeInput);
+      stakePicker.append(stakePresets, customStake);
       card.append(stakePicker);
 
       const start = el("button", "btn mines-start", `НАЧАТЬ · ${money(Math.max(0, amount))}`);

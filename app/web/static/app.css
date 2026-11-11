@@ -1717,15 +1717,16 @@ button:focus-visible{outline-color:#d6b66d}
 .mines-result{margin:11px 0 4px;padding:10px 11px;border:1px solid #665533;border-radius:11px;color:#e2d09c;background:rgba(164,130,60,.1);font-size:11px;line-height:1.45;text-align:center}
 .mines-result.lost{border-color:#65403a;color:#d9a49a;background:rgba(115,54,45,.13)}
 .mines-option-row{display:grid;gap:7px;margin-top:13px}.mines-option-row>span{color:#b6ad95;font-size:10px;font-weight:800}
-.mines-presets{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.mines-presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.mines-custom-field{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:40px;color:#b6ad95;font-size:10px;font-weight:800}
 .mines-chip{min-width:0;height:34px;padding:0 5px;border:1px solid #49432f;border-radius:9px;color:#d2c9ae;background:#1d1e19;font-size:11px;font-weight:800}
 .mines-chip.active{border-color:#b89a54;color:#f0dca0;background:rgba(174,139,65,.16)}
 .mines-chip:disabled{opacity:.4}
-.mines-count-input,.mines-stake-input{width:100%;min-width:0;height:36px;padding:0 8px;border:1px solid #4a4432;border-radius:9px;outline:none;color:#eee5ce;background:#151714;
+.mines-count-input,.mines-stake-input{width:100px;min-width:76px;height:36px;flex:0 1 100px;padding:0 8px;border:1px solid #4a4432;border-radius:9px;outline:none;color:#eee5ce;background:#151714;
   font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
 .mines-count-input:focus,.mines-stake-input:focus{border-color:#b99b57;box-shadow:0 0 0 2px rgba(185,155,87,.12)}
 .mines-presets.stake{grid-template-columns:repeat(4,minmax(0,1fr))}
-.mines-stake-input{height:40px;text-align:left;padding:0 11px}
+.mines-stake-input{height:40px;flex-basis:110px;text-align:center;padding:0 11px}
 .mines-card .game-history,.mines-card .game-info{margin-top:9px}
 @media(max-width:360px){.mines-card{padding:15px 11px}.mines-board{gap:5px;padding:7px;border-radius:14px}.mines-cell{border-radius:8px}.mines-presets{gap:4px}.mines-chip{font-size:10px}}
 @media(prefers-reduced-motion:reduce){.mines-cell{transition:none}}
