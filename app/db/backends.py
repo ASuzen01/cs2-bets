@@ -93,21 +93,6 @@ CREATE TABLE IF NOT EXISTS match_maps (
 );
 CREATE INDEX IF NOT EXISTS idx_maps_match ON match_maps(match_id);
 
--- Настройки личных уведомлений и подписки на матчи.
-CREATE TABLE IF NOT EXISTS user_preferences (
-    user_id                  INTEGER PRIMARY KEY,
-    result_notifications     INTEGER NOT NULL DEFAULT 1,
-    updated_at               INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS match_follows (
-    user_id    INTEGER NOT NULL,
-    match_id   INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, match_id)
-);
-CREATE INDEX IF NOT EXISTS idx_match_follows_match ON match_follows(match_id);
-
 CREATE TABLE IF NOT EXISTS bets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     match_id   INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,

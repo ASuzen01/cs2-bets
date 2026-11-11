@@ -84,10 +84,6 @@ def register_routes(
 
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/lines", api_lines)
-    app.router.add_get("/api/preferences", api_preferences)
-    app.router.add_post("/api/preferences", api_preferences)
-    app.router.add_get("/api/follows", api_follows)
-    app.router.add_post("/api/follows", api_follows)
     app.router.add_post("/api/bet", api_bet)
     app.router.add_post("/api/express", api_express)
     app.router.add_post("/api/bonus", api_bonus)
@@ -334,40 +330,7 @@ async def api_lines(request: web.Request) -> web.Response:
     """Fast line-only refresh; avoids fetching per-user game/profile state."""
     db: Database = request.app[DB_KEY]
     lines = await _miniapp_lines(db)
-    source_updated_at = await db.get_meta_int("last_sync_at", 0)
-    return web.json_response({"ok": True, **lines, "source_updated_at": source_updated_at or None})
-
-
-async def api_preferences(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    if request.method == "GET":
-        return web.json_response({
-            "ok": True,
-            "result_notifications": await db.result_notifications_enabled(user_id),
-        })
-    body = await _json_body(request)
-    value = body.get("result_notifications")
-    if not isinstance(value, bool):
-        return _bad("Укажите result_notifications как true или false")
-    await db.set_result_notifications(user_id, value)
-    return web.json_response({"ok": True, "result_notifications": value})
-
-
-async def api_follows(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    if request.method == "GET":
-        return web.json_response({"ok": True, "match_ids": await db.followed_match_ids(user_id)})
-    body = await _json_body(request)
-    match_id = _as_int(body.get("match_id"))
-    following = body.get("following")
-    if match_id <= 0 or not isinstance(following, bool):
-        return _bad("Укажите match_id и following")
-    is_following = await db.set_match_follow(user_id, match_id, following)
-    if following and not is_following:
-        return _bad("Матч уже завершён или недоступен", 409)
-    return web.json_response({"ok": True, "match_id": match_id, "following": is_following})
+    return web.json_response({"ok": True, **lines})
 
 
 async def _bonus_payload(db: Database, user_id: int) -> dict[str, Any]:

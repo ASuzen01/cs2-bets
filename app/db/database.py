@@ -76,8 +76,6 @@ BACKUP_TABLES: tuple[str, ...] = (
     "chats",
     "matches",
     "match_maps",
-    "match_follows",
-    "user_preferences",
     "bets",
     "expresses",
     "express_items",
@@ -530,59 +528,6 @@ class Database:
         row = await self._fetchone("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         return int(row["balance"]) if row else 0
 
-    async def result_notifications_enabled(self, user_id: int) -> bool:
-        row = await self._fetchone(
-            "SELECT result_notifications FROM user_preferences WHERE user_id = ?", (user_id,)
-        )
-        return bool(row["result_notifications"]) if row is not None else True
-
-    async def set_result_notifications(self, user_id: int, enabled: bool) -> None:
-        await self._write(
-            """
-            INSERT INTO user_preferences (user_id, result_notifications, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                result_notifications = excluded.result_notifications,
-                updated_at = excluded.updated_at
-            """,
-            (user_id, int(enabled), int(time.time())),
-        )
-
-    async def followed_match_ids(self, user_id: int) -> list[int]:
-        rows = await self._fetchall(
-            "SELECT f.match_id FROM match_follows f "
-            "JOIN matches m ON m.id = f.match_id "
-            "WHERE f.user_id = ? AND m.status IN ('open', 'live', 'awaiting') "
-            "ORDER BY f.created_at DESC",
-            (user_id,),
-        )
-        return [int(row["match_id"]) for row in rows]
-
-    async def set_match_follow(self, user_id: int, match_id: int, enabled: bool) -> bool:
-        if enabled:
-            match = await self._fetchone(
-                "SELECT id FROM matches WHERE id = ? AND status IN ('open', 'live', 'awaiting')",
-                (match_id,),
-            )
-            if match is None:
-                return False
-            await self._write(
-                "INSERT INTO match_follows (user_id, match_id, created_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(user_id, match_id) DO NOTHING",
-                (user_id, match_id, int(time.time())),
-            )
-            return True
-        await self._write(
-            "DELETE FROM match_follows WHERE user_id = ? AND match_id = ?", (user_id, match_id)
-        )
-        return False
-
-    async def match_followers(self, match_id: int) -> list[int]:
-        rows = await self._fetchall(
-            "SELECT user_id FROM match_follows WHERE match_id = ? ORDER BY user_id", (match_id,)
-        )
-        return [int(row["user_id"]) for row in rows]
-
     async def daily_bonus(
         self, user_id: int, amount: int, cooldown_seconds: int
     ) -> tuple[bool, int, int]:
@@ -651,9 +596,7 @@ class Database:
         missing = set(BACKUP_TABLES) - set(data)
         # Older backups may predate these new game tables; restore those as empty,
         # while keeping every established table omission strict.
-        legacy_optional = {
-            "crash_games", "drunkard_games", "mines_games", "match_follows", "user_preferences"
-        }
+        legacy_optional = {"crash_games", "drunkard_games", "mines_games"}
         if missing and missing <= legacy_optional:
             data = {**data, **{table: [] for table in missing}}
             missing = set()

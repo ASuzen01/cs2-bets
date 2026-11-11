@@ -134,20 +134,13 @@
       <button class="fchip" type="button" id="dateFilter">Все даты</button>
       <button class="fchip reset" type="button" id="tourReset" hidden>Сбросить</button>
       <button class="fchip" type="button" id="favFilter" aria-pressed="false">★ Мои</button>
-      <button class="fchip" type="button" id="followFilter" aria-pressed="false">✓ Отслеживаемые</button>
     </div>
-    <label class="match-search-wrap">
-      <span aria-hidden="true">⌕</span>
-      <input id="matchSearch" type="search" autocomplete="off" placeholder="Команда или турнир" aria-label="Поиск по команде или турниру">
-      <button id="clearMatchSearch" type="button" aria-label="Очистить поиск" hidden>×</button>
-    </label>
     <div class="segments" id="matchSegments">
       <button class="seg active" type="button" data-segment="line">Линия</button>
       <button class="seg" type="button" data-segment="live">
         <span class="seg-dot"></span>Live<span class="seg-count" id="liveCount"></span>
       </button>
     </div>
-    <div class="line-freshness" id="lineFreshness" role="status" aria-live="polite">Обновляем линию…</div>
     <div id="matches"></div>
   </section>
 
