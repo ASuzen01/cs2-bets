@@ -3896,7 +3896,6 @@ class Database:
             paid = 0
             payouts: dict[int, int] = {}
             settlements: list[dict[str, Any]] = []
-            bet_payouts: list[tuple[int, int]] = []
             for bet in bets:
                 amount = int(bet["amount"])
                 win = bet["side"] == winner
@@ -3915,19 +3914,27 @@ class Database:
                         "won": win,
                     }
                 )
-                bet_payouts.append((int(bet["id"]), payout))
+                # Keep map settlement on the proven single-row path: this
+                # transaction is small, and card payouts must not depend on the
+                # new multi-row SQL helper while its Postgres path is verified.
+                await conn.execute(
+                    "UPDATE bets SET payout = ? WHERE id = ?", (payout, bet["id"])
+                )
 
-            settled_at = int(time.time())
-            await self._apply_settlement_payouts(
-                conn,
-                bet_payouts,
-                payouts,
-                f"выплата · карта {int(card['map_number'])} · {match_tag(match)}",
-                settled_at,
-            )
+            for user_id, total in payouts.items():
+                await conn.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?", (total, user_id)
+                )
+                await self._ledger(
+                    conn,
+                    user_id,
+                    total,
+                    f"выплата · карта {int(card['map_number'])} · {match_tag(match)}",
+                )
+
             await conn.execute(
                 "UPDATE match_maps SET status = 'finished', winner = ?, finished_at = ? WHERE id = ?",
-                (winner, settled_at, map_id),
+                (winner, int(time.time()), map_id),
             )
 
         team_a = str(match["team_a"]) if match is not None else ""
