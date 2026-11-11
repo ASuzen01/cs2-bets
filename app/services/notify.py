@@ -128,6 +128,8 @@ async def notify_bettors(
 
     for item in settlements:
         user_id = int(item["user_id"])
+        if not await db.result_notifications_enabled(user_id):
+            continue
         picked = item.get("label") or _side_label(str(item["side"]), team_a, team_b)
         balance = await db.get_balance(user_id)
         text = texts.bet_result(
@@ -143,6 +145,22 @@ async def notify_bettors(
             score=score,
         )
         await send_user(bot, db, user_id, text, markup, with_mascot=bool(item["won"]) and not void)
+
+
+async def notify_match_followers(bot: Bot, db: Database, match: Any) -> None:
+    """Уведомляет подписавшихся игроков о переходе матча в live."""
+    match_id = int(match["id"])
+    team_a = str(match["team_a"] or "Команда 1")
+    team_b = str(match["team_b"] or "Команда 2")
+    score = match.get("score") if hasattr(match, "get") else None
+    text = f"Матч начался: {team_a} — {team_b}."
+    if score:
+        text += f" Текущий счёт: {score}."
+    text += " Откройте Mini App, чтобы следить за ходом игры."
+    for user_id in await db.match_followers(match_id):
+        if not await db.result_notifications_enabled(user_id):
+            continue
+        await send_user(bot, db, user_id, text, keyboards.app_kb())
 
 
 async def notify_map_bettors(
@@ -165,6 +183,8 @@ async def notify_map_bettors(
 
     for item in settlements:
         user_id = int(item["user_id"])
+        if not await db.result_notifications_enabled(user_id):
+            continue
         picked = item.get("label") or _side_label(str(item["side"]), team_a, team_b)
         balance = await db.get_balance(user_id)
         text = texts.bet_result(
@@ -186,6 +206,7 @@ async def notify_map_bettors(
 __all__ = [
     "notify_bettors",
     "notify_map_bettors",
+    "notify_match_followers",
     "safe_send",
     "send_user",
     "send_with_mascot",

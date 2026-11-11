@@ -48,6 +48,13 @@
     stats: null,       // итоги игрока для «Я» (/api/stats)
     favorites: readFavorites(),  // любимые команды: живут в localStorage
     onlyFavorites: false,
+    onlyFollowed: false,
+    matchSearch: "",
+    followedMatches: [],
+    followsLoaded: false,
+    preferencesLoaded: false,
+    resultNotifications: true,
+    lineSyncAt: null,
     teaseTaps: 0,      // сколько раз подряд жали на бонус
     oddsPrev: {},      // кэфы, которые уже показали: нужно, чтобы заметить сдвиг линии
     matchesJson: "",   // снимок линии: если не изменился, экран не перерисовываем
@@ -112,6 +119,7 @@
   const POLL_MS = 40000;  // тяжёлые данные профиля/игр обновляем отдельно от линии
   let lineRefreshInFlight = false;
   let lineRefreshRevision = 0;
+  window.setInterval(updateLineFreshness, 15000);
   window.setInterval(() => {
     if (state.tab === "games" && state.game === "drunkard" && !state.drunkardBusy && !state.drunkardTyping) {
       refreshState({ silent: true });
@@ -634,6 +642,18 @@
     return btn;
   }
 
+  function matchFollowButton(match) {
+    const id = Number(match.id);
+    const active = state.followedMatches.includes(id);
+    const button = el("button", "match-follow" + (active ? " on" : ""), active ? "✓" : "＋");
+    button.type = "button";
+    button.title = active ? "Отключить отслеживание" : "Следить за матчем";
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.addEventListener("click", () => toggleMatchFollow(id));
+    return button;
+  }
+
   function renderCard(match) {
     const isLive = match.status === "live";
     const isWaiting = match.status === "awaiting";
@@ -645,6 +665,7 @@
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
     top.append(favoriteStar(match));
+    top.append(matchFollowButton(match));
     card.append(top);
 
     if (match.score) {
@@ -1011,6 +1032,7 @@
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
     top.append(favoriteStar(match));
+    top.append(matchFollowButton(match));
     card.append(top);
 
     const board = el("div", "fb-board");
@@ -1079,6 +1101,7 @@
     top.append(el("span", "tour", match.short_tournament));
     top.append(el("span", "kick", timeText(match.start_time)));
     top.append(favoriteStar(match));
+    top.append(matchFollowButton(match));
     card.append(top);
 
     const board = el("div", "fb-board");
@@ -1256,6 +1279,26 @@
     return btn;
   }
 
+  function renderFirstVisitHint(host) {
+    let seen = false;
+    try { seen = localStorage.getItem("cs2bets_intro_v1") === "1"; } catch (err) { seen = true; }
+    if (seen) return;
+    const card = el("div", "card onboarding-card");
+    card.append(el("h3", null, "Как здесь ставить"));
+    card.append(el("p", null,
+      "Выберите исход или карту, укажите сумму и проверьте возможную выплату. " +
+      "После матча результат появится в разделе «Ставки». Здесь используются только виртуальные монеты."));
+    const button = el("button", "btn small", "Понятно");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      try { localStorage.setItem("cs2bets_intro_v1", "1"); } catch (err) { /* показываем только в этой сессии */ }
+      card.remove();
+      haptic("light");
+    });
+    card.append(button);
+    host.append(card);
+  }
+
   function updateFavFilter() {
     const chip = $("#favFilter");
     if (!chip) return;
@@ -1270,6 +1313,15 @@
     renderSegments();
     renderSportSegments();
     renderCategorySegments();
+    const followedChip = $("#followFilter");
+    if (followedChip) {
+      followedChip.classList.toggle("on", state.onlyFollowed);
+      followedChip.setAttribute("aria-pressed", state.onlyFollowed ? "true" : "false");
+    }
+    const searchInput = $("#matchSearch");
+    if (searchInput && searchInput.value !== state.matchSearch) searchInput.value = state.matchSearch;
+    const clearSearch = $("#clearMatchSearch");
+    if (clearSearch) clearSearch.hidden = !state.matchSearch;
 
     if (!state.user) {
       const card = el("div", "card");
@@ -1300,13 +1352,19 @@
       return;
     }
 
+    renderFirstVisitHint(host);
+
     const liveMode = state.segment === "live";
     const footballMode = state.sport === "football";
     const hockeyMode = state.sport === "hockey";
     const source = liveMode
       ? state.liveMatches
       : (hockeyMode ? state.hockey : (footballMode ? state.football : state.matches));
-    const base = source.filter((match) => (match.sport || "cs2") === state.sport);
+    let base = source.filter((match) => (match.sport || "cs2") === state.sport);
+    if (state.onlyFollowed) {
+      const followed = new Set(state.followedMatches);
+      base = base.filter((match) => followed.has(Number(match.id)));
+    }
     // пустое подменю — тупик: если матчи есть в другом, переключаемся туда
     if (hasCategories() && base.length && !base.some(inCategory)) {
       state.category = state.category === "national" ? "clubs" : "national";
@@ -1329,11 +1387,31 @@
       : sportOnly;
     renderTournamentFilter(sportOnly);
     const tournament = selectedTournament();
-    const list = tournament
+    const tournamentFiltered = tournament
       ? dateFiltered.filter((match) => (match.short_tournament || match.tournament) === tournament)
       : dateFiltered;
+    const query = state.matchSearch.trim().toLocaleLowerCase("ru-RU");
+    const list = query
+      ? tournamentFiltered.filter((match) =>
+          [match.team_a, match.team_b, match.tournament, match.short_tournament]
+            .some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query)))
+      : tournamentFiltered;
 
     if (!list.length) {
+      if (query) {
+        const card = el("div", "card");
+        card.append(el("div", "empty", `По запросу «${state.matchSearch.trim()}» матчей не найдено.`));
+        const reset = el("button", "btn ghost", "Очистить поиск");
+        reset.type = "button";
+        reset.addEventListener("click", () => {
+          state.matchSearch = "";
+          renderMatches();
+          $("#matchSearch").focus();
+        });
+        card.append(reset);
+        host.append(card);
+        return;
+      }
       if (tournament && sportOnly.length) {
         // турнир выбран, но в нём сейчас пусто — предлагаем снять фильтр
         const card = el("div", "card");
@@ -1345,11 +1423,26 @@
         host.append(card);
         return;
       }
-      host.append(emptyWithMascot(liveMode
-        ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
-        : (hasCategories()
-          ? `Матчей ${categoryWord()} сейчас нет.\nЗагляни в другое подменю — там линия может быть полнее.`
-          : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже.")));
+      if (state.onlyFollowed) {
+        const card = el("div", "card");
+        card.append(el("div", "empty", state.followedMatches.length
+          ? "Среди отслеживаемых сейчас нет матчей с открытыми ставками."
+          : "Вы ещё не отслеживаете матчи. Нажмите «＋» на карточке матча, чтобы добавить его сюда."));
+        const reset = el("button", "btn ghost", "Показать все матчи");
+        reset.type = "button";
+        reset.addEventListener("click", () => {
+          state.onlyFollowed = false;
+          renderMatches();
+        });
+        card.append(reset);
+        host.append(card);
+      } else {
+        host.append(emptyWithMascot(liveMode
+          ? "Прямо сейчас никто не играет.\nМатчи подтягиваются сами — заглядывай."
+          : (hasCategories()
+            ? `Матчей ${categoryWord()} сейчас нет.\nЗагляни в другое подменю — там линия может быть полнее.`
+            : "Сейчас нет матчей с открытыми ставками.\nЛиния обновляется сама — заходи чуть позже.")));
+      }
       return;
     }
 
@@ -1800,6 +1893,37 @@
     kv("Ставок в игре", String(state.bets.length));
     kv("Экспрессов в игре", String(state.expresses.length));
     host.append(card);
+
+    const notification = el("button", "rowcard");
+    notification.type = "button";
+    const notificationGrow = el("div", "grow");
+    notificationGrow.append(el("b", null, "Уведомления о расчётах"));
+    notificationGrow.append(el("span", null, state.preferencesLoaded
+      ? (state.resultNotifications ? "Включены" : "Отключены")
+      : "Загружаем настройку…"));
+    notification.append(el("span", "chev", state.preferencesLoaded
+      ? (state.resultNotifications ? "🔔" : "🔕") : "…"));
+    notification.append(notificationGrow);
+    notification.append(el("span", "chev", state.preferencesLoaded
+      ? (state.resultNotifications ? "Вкл" : "Выкл") : "…"));
+    notification.disabled = !state.preferencesLoaded;
+    notification.addEventListener("click", async () => {
+      const next = !state.resultNotifications;
+      notification.disabled = true;
+      try {
+        const data = await api("/api/preferences", {
+          method: "POST", body: { result_notifications: next },
+        });
+        state.resultNotifications = data.result_notifications !== false;
+        state.preferencesLoaded = true;
+        renderMe();
+        toast(state.resultNotifications ? "Уведомления включены" : "Уведомления отключены");
+      } catch (err) {
+        notification.disabled = false;
+        toast(err.message || "Не удалось сохранить настройку");
+      }
+    });
+    host.append(notification);
 
     // билеты и фрибеты: видно, что они есть, на что их тратить и когда сгорят
     const tickets = state.tickets || [];
@@ -3393,6 +3517,10 @@
 
       state.user = data.user;
       state.authPending = false;
+      if (state.user) {
+        loadUserPreferences();
+        loadMatchFollows();
+      }
       state.matches = matches;
       state.football = football;
       state.hockey = hockey;
@@ -3456,16 +3584,72 @@
     }
   }
 
+  async function loadMatchFollows() {
+    if (state.followsLoaded || !state.user) return;
+    try {
+      const data = await api("/api/follows");
+      state.followedMatches = Array.isArray(data.match_ids) ? data.match_ids.map(Number) : [];
+      state.followsLoaded = true;
+      renderMatches();
+    } catch (err) { /* временная ошибка загрузки */ }
+  }
+
+  async function loadUserPreferences() {
+    if (state.preferencesLoaded || !state.user) return;
+    try {
+      const data = await api("/api/preferences");
+      state.resultNotifications = data.result_notifications !== false;
+      state.preferencesLoaded = true;
+      renderMe();
+    } catch (err) { /* временная ошибка загрузки */ }
+  }
+
+  async function toggleMatchFollow(matchId) {
+    const currently = state.followedMatches.includes(Number(matchId));
+    try {
+      const data = await api("/api/follows", {
+        method: "POST", body: { match_id: Number(matchId), following: !currently },
+      });
+      state.followedMatches = data.following
+        ? [...new Set([...state.followedMatches, Number(matchId)])]
+        : state.followedMatches.filter((id) => id !== Number(matchId));
+      haptic("light");
+      renderMatches();
+      toast(data.following ? "Матч добавлен в отслеживание" : "Отслеживание отключено");
+    } catch (err) { toast(err.message || "Не удалось изменить отслеживание"); }
+  }
+
+  function updateLineFreshness() {
+    const host = $("#lineFreshness");
+    if (!host) return;
+    if (!state.lineSyncAt) {
+      host.textContent = "Свежесть линии пока неизвестна";
+      host.classList.add("stale");
+      return;
+    }
+    const age = Math.max(0, Math.floor(Date.now() / 1000 - state.lineSyncAt));
+    const ageText = age < 60 ? `${age} сек. назад` : `${Math.floor(age / 60)} мин. назад`;
+    const stale = age > 120;
+    host.textContent = stale
+      ? `Фид давно не обновлялся · ${ageText}`
+      : `Источник обновил линию ${ageText}`;
+    host.classList.toggle("stale", stale);
+  }
+
   async function refreshLines() {
     if (lineRefreshInFlight || !state.user) return;
     lineRefreshInFlight = true;
     lineRefreshRevision += 1;
     try {
+      if (!state.followsLoaded) loadMatchFollows();
+      if (!state.preferencesLoaded) loadUserPreferences();
       const data = await api("/api/lines");
       const matches = data.matches || [];
       const live = data.live || [];
       const football = data.football || [];
       const hockey = data.hockey || [];
+      state.lineSyncAt = Number(data.source_updated_at) || null;
+      updateLineFreshness();
       const snapshot = JSON.stringify([matches, live, football, hockey]);
       const changed = snapshot !== state.matchesJson;
       state.matches = matches;
@@ -7857,6 +8041,31 @@
         if (state.segment === "live") refreshLines();  // свежий счёт и кэфы без полного запроса состояния
       });
     });
+    const searchInput = $("#matchSearch");
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        state.matchSearch = searchInput.value;
+        const clear = $("#clearMatchSearch");
+        if (clear) clear.hidden = !state.matchSearch;
+        renderMatches();
+      });
+    }
+    const clearSearch = $("#clearMatchSearch");
+    if (clearSearch) {
+      clearSearch.addEventListener("click", () => {
+        state.matchSearch = "";
+        renderMatches();
+        searchInput?.focus();
+      });
+    }
+    const followedChip = $("#followFilter");
+    if (followedChip) {
+      followedChip.addEventListener("click", () => {
+        state.onlyFollowed = !state.onlyFollowed;
+        haptic("light");
+        renderMatches();
+      });
+    }
     const favChip = $("#favFilter");
     if (favChip) {
       once(favChip, () => {

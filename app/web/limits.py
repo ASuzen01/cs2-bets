@@ -29,6 +29,8 @@ RULES: Final[dict[str, tuple[int, int]]] = {
     "/api/honesty": (30, 60),
     "/api/state": (120, 60),
     "/api/lines": (30, 60),
+    "/api/preferences": (30, 60),
+    "/api/follows": (60, 60),
     "/api/stats": (60, 60),
     "/api/bets": (60, 60),
     "/api/history": (60, 60),
