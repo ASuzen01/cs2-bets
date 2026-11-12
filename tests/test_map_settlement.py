@@ -164,6 +164,38 @@ async def test_sync_settles_map_by_round_score(db: Database) -> None:
     assert await db.get_balance(2) == 1070
 
 
+async def test_final_map_score_settles_while_series_is_still_live(db: Database) -> None:
+    """Финальный счёт карты сам по себе рассчитывает её, не закрывая серию."""
+    match = await _match(db, status="live")
+    card = await _map(db, int(match["id"]), score=(12, 12))
+    await db.place_map_bet(int(card["id"]), 2, None, "b", 100)
+
+    # Никакого отдельного bulk-upsert перед расчётом: проверяем fallback-путь,
+    # где финальный счёт впервые приходит прямо в _settle_maps.
+    feed_card = FonbetMap(
+        event_id=100001,
+        parent_id=int(match["fonbet_id"]),
+        map_number=1,
+        odds_a=1.70,
+        odds_b=2.10,
+        score_a=14,
+        score_b=16,
+        finished=False,
+    )
+    stats = {"maps_settled": 0}
+    await MatchSyncer(bot=None, db=db)._settle_maps(
+        {int(match["fonbet_id"]): [feed_card]}, stats
+    )
+
+    settled = await db.get_map(int(card["id"]))
+    still_live = await db.get_match(int(match["id"]))
+    assert stats["maps_settled"] == 1
+    assert settled["status"] == "finished" and settled["winner"] == "b"
+    assert (settled["score_a"], settled["score_b"]) == (14, 16)
+    assert still_live["status"] == "live" and still_live["winner"] is None
+    assert await db.get_balance(2) == 1110
+
+
 async def test_awaiting_map_settles_when_later_feed_has_final_score(db: Database) -> None:
     """Ожидающая карта получает финальный счёт позже и автоматически рассчитывается."""
     match = await _match(db)

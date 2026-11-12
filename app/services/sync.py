@@ -492,7 +492,14 @@ class MatchSyncer:
             if winner is None:
                 # карта ещё идёт (или её счёт потерялся) — ставки продолжают приниматься
                 continue
-            if await settle_map_by_score(self.db, self.bot, row):
+            # The database row may be the pre-upsert snapshot when this method is
+            # called directly (outside the regular tick). Use the freshest score
+            # that was just examined above, or the map can miss settlement until
+            # the next sync cycle after its final score arrives.
+            settlement_card = dict(row)
+            settlement_card["score_a"] = score_a
+            settlement_card["score_b"] = score_b
+            if await settle_map_by_score(self.db, self.bot, settlement_card):
                 stats["maps_settled"] += 1
 
     # --------------------------------------------------------------- футбол
