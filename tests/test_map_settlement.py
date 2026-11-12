@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -134,6 +135,57 @@ async def test_live_map_bet_allowed_when_match_awaits_result(db: Database) -> No
     balance, odds = await db.place_map_bet(int(card["id"]), 1, None, "a", 100)
 
     assert balance == 900 and odds == 1.70
+
+
+async def test_admin_can_manually_settle_a_live_map_while_series_continues(
+    db: Database, monkeypatch
+) -> None:
+    """Админ может вручную закрыть закончившуюся карту, не завершая серию."""
+    from app.handlers import admin
+
+    match = await _match(db, status="live")
+    card = await _map(db, int(match["id"]), score=(12, 10))
+    await db.place_map_bet(int(card["id"]), 1, None, "a", 100)
+    monkeypatch.setattr(admin, "settings", SimpleNamespace(admin_ids_set={42}))
+
+    class FakeMessage:
+        def __init__(self):
+            self.answers = []
+            self.edited = None
+
+        async def answer(self, text, **kwargs):
+            self.answers.append((text, kwargs))
+
+        async def edit_text(self, text, **kwargs):
+            self.edited = text
+
+    message = FakeMessage()
+    await admin.cmd_maps(message, db)
+    card_message = next(item for item in message.answers if item[1].get("reply_markup"))
+    markup = card_message[1]["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == f"ams:{card['id']}:a"
+
+    callback = SimpleNamespace(
+        data=f"ams:{card['id']}:a",
+        from_user=SimpleNamespace(id=42),
+        bot=object(),
+        message=message,
+        answer=lambda *args, **kwargs: None,
+    )
+
+    async def _answer(*args, **kwargs):
+        return None
+
+    callback.answer = _answer
+    monkeypatch.setattr(admin, "notify_map_bettors", _answer)
+    await admin.on_map_confirm(callback, db)
+
+    settled = await db.get_map(int(card["id"]))
+    still_live = await db.get_match(int(match["id"]))
+    assert settled["status"] == "finished" and settled["winner"] == "a"
+    assert still_live["status"] == "live" and still_live["winner"] is None
+    assert await db.get_balance(1) == 1070
+    assert "рассчитана" in message.edited
 
 
 async def test_sync_settles_map_by_round_score(db: Database) -> None:

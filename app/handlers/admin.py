@@ -14,7 +14,7 @@
     /bettrace 42           — трассировка ставки, экспресса или казино
     /feed                  — статус спортивной линии
     /players               — список игроков с id, чтобы знать кому начислять
-    /maps                  — карты, которые не удалось рассчитать автоматически
+    /maps                  — ручной расчёт активных карт (кнопки победителя)
     /cleanup [часов]       — рассчитать зависшие матчи, остальные отменить с возвратом
     /recount ID 1|2        — пересчитать отменённый матч по реальному исходу
     /backup [status]       — снять копию базы и прислать файлом
@@ -606,26 +606,45 @@ async def cmd_recheck(message: Message, command: CommandObject, db: Database) ->
 
 @router.message(Command("maps"))
 async def cmd_maps(message: Message, db: Database) -> None:
-    """Карты, по которым не удалось определить победителя автоматически."""
-    rows = await db.maps_by_status(["awaiting"])
+    """Показывает незакрытые сыгранные/активные карты для ручного расчёта."""
+    # Намеренно не предлагаем карты со статусом open: они ещё не начались.
+    rows = await db.maps_by_status(["live", "awaiting"])
     if not rows:
-        await message.answer("Все карты рассчитаны автоматически — подтверждать нечего ✅")
+        await message.answer("Нет активных или ожидающих расчёта карт.")
         return
 
-    await message.answer(f"Карты без авторасчёта: <b>{len(rows)}</b>")
-    for row in rows[:10]:
+    await message.answer(
+        f"Незакрытые карты: <b>{len(rows)}</b>.\n"
+        "Если карта уже закончилась, выберите победителя кнопкой. "
+        "Не рассчитывайте карту, пока она ещё идёт."
+    )
+    # Показываем сначала самые свежие матчи, чтобы активные карты были под рукой.
+    cards = []
+    for row in rows:
         match = await db.get_match(int(row["match_id"]))
-        title = f"{match['team_a']} 🆚 {match['team_b']}" if match is not None else "матч удалён"
-        score = f" · счёт в линии {row['score_a']}:{row['score_b']}" if row["score_a"] is not None and row["score_b"] is not None else ""
+        if match is not None:
+            cards.append((int(match["start_time"]), row, match))
+    cards.sort(key=lambda item: item[0], reverse=True)
+    for _, row, match in cards[:20]:
+        score = (
+            f" · счёт {row['score_a']}:{row['score_b']}"
+            if row["score_a"] is not None and row["score_b"] is not None
+            else " · счёт пока неизвестен"
+        )
+        status = "ждёт подтверждения" if str(row["status"]) == "awaiting" else "LIVE"
+        title = f"{html.escape(str(match['team_a']))} 🆚 {html.escape(str(match['team_b']))}"
         await message.answer(
-            f"#{row['id']} карта {row['map_number']}\n{title}{score}",
+            f"#{row['id']} · карта {row['map_number']} · {status}{score}\n{title}",
             reply_markup=keyboards.map_confirm_kb(row),
         )
 
 
 @router.callback_query(F.data.startswith("ams:"))
 async def on_map_confirm(callback: CallbackQuery, db: Database) -> None:
-    """Админ нажал «кто взял карту»."""
+    """Админ вручную выбирает победителя незакрытой карты."""
+    if callback.from_user is None or callback.from_user.id not in settings.admin_ids_set:
+        await callback.answer("Только для администратора", show_alert=True)
+        return
     try:
         _, map_id, winner = str(callback.data).split(":")
         result = await db.settle_map(int(map_id), winner, source="admin")
