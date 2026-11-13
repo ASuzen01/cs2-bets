@@ -81,6 +81,10 @@
     drunkardBusy: false,
     drunkardTyping: false,
     drunkardToken: null,
+    durak: null,
+    durakConfig: { deckSize: 36, rule: "throwin", playerCount: 2, stake: 50, tableType: "bots", visibility: "private", code: "" },
+    durakBusy: false,
+    durakTyping: false,
     crashClock: null,          // серверный множитель, привязанный к монотонным часам браузера
     crashStake: 50,
     crashBusy: false,
@@ -125,6 +129,11 @@
       refreshState({ silent: true });
     }
   }, 15000);
+  window.setInterval(() => {
+    if (state.tab === "games" && state.game === "durak" && !state.durakBusy && !state.durakTyping) {
+      refreshDurak({ silent: true });
+    }
+  }, 3500);
 
   // ---------------------------------------------------------------- утилиты
   const $ = (sel) => document.querySelector(sel);
@@ -3544,6 +3553,7 @@
       }
       state.mines = data.mines || null;
       state.drunkard = data.drunkard || { incoming: [], outgoing: [], last: null };
+      state.durak = data.durak || state.durak || { game: null, lobbies: [], last: null };
       syncCrashClock(state.crash);
       // новое достижение — единственный тост, который приятно получить неожиданно
       (data.new_achievements || []).forEach((item, index) => {
@@ -3568,7 +3578,7 @@
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping && !state.durakBusy && !state.durakTyping) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -4388,7 +4398,8 @@
       who.append(el("i", null, row.game === "roulette" ? "рулетка"
         : row.game === "ladder" ? "лесенка"
           : row.game === "drunkard" ? "пьяница"
-            : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
+            : row.game === "durak" ? "дурак"
+              : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
             : row.game === "mines" ? "мины" : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
               : row.game === "riftfall" ? "Золотой разлом"
                 : row.game === "baccarat" ? "баккара" : "кости"));
@@ -4401,6 +4412,7 @@
               : `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`)
             : row.game === "mines" ? row.outcome
               : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
+                : row.game === "durak" ? `${row.selection.replace("place:", "место ")} · ${row.player_count || "стол"}`
               : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
               ? row.outcome : "сумма " + row.outcome;
       const tag = el("span", "tag", tagText);
@@ -4464,6 +4476,10 @@
       box.append(document.createTextNode("На каждом этаже выбери дверь: за одной спрятан приз. После удачного выбора можно забрать выплату или продолжить; промах завершает игру без выплаты. Число дверей растёт с этажом, выплаты учитывают вероятность прохождения."));
       box.append(el("span", "edge", "теоретический RTP 95,5 % · исход двери выбирает сервер"));
       box.append(el("p", null, "Положение приза генерируется сервером криптографическим генератором; браузер не выбирает и не меняет исход."));
+    } else if (game === "durak") {
+      box.append(el("b", null, "Дурак · классические правила, 2–6 мест. "));
+      box.append(document.createTextNode("24 карты — 9–туз, 36 — 6–туз, 52 — 2–туз. Заход определяется младшим козырем. Атакуют картой любого достоинства, подкидывают совпадающие ранги; козырь бьёт любую некозырную масть, карту одной масти бьёт только старшая. В режиме «Соседи» первую заходную карту могут поддержать все игроки по очереди, затем подкидывают только левый и правый от отбивающегося. Перевод возможен картой того же достоинства до первого отбоя. "));
+      box.append(el("p", null, "Все вносят одинаковую ставку от 10 монет; в онлайн-столе взнос удерживается только при старте. Банк распределяется по местам: 2 игрока — 100/0%; 3 — 66,6/33,3/0%; 4 — 66,6/22,2/11,1/0%; 5 — 50/30/15/5/0%; 6 — 50/20/15/10/5/0%. Рука и колода хранятся на сервере; клиент получает только ваши карты."));
     } else if (game === "drunkard") {
       box.append(el("b", null, "Пьяница · полная партия, колода пополам. "));
       box.append(document.createTextNode("24 карты: 9–туз; 36: 6–туз; 52: 2–туз. Туз старше всех карт, включая младшую карту колоды: 9, 6 или 2 соответственно. Остальные ранги сравниваются по обычному порядку, масти равны. Каждый ход нажимай «Открыть следующие карты»: открывается одна пара, а победитель забирает весь спор. При равенстве начинается война: каждый игрок кладёт одну карту рубашкой вверх, затем открывает следующую; сравниваются открытые карты. При новой ничьей война повторяется. Выигранные карты перемешиваются перед тем, как уйти в низ колоды. Игра продолжается ход за ходом до победы или ничьей из-за нехватки карт для войны. Против игрока обе ставки одинаковы; они списываются после принятия вызова."));
@@ -7479,6 +7495,363 @@
     host.append(gameInfoNode("drunkard"));
   }
 
+  const DURAK_RULES = [
+    ["throwin", "Подкидной"], ["transfer", "Переводной"], ["neighbors", "Соседи"],
+  ];
+  const DURAK_SHARES = { 2: "100% / 0%", 3: "66,6% / 33,3% / 0%", 4: "66,6% / 22,2% / 11,1% / 0%", 5: "50% / 30% / 15% / 5% / 0%", 6: "50% / 20% / 15% / 10% / 5% / 0%" };
+
+  async function refreshDurak(options) {
+    try {
+      const data = await api("/api/durak/state");
+      state.durak = data.durak || { game: null, lobbies: [], last: null };
+      if (data.balance !== undefined && state.user && Number(data.balance) !== Number(state.user.balance)) {
+        state.user.balance = Number(data.balance);
+        setBalance(data.balance);
+      }
+      if (state.tab === "games" && state.game === "durak" && !state.durakBusy && !state.durakTyping) renderDurak($("#games"));
+    } catch (err) {
+      if (!(options && options.silent)) toast(err.message || "Не удалось обновить стол", "bad");
+    }
+  }
+
+  async function durakRequest(route, payload) {
+    if (state.durakBusy) return;
+    state.durakBusy = true;
+    const host = $("#games");
+    renderDurak(host);
+    try {
+      const data = await api(`/api/durak/${route}`, { method: "POST", body: payload || {} });
+      if (data.durak) state.durak = data.durak;
+      if (data.balance !== undefined && state.user) {
+        state.user.balance = Number(data.balance);
+        setBalance(data.balance);
+      }
+      if (route === "create") toast(payload.table_type === "bots" ? "Стол готов · ходи" : "Стол создан", "ok");
+      else if (route === "join") toast("Вы за столом", "ok");
+      else if (route === "start") toast("Партия началась", "ok");
+      else if (route === "action" && data.finished) toast("Партия завершена · выплаты рассчитаны", "ok");
+      else if (route === "cancel") toast("Стол закрыт");
+      haptic("light");
+      await refreshState({ silent: true });
+    } catch (err) {
+      toast(err.message || "Не удалось выполнить действие", "bad");
+      haptic("bad");
+    } finally {
+      state.durakBusy = false;
+      renderDurak(host);
+    }
+  }
+
+  function durakPayoutNote(count) {
+    return `Призовой фонд распределяется по местам: ${DURAK_SHARES[count] || "по месту"}. Монеты списываются при старте; в онлайн-столе каждый вносит одинаковую ставку.`;
+  }
+
+  function durakCard(card, disabled, label) {
+    const node = el("button", "durak-playing-card" + ((card && ["♥", "♦"].includes(card.suit)) ? " red" : ""));
+    node.type = "button";
+    node.disabled = Boolean(disabled);
+    node.setAttribute("aria-label", label || (card ? card.text : "Карта рубашкой вверх"));
+    if (!card) {
+      node.classList.add("back");
+      node.append(el("span", "durak-card-emblem", "✦"));
+      return node;
+    }
+    node.append(el("small", "durak-card-corner", card.rank), el("span", "durak-card-suit", card.suit));
+    return node;
+  }
+
+  function renderDurakBoard(game) {
+    const panel = el("section", "durak-panel durak-live");
+    const head = el("div", "durak-board-head");
+    const title = el("div", null);
+    title.append(el("div", "durak-kicker", `ПАРТИЯ ${game.id} · РАУНД ${game.round}`), el("h2", "durak-title", "Дурак"));
+    head.append(title);
+    const trump = el("div", "durak-trump-badge", `КОЗЫРЬ ${game.trump ? game.trump.text : "—"}`);
+    if (game.trump && ["♥", "♦"].includes(game.trump.suit)) trump.classList.add("red");
+    head.append(trump);
+    panel.append(head);
+
+    const stats = el("div", "durak-stock-row");
+    stats.append(el("span", null, `В колоде · ${game.stock_count}`), el("span", null, `Сброс · ${game.discard_count}`), el("span", null, `${game.deck_size} карт`));
+    panel.append(stats);
+
+    const seats = el("div", "durak-seats");
+    game.players.forEach((p) => {
+      const item = el("div", "durak-seat" + (p.me ? " mine" : "") + (Number(game.turn) === Number(p.seat) && !game.finished ? " on-turn" : "") + (p.place ? " out" : ""));
+      item.append(el("span", "durak-seat-crown", p.place === 1 ? "♛" : p.bot ? "✦" : "♙"));
+      item.append(el("b", null, p.name));
+      item.append(el("small", null, p.place ? `${p.place}-е место` : `${p.hand_count} карт`));
+      if (Number(game.attacker) === Number(p.seat) && !game.finished) item.append(el("i", null, "АТАКА"));
+      if (Number(game.defender) === Number(p.seat) && !game.finished) item.append(el("i", "defense", "ЗАЩИТА"));
+      seats.append(item);
+    });
+    panel.append(seats);
+
+    const felt = el("div", "durak-felt-table");
+    felt.append(el("div", "durak-felt-ornament", "✦  DURAK CLUB  ✦"));
+    const table = el("div", "durak-attack-table");
+    if (game.table && game.table.length) {
+      game.table.forEach((entry) => {
+        const pair = el("div", "durak-card-pair");
+        pair.append(durakCard(entry.card, true, `Атака ${entry.card.text}`));
+        const cover = entry.cover ? durakCard(entry.cover, true, `Отбито ${entry.cover.text}`) : durakCard(null, true, "Открытая карта атаки");
+        pair.append(cover);
+        table.append(pair);
+      });
+    } else {
+      table.append(el("div", "durak-table-empty", "Стол ждёт первой карты"));
+    }
+    felt.append(table);
+    const event = el("div", "durak-event", game.last_event || "Ожидаем ход…");
+    felt.append(event);
+    panel.append(felt);
+
+    const turn = game.players.find((p) => Number(p.seat) === Number(game.turn));
+    const turnLabel = game.finished ? "ПАРТИЯ ЗАВЕРШЕНА" : game.is_your_turn ? "ВАШ ХОД" : `ХОД · ${turn ? turn.name : "соперника"}`;
+    panel.append(el("div", "durak-turn-banner" + (game.is_your_turn ? " yours" : ""), turnLabel));
+
+    const handWrap = el("div", "durak-hand-wrap");
+    handWrap.append(el("div", "durak-label", game.is_your_turn ? "ВАШИ КАРТЫ · ВЫБЕРИТЕ ДЕЙСТВИЕ" : "ВАШИ КАРТЫ"));
+    const hand = el("div", "durak-hand");
+    const actions = game.actions || {};
+    const attackSet = new Set(actions.attack_indices || []);
+    const defendMap = new Map((actions.defend || []).map((entry) => [Number(entry.hand_index), entry]));
+    const transferSet = new Set(actions.transfer_indices || []);
+    (game.hand || []).forEach((card, index) => {
+      const canAttack = attackSet.has(index);
+      const canDefend = defendMap.has(index);
+      const canTransfer = actions.can_transfer && transferSet.has(index);
+      const active = canAttack || canDefend || canTransfer;
+      const cardButton = durakCard(card, !active, card.text);
+      if (canAttack) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: game.phase === "lead" ? "attack" : "throw", card_index: index, token: newToken() }));
+      else if (canDefend) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "defend", card_index: index, attack_index: defendMap.get(index).attack_index, token: newToken() }));
+      else if (canTransfer) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "transfer", card_index: index, token: newToken() }));
+      hand.append(cardButton);
+    });
+    if (!game.hand || !game.hand.length) hand.append(el("div", "durak-hand-empty", "На руке нет карт"));
+    handWrap.append(hand);
+    panel.append(handWrap);
+
+    if (game.is_your_turn && !game.finished) {
+      const controls = el("div", "durak-controls");
+      if (actions.can_take) {
+        const take = el("button", "btn durak-action take", "Взять карты");
+        take.type = "button";
+        take.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "take", token: newToken() }));
+        controls.append(take);
+      }
+      if (actions.can_pass) {
+        const pass = el("button", "btn ghost durak-action", "Пас");
+        pass.type = "button";
+        pass.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "pass", token: newToken() }));
+        controls.append(pass);
+      }
+      if (actions.can_transfer) controls.append(el("div", "durak-inline-hint", "Можно перевести картой того же достоинства"));
+      if (!controls.children.length && game.is_your_turn) controls.append(el("div", "durak-inline-hint", game.phase === "lead" ? "Выберите карту для захода" : game.phase === "defend" ? "Выберите карту для отбоя или возьмите карты" : "Подкиньте карту того же достоинства или нажмите «Пас»"));
+      panel.append(controls);
+    } else if (!game.finished) {
+      panel.append(el("div", "durak-inline-hint", "Партия обновляется автоматически · ход другого игрока"));
+    }
+
+    if (game.finished) {
+      const place = Number(game.your_place || 0);
+      panel.append(el("div", "durak-finish-note" + (place === 1 ? " winner" : ""), `${place === 1 ? "Вы выиграли стол" : `Ваш результат — ${place}-е место`} · выплата ${money(Number(game.payout || 0))}`));
+    }
+    return panel;
+  }
+
+  function renderDurak(host) {
+    if (!host) return;
+    host.textContent = "";
+    host.append(gameBackButton());
+    const data = state.durak || { game: null, lobbies: [], last: null };
+    const game = data.game;
+    if (game && game.status === "active") {
+      host.append(renderDurakBoard(game));
+      host.append(gameInfoNode("durak"));
+      return;
+    }
+    if (game && game.status === "waiting") {
+      const lobby = el("section", "durak-panel durak-lobby");
+      lobby.append(el("div", "durak-kicker", game.visibility === "private" ? "ПРИВАТНЫЙ СТОЛ" : "ОТКРЫТЫЙ СТОЛ"));
+      lobby.append(el("h2", "durak-title", game.players_count === game.player_count ? "Стол собран" : "Ждём игроков"));
+      lobby.append(el("p", "durak-copy", `${game.deck_size} карт · ${DURAK_RULES.find((r) => r[0] === game.mode)?.[1] || "Подкидной"} · ставка ${money(game.stake)} · мест ${game.players_count}/${game.player_count}`));
+      if (game.visibility === "private") {
+        const code = el("div", "durak-room-code");
+        code.append(el("small", null, "КОД ДЛЯ ПРИГЛАШЕНИЯ"), el("b", null, game.code));
+        const copy = el("button", "btn ghost", "Скопировать код");
+        copy.type = "button";
+        copy.addEventListener("click", async () => {
+          try { await navigator.clipboard.writeText(game.code); toast("Код скопирован", "ok"); }
+          catch (_) { toast(`Код стола: ${game.code}`); }
+        });
+        code.append(copy);
+        lobby.append(code);
+      }
+      const seats = el("div", "durak-lobby-seats");
+      game.players.forEach((p) => seats.append(el("span", "durak-lobby-player", `✦ ${p.name}`)));
+      for (let i = game.players_count; i < game.player_count; i++) seats.append(el("span", "durak-lobby-empty", "Ожидаем игрока"));
+      lobby.append(seats);
+      lobby.append(el("p", "durak-payout-note", durakPayoutNote(game.players_count)));
+      const buttons = el("div", "durak-controls");
+      if (game.is_owner && game.players_count === game.player_count) {
+        const start = el("button", "btn play durak-action", "Начать партию");
+        start.type = "button";
+        start.addEventListener("click", () => durakRequest("start", { game_id: game.id }));
+        buttons.append(start);
+      }
+      if (game.is_owner) {
+        const cancel = el("button", "btn ghost durak-action", "Закрыть стол");
+        cancel.type = "button";
+        cancel.addEventListener("click", () => durakRequest("cancel", { game_id: game.id }));
+        buttons.append(cancel);
+      }
+      lobby.append(buttons);
+      host.append(lobby);
+      return;
+    }
+
+    const setup = el("section", "durak-panel durak-setup");
+    setup.append(el("div", "durak-kicker", "DURAK CLUB · TABLE GAMES"));
+    setup.append(el("h2", "durak-title", "Дурак"));
+    setup.append(el("p", "durak-copy", "Карточная классика за изумрудным сукном. Играйте с ботами или за реальным столом — ставки и выплаты по местам."));
+
+    const deckBlock = el("div", "durak-setting-block");
+    deckBlock.append(el("div", "durak-label", "КОЛОДА"));
+    const decks = el("div", "durak-options three");
+    [24, 36, 52].forEach((size) => {
+      const btn = el("button", "durak-option" + (Number(state.durakConfig.deckSize) === size ? " active" : ""), `${size} карт`);
+      btn.type = "button";
+      btn.addEventListener("click", () => { state.durakConfig.deckSize = size; renderDurak(host); });
+      decks.append(btn);
+    });
+    deckBlock.append(decks);
+    setup.append(deckBlock);
+
+    const rulesBlock = el("div", "durak-setting-block");
+    rulesBlock.append(el("div", "durak-label", "ПРАВИЛА СТОЛА"));
+    const rules = el("div", "durak-options three");
+    DURAK_RULES.forEach(([value, label]) => {
+      const btn = el("button", "durak-option" + (state.durakConfig.rule === value ? " active" : ""), label);
+      btn.type = "button";
+      btn.addEventListener("click", () => { state.durakConfig.rule = value; renderDurak(host); });
+      rules.append(btn);
+    });
+    rulesBlock.append(rules);
+    setup.append(rulesBlock);
+
+    const countBlock = el("div", "durak-setting-block");
+    countBlock.append(el("div", "durak-label", "ИГРОКОВ ЗА СТОЛОМ · ВКЛЮЧАЯ ВАС"));
+    const counts = el("div", "durak-options five");
+    [2, 3, 4, 5, 6].forEach((count) => {
+      const btn = el("button", "durak-option" + (Number(state.durakConfig.playerCount) === count ? " active" : ""), String(count));
+      btn.type = "button";
+      btn.addEventListener("click", () => { state.durakConfig.playerCount = count; renderDurak(host); });
+      counts.append(btn);
+    });
+    countBlock.append(counts);
+    setup.append(countBlock);
+
+    const stakeBlock = el("div", "durak-setting-block");
+    stakeBlock.append(el("div", "durak-label", "ВЗНОС КАЖДОГО ИГРОКА"));
+    const stakes = el("div", "durak-stakes");
+    [10, 50, 100, 500, 1000].forEach((amount) => {
+      const btn = el("button", "stake-chip" + (Number(state.durakConfig.stake) === amount ? " active" : ""), money(amount));
+      btn.type = "button";
+      btn.disabled = amount > balance();
+      btn.addEventListener("click", () => { state.durakConfig.stake = amount; renderDurak(host); });
+      stakes.append(btn);
+    });
+    stakeBlock.append(stakes);
+    const stakeInput = el("input", "stake-input durak-stake-input");
+    stakeInput.type = "number";
+    stakeInput.inputMode = "numeric";
+    stakeInput.min = "10";
+    stakeInput.max = String(balance());
+    stakeInput.step = "1";
+    stakeInput.value = String(state.durakConfig.stake || 50);
+    stakeInput.setAttribute("aria-label", "Размер взноса за партию");
+    stakeInput.addEventListener("focus", () => { state.durakTyping = true; });
+    stakeInput.addEventListener("input", () => { state.durakConfig.stake = Number(stakeInput.value) || 0; syncDurakCreateButtons(); });
+    stakeInput.addEventListener("blur", () => { state.durakTyping = false; });
+    stakeBlock.append(stakeInput, el("div", "durak-payout-note", `Без верхнего лимита: ставка ограничена только вашим балансом (${money(balance())}). ${durakPayoutNote(Number(state.durakConfig.playerCount))}`));
+    setup.append(stakeBlock);
+
+    const modeBlock = el("div", "durak-setting-block");
+    modeBlock.append(el("div", "durak-label", "С КЕМ ИГРАТЬ"));
+    const types = el("div", "durak-options two");
+    [["bots", "С ботами"], ["online", "Онлайн" ]].forEach(([value, label]) => {
+      const btn = el("button", "durak-option" + (state.durakConfig.tableType === value ? " active" : ""), label);
+      btn.type = "button";
+      btn.addEventListener("click", () => { state.durakConfig.tableType = value; renderDurak(host); });
+      types.append(btn);
+    });
+    modeBlock.append(types);
+    if (state.durakConfig.tableType === "online") {
+      const vis = el("div", "durak-options two durak-visibility");
+      [["public", "Открытый подбор"], ["private", "Приватный стол"]].forEach(([value, label]) => {
+        const btn = el("button", "durak-option" + (state.durakConfig.visibility === value ? " active" : ""), label);
+        btn.type = "button";
+        btn.addEventListener("click", () => { state.durakConfig.visibility = value; renderDurak(host); });
+        vis.append(btn);
+      });
+      modeBlock.append(vis);
+      if (state.durakConfig.visibility === "private") {
+        const codeRow = el("div", "durak-join-code");
+        const code = el("input", "stake-input");
+        code.type = "text";
+        code.maxLength = 6;
+        code.autocomplete = "off";
+        code.placeholder = "Код комнаты";
+        code.value = state.durakConfig.code;
+        code.addEventListener("focus", () => { state.durakTyping = true; });
+        code.addEventListener("input", () => { state.durakConfig.code = code.value.toUpperCase(); });
+        code.addEventListener("blur", () => { state.durakTyping = false; });
+        const join = el("button", "btn ghost", "Войти по коду");
+        join.type = "button";
+        join.addEventListener("click", () => durakRequest("join", { code: state.durakConfig.code }));
+        codeRow.append(code, join);
+        modeBlock.append(codeRow);
+      }
+    }
+    setup.append(modeBlock);
+
+    const create = el("button", "btn play durak-create", state.durakBusy ? "Открываем стол…" : state.durakConfig.tableType === "bots" ? "Раздать карты" : state.durakConfig.visibility === "public" ? "Найти открытый стол" : "Создать приватный стол");
+    create.type = "button";
+    create.disabled = state.durakBusy || !Number.isInteger(Number(state.durakConfig.stake)) || Number(state.durakConfig.stake) < 10 || Number(state.durakConfig.stake) > balance();
+    create.addEventListener("click", () => durakRequest("create", {
+      table_type: state.durakConfig.tableType, visibility: state.durakConfig.visibility,
+      mode: state.durakConfig.rule, deck_size: state.durakConfig.deckSize,
+      player_count: state.durakConfig.playerCount, stake: Number(state.durakConfig.stake),
+    }));
+    setup.append(create);
+    setup.append(el("div", "durak-payout-note", "Ставка списывается со всех реальных участников только при старте партии. В открытом подборе стол начнётся при заполнении или по кнопке создателя."));
+    host.append(setup);
+
+    if (state.durakConfig.tableType === "online" && state.durakConfig.visibility === "public" && data.lobbies && data.lobbies.length) {
+      const open = el("section", "durak-panel durak-open-rooms");
+      open.append(el("div", "durak-kicker", "ЗА ОТКРЫТЫМИ СТОЛАМИ"), el("h3", "durak-title small", "Можно присоединиться"));
+      data.lobbies.forEach((room) => {
+        const row = el("div", "durak-room-row");
+        const ruleLabel = DURAK_RULES.find((rule) => rule[0] === room.mode)?.[1] || "Подкидной";
+        row.append(el("div", null, `${room.players_count}/${room.player_count} мест · ${room.deck_size} карт · ${ruleLabel} · ${money(room.stake)}`));
+        const join = el("button", "btn ghost", "Сесть за стол");
+        join.type = "button";
+        join.addEventListener("click", () => durakRequest("join", { game_id: room.id }));
+        row.append(join);
+        open.append(row);
+      });
+      host.append(open);
+    }
+    if (data.last) host.append(renderDurakBoard(data.last));
+    host.append(gameInfoNode("durak"));
+  }
+
+  function syncDurakCreateButtons() {
+    const button = $(".durak-create");
+    if (button) button.disabled = state.durakBusy || !Number.isInteger(Number(state.durakConfig.stake)) || Number(state.durakConfig.stake) < 10 || Number(state.durakConfig.stake) > balance();
+  }
+
   function renderGames() {
     clearCasinoDockTracking();
     const host = $("#games");
@@ -7518,6 +7891,10 @@
     if (state.game === "blackjack") {
       renderBlackjack(host);
       host.prepend(gameBackButton());
+      return;
+    }
+    if (state.game === "durak") {
+      renderDurak(host);
       return;
     }
     if (state.game === "drunkard") {

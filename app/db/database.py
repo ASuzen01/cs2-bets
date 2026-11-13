@@ -86,6 +86,7 @@ BACKUP_TABLES: tuple[str, ...] = (
     "tease_claims",
     "casino_bets",
     "drunkard_games",
+    "durak_games",
     "slot_states",
     "riftfall_states",
     "ladder_games",
@@ -125,6 +126,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("casino_bets", "user_id"),
     ("drunkard_games", "creator_id"),
     ("drunkard_games", "opponent_id"),
+    ("durak_games", "owner_id"),
     ("slot_states", "user_id"),
     ("riftfall_states", "user_id"),
     ("ladder_games", "user_id"),
@@ -654,7 +656,7 @@ class Database:
         # Older backups may predate these new game tables; restore those as empty,
         # while keeping every established table omission strict.
         legacy_optional = {
-            "crash_games", "drunkard_games", "mines_games", "match_follows", "user_preferences",
+            "crash_games", "drunkard_games", "durak_games", "mines_games", "match_follows", "user_preferences",
             "riftfall_states",
         }
         if missing and missing <= legacy_optional:

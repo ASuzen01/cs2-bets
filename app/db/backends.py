@@ -209,6 +209,21 @@ CREATE INDEX IF NOT EXISTS idx_drunkard_creator ON drunkard_games(creator_id, id
 CREATE INDEX IF NOT EXISTS idx_drunkard_opponent ON drunkard_games(opponent_id, id);
 CREATE INDEX IF NOT EXISTS idx_drunkard_status ON drunkard_games(status, created_at);
 
+-- Серверные столы «Дурака»: правила и скрытые руки живут только в state_json.
+CREATE TABLE IF NOT EXISTS durak_games (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id     INTEGER NOT NULL,
+    room_code    TEXT NOT NULL UNIQUE,
+    visibility   TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    config_json  TEXT NOT NULL,
+    state_json   TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_durak_status_updated ON durak_games(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_durak_owner ON durak_games(owner_id, id);
+
 -- незавершённые фри-спины и их зафиксированная ставка хранятся на сервере
 CREATE TABLE IF NOT EXISTS slot_states (
     user_id     INTEGER PRIMARY KEY,
