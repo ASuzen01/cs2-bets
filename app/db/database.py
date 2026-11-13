@@ -4636,6 +4636,116 @@ class Database:
             "sport": "hockey",
         }
 
+    # ------------------------------------------------- архивация НХЛ и сборных
+    async def archive_nhl_and_national_hockey(self) -> dict[str, Any]:
+        """Закрыть открытые ставки на НХЛ и хоккей сборных как выигрышные.
+
+        Матчи этих турниров исключены из линии: их больше не синхронизируют и
+        не принимают ставки. Existing открытые ординары выплачиваются по кэфу,
+        а весь открытый купон (экспресс), содержащий хотя бы одну такую ногу —
+        считается выигрышным целиком, как решено владельцем. Матчи ставятся в
+        статус finished с result_source=archive, чтобы они ушли из линии и не
+        попадали в цикл расчёта.
+        """
+        # турниры, которые уходят из линии: НХЛ и хоккей сборных
+        patterns = ("%нхл%", "%сборн%", "%чемпионат мира%", "%чм%", "%олимпиад%")
+        async with self.transaction() as conn:
+            async with conn.execute(
+                """
+                SELECT id, tournament, team_a, team_b FROM matches
+                WHERE sport = 'hockey' AND status IN ('open', 'live', 'awaiting')
+                """
+            ) as cur:
+                rows = list(await cur.fetchall())
+
+            archived: list[dict[str, Any]] = []
+            now = int(time.time())
+            for row in rows:
+                tournament = str(row["tournament"] or "").lower()
+                if not any(pattern.strip("%").lower() in tournament for pattern in patterns):
+                    continue
+                match_id = int(row["id"])
+
+                # ординары: выплачиваем по кэфу
+                async with conn.execute(
+                    "SELECT * FROM bets WHERE match_id = ? AND cashed_out = 0", (match_id,)
+                ) as cur:
+                    bets = list(await cur.fetchall())
+                payouts: dict[int, int] = {}
+                bet_payouts: list[tuple[int, int]] = []
+                for bet in bets:
+                    payout = round(int(bet["amount"]) * float(bet["odds"]))
+                    bet_payouts.append((int(bet["id"]), payout))
+                    if payout:
+                        payouts[int(bet["user_id"])] = (
+                            payouts.get(int(bet["user_id"]), 0) + payout
+                        )
+                if bet_payouts:
+                    await self._apply_settlement_payouts(
+                        conn, bet_payouts, payouts,
+                        f"выплата · {match_tag(row)} · архив", now,
+                    )
+
+                # ноги экспресса на этом матче — выигрышные; целые купоны
+                # с такой ногой считаются выигрышными целиком
+                async with conn.execute(
+                    """
+                    SELECT DISTINCT i.express_id FROM express_items i
+                    JOIN expresses e ON e.id = i.express_id
+                    WHERE i.match_id = ? AND e.status = 'open'
+                    """,
+                    (match_id,),
+                ) as cur:
+                    express_ids = [int(r["express_id"]) for r in await cur.fetchall()]
+                await conn.execute(
+                    "UPDATE express_items SET result = 'won' WHERE match_id = ?", (match_id,)
+                )
+                for express_id in express_ids:
+                    async with conn.execute(
+                        "SELECT * FROM expresses WHERE id = ?", (express_id,)
+                    ) as cur:
+                        express = await cur.fetchone()
+                    if express is None or express["status"] != "open":
+                        continue
+                    payout = round(int(express["stake"]) * float(express["odds"]))
+                    await conn.execute(
+                        "UPDATE expresses SET status = 'won', payout = ?, settled_at = ? "
+                        "WHERE id = ?",
+                        (payout, now, express_id),
+                    )
+                    if payout:
+                        await conn.execute(
+                            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                            (payout, int(express["user_id"])),
+                        )
+                        await self._ledger(
+                            conn, int(express["user_id"]), payout,
+                            f"экспресс #{express_id} · выплата · архив", now,
+                        )
+
+                await conn.execute(
+                    "UPDATE matches SET status = 'finished', result_source = 'archive', "
+                    "finished_at = ? WHERE id = ?",
+                    (now, match_id),
+                )
+                archived.append(
+                    {
+                        "id": match_id,
+                        "tournament": str(row["tournament"]),
+                        "team_a": str(row["team_a"]),
+                        "team_b": str(row["team_b"]),
+                        "bets": len(bets),
+                        "expresses": len(express_ids),
+                        "paid": sum(payouts.values()),
+                    }
+                )
+
+        return {
+            "archived": len(archived),
+            "matches": archived,
+            "paid": sum(item["paid"] for item in archived),
+        }
+
     # -------------------------------------------------------------- экспрессы
     async def place_express(
         self,
@@ -4773,6 +4883,31 @@ class Database:
             "SELECT * FROM expresses WHERE user_id = ? AND status = 'open' ORDER BY id",
             (user_id,),
         )
+
+    async def user_open_expresses_count(self, user_id: int) -> int:
+        """Сколько открытых экспрессов — лёгкий COUNT для шапки/профиля."""
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS n FROM expresses WHERE user_id = ? AND status = 'open'",
+            (user_id,),
+        )
+        return int(row["n"]) if row else 0
+
+    async def user_active_bets_count(self, user_id: int) -> int:
+        """Сколько ставок в игре — лёгкий COUNT для шапки/профиля."""
+        row = await self._fetchone(
+            """
+            SELECT COUNT(*) AS n FROM bets b
+            JOIN matches m ON m.id = b.match_id
+            LEFT JOIN match_maps mm ON mm.id = b.map_id
+            WHERE b.user_id = ? AND b.cashed_out = 0 AND (
+                (b.market IN ('match', 'football', 'hockey')
+                 AND m.status IN ('open', 'live', 'awaiting'))
+                OR (b.market = 'map' AND mm.status IN ('open', 'live', 'awaiting'))
+            )
+            """,
+            (user_id,),
+        )
+        return int(row["n"]) if row else 0
 
     async def _resolve_expresses(
         self, conn: Any, match_id: int, winner: str | None

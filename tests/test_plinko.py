@@ -82,11 +82,12 @@ async def test_plinko_api_publishes_config_and_plays_server_route(
     route = (1,) * 8
     monkeypatch.setattr(games, "plinko_path", lambda rows: route)
 
+    # плинко архивирован: конфигурация из /api/casino не публикуется,
+    # но серверный маршрут /api/casino/play продолжает работать
     state_response = await client.get("/api/casino")
     assert state_response.status == 200
     state = await state_response.json()
-    assert state["plinko"]["rtp"] == 95.5
-    assert "8:high" in state["plinko"]["multipliers"]
+    assert "plinko" not in state
 
     response = await client.post(
         "/api/casino/play",

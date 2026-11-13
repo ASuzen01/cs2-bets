@@ -306,7 +306,9 @@ async def test_state_has_no_money_ceiling(client: TestClient) -> None:
     state = await (await client.get("/api/state")).json()
     assert "max_bet" not in state["limits"]
     assert "ladder_max_bet" not in state["limits"]
-    assert "max_bet" not in state["casino"]
+    # casino-состояние — отдельный ленивый эндпоинт
+    casino = await (await client.get("/api/casino")).json()
+    assert "max_bet" not in casino
 
 
 async def test_single_bet_above_former_ceiling_is_accepted(client: TestClient, db: Database) -> None:
@@ -376,9 +378,9 @@ async def test_metrics_aggregate_unmatched_paths(client: TestClient) -> None:
 
 
 async def test_quests_and_stats_endpoints(client: TestClient, db: Database) -> None:
-    state = await (await client.get("/api/state")).json()
-    assert len(state["quests"]) == 3
-    assert all("title" in quest and "reward" in quest for quest in state["quests"])
+    quests = await (await client.get("/api/quests")).json()
+    assert len(quests["quests"]) == 3
+    assert all("title" in quest and "reward" in quest for quest in quests["quests"])
 
     stats = await (await client.get("/api/stats")).json()
     assert stats["ok"] and stats["stats"]["bets"] == 0

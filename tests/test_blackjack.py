@@ -229,7 +229,7 @@ async def test_api_start_hit_stand_and_resume(api_client, monkeypatch) -> None:
     assert settled["game"]["result"]["label"] == "Дилер перебрал"
     assert settled["balance"] == 1010
 
-    current = await client.get("/api/state")
+    current = await client.get("/api/blackjack/state")
     assert current.status == 200
     assert (await current.json())["blackjack"]["id"] == game_id
     assert await database.get_balance(7001) == 1010

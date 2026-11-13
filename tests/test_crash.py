@@ -192,11 +192,13 @@ async def test_crash_api_round_flow(crash_api_client, monkeypatch) -> None:
     assert cashed["game"]["status"] == "cashed"
     assert cashed["balance"] == 1012
 
-    state_response = await client.get("/api/state")
-    assert state_response.status == 200
-    state = await state_response.json()
-    assert state["crash"]["status"] == "cashed"
-    assert any(item["game"] == "crash" for item in state["casino"]["history"])
+    crash_response = await client.get("/api/crash/state")
+    assert crash_response.status == 200
+    state = await crash_response.json()
+    assert state["game"]["status"] == "cashed"
+    casino_response = await client.get("/api/casino")
+    casino = await casino_response.json()
+    assert any(item["game"] == "crash" for item in casino["history"])
 
 
 async def test_crash_api_accepts_stake_above_former_ceiling(crash_api_client) -> None:

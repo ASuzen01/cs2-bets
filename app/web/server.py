@@ -49,10 +49,8 @@ from app.services.quests import payload as quests_payload
 from app.web.auth import BOT_KEY, DB_KEY, MIDDLEWARES, USER_KEY, resolve_user
 from app.web.limits import metrics
 from app.web.payloads import (
-    bet_payload,
     bets_history,
     display_name,
-    express_payload,
     match_payload,
 )
 
@@ -90,7 +88,9 @@ def register_routes(
     app.router.add_post("/api/follows", api_follows)
     app.router.add_post("/api/bet", api_bet)
     app.router.add_post("/api/express", api_express)
+    app.router.add_get("/api/bonus", api_bonus_state)
     app.router.add_post("/api/bonus", api_bonus)
+    app.router.add_get("/api/quests", api_quests)
     app.router.add_post("/api/wheel", api_wheel)
     app.router.add_post("/api/tease", api_tease)
     app.router.add_post("/api/quest", api_quest)
@@ -110,6 +110,7 @@ def register_routes(
     app.router.add_post("/api/casino/play", api_casino_play)
     app.router.add_post("/api/casino/slots/chest", api_slot_chest)
     app.router.add_post("/api/blackjack/start", api_blackjack_start)
+    app.router.add_get("/api/blackjack/state", api_blackjack_state)
     app.router.add_post("/api/blackjack/action", api_blackjack_action)
     app.router.add_post("/api/drunkard/play", api_drunkard_play)
     app.router.add_post("/api/drunkard/step", api_drunkard_step)
@@ -282,7 +283,13 @@ async def index(request: web.Request) -> web.Response:
 
 # ----------------------------------------------------------------------- API
 async def api_state(request: web.Request) -> web.Response:
-    """Всё для главного экрана: игрок, линия, ставки в игре, лимиты."""
+    """Лёгкое состояние главной экрана: игрок, линия, лимиты, билеты.
+
+    Полные разделы (ставки, экспрессы, бонусы, квесты, достижения, казино,
+    игры) подгружаются отдельно по вкладкам — /api/bets, /api/bonus, /api/quests,
+    /api/casino, /api/crash/state и т.д. Так /api/state остаётся быстрым и
+    дешёвым в потоковом обновлении.
+    """
     db: Database = request.app[DB_KEY]
     user = request[USER_KEY]
     user_id = int(user["user_id"])
@@ -290,21 +297,11 @@ async def api_state(request: web.Request) -> web.Response:
     if not user["dev"]:
         await db.upsert_user(user_id, user["username"], user["full_name"])
 
-    quests = quests_payload(await db.quests_state(user_id), day_number())
-    fresh = await achievements.sync(db, user_id)
-    chain = await db.quest_chain(user_id)
     lines = await _miniapp_lines(db)
+    bonus_ready = await _bonus_ready_count(db, user_id)
     return web.json_response(
         {
             "ok": True,
-            "quests": quests,
-            "chain": {
-                **chain,
-                "chest": chain_chest(chain["days"]),
-                "next": next_chest(chain["days"]),
-            },
-            "achievements": await achievements.payload(db, user_id),
-            "new_achievements": [achievements.public(item) for item in fresh],
             "user": {
                 "id": user_id,
                 "name": display_name(user, await db.get_user(user_id)),
@@ -315,9 +312,8 @@ async def api_state(request: web.Request) -> web.Response:
             "live": lines["live"],
             "football": lines["football"],
             "hockey": lines["hockey"],
-            "bets": [bet_payload(row) for row in await db.user_active_bets(user_id)],
-            "expresses": [express_payload(row) for row in await db.user_open_expresses(user_id)],
-            "bonus": await _bonus_payload(db, user_id),
+            "bets_count": await db.user_active_bets_count(user_id),
+            "expresses_count": await db.user_open_expresses_count(user_id),
             # билет колеса или фрибет возврата — каждый с подходящим типом ставки
             "tickets": [
                 {
@@ -328,12 +324,7 @@ async def api_state(request: web.Request) -> web.Response:
                 }
                 for row in await db.tickets(user_id)
             ],
-            "casino": await _casino_payload(db, user_id),
-            "blackjack": await db.blackjack_state(user_id),
-            "ladder": await db.ladder_state(user_id),
-            "crash": await db.crash_state(user_id),
-            "mines": await db.mines_state(user_id),
-            "drunkard": await db.drunkard_state(user_id),
+            "bonus_ready": bonus_ready,
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -342,6 +333,64 @@ async def api_state(request: web.Request) -> web.Response:
             },
         }
     )
+
+
+async def _bonus_ready_count(db: Database, user_id: int) -> int:
+    """Сколько разумно взять бонусов прямо сейчас — для точки в шапке.
+
+    Полный payload бонусов грузится только при открытии вкладки; здесь нужен
+    лишь счётчик «есть что забрать», чтобы точка в шапке не требовала
+    /api/bonus на каждом тики.
+    """
+    state = await db.bonus_state(
+        user_id,
+        settings.bonus_cooldown_hours * 3600,
+        settings.wheel_cooldown_hours * 3600,
+        settings.tease_cooldown_hours * 3600,
+    )
+    ready = 0
+    if int(state["daily"]["wait_seconds"]) == 0:
+        ready += 1
+    if int(state["wheel"]["wait_seconds"]) == 0:
+        ready += 1
+    if int(state["tease"]["wait_seconds"]) == 0:
+        ready += 1
+    quests = quests_payload(await db.quests_state(user_id), day_number())
+    ready += sum(1 for quest in quests if quest.get("ready"))
+    return ready
+
+
+async def api_bonus_state(request: web.Request) -> web.Response:
+    """Бонусы: ежедневный бонус, колесо, пасхалка — только для вкладки бонусов."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    return web.json_response({"ok": True, "bonus": await _bonus_payload(db, user_id)})
+
+
+async def api_quests(request: web.Request) -> web.Response:
+    """Квесты и цепочка сундуков — только для вкладки бонусов."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    quests = quests_payload(await db.quests_state(user_id), day_number())
+    chain = await db.quest_chain(user_id)
+    return web.json_response(
+        {
+            "ok": True,
+            "quests": quests,
+            "chain": {
+                **chain,
+                "chest": chain_chest(chain["days"]),
+                "next": next_chest(chain["days"]),
+            },
+        }
+    )
+
+
+async def api_blackjack_state(request: web.Request) -> web.Response:
+    """Состояние блэкджека — только для экрана игры."""
+    db: Database = request.app[DB_KEY]
+    user_id = int(request[USER_KEY]["user_id"])
+    return web.json_response({"ok": True, "blackjack": await db.blackjack_state(user_id)})
 
 
 async def api_lines(request: web.Request) -> web.Response:
@@ -1022,29 +1071,36 @@ async def api_history(request: web.Request) -> web.Response:
 
 
 async def api_bets(request: web.Request) -> web.Response:
-    """История ставок: в игре и рассчитанные, одиночные + экспрессы."""
+    """История ставок: в игре и рассчитанные, одиночные + экспрессы.
+
+    `?section=open|settled` подгружает только нужный раздел, чтобы вкладки
+    «В игре» и «История» не тянуть весь payload обоими.
+    """
     db: Database = request.app[DB_KEY]
     payload = await bets_history(db, int(request[USER_KEY]["user_id"]))
+    section = (request.query.get("section") or "all").lower()
+    if section == "open":
+        payload = {**payload, "settled": [], "counts": {**payload["counts"], "settled": 0,
+                                                        "won": 0, "lost": 0}}
+    elif section == "settled":
+        payload = {**payload, "open": [], "counts": {**payload["counts"], "open": 0}}
     return web.json_response({"ok": True, **payload})
 
 
 # -------------------------------------------------------------------- казино
 async def _casino_payload(db: Database, user_id: int) -> dict[str, Any]:
-    """Роспись игр, сводка и последние раунды — одним куском для экранов."""
+    """Роспись казино, сводка и последние раунды — одним куском для экрана.
+
+    В каталоге остались только рулетка, блэкджек и самолётик: блэкджек и
+    самолётик — отдельные состояния (/api/blackjack/state, /api/crash/state),
+    здесь — рулетка плюс история раундов.
+    """
     summary = await db.casino_summary(user_id)
     rows = await db.casino_history(user_id, 12)
     return {
         "options": {
             "roulette": games.game_options("roulette"),
-            "dice": games.game_options("dice"),
-            "baccarat": baccarat.options(),
         },
-        "plinko": games.plinko_config(),
-        "slots": slot_machine.slot_config(),
-        "riftfall": riftfall.slot_config(),
-        "mines": mines_game.config(),
-        "slot_state": await db.slot_state(user_id),
-        "riftfall_state": await db.riftfall_state(user_id),
         "numbers": sorted(games.ROULETTE_RED),
         "red": sorted(games.ROULETTE_RED),
         "summary": {

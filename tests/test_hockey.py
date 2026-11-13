@@ -69,18 +69,16 @@ def _line_packet() -> dict:
 
 
 # ------------------------------------------------------------------ фильтр линии
-def test_default_line_covers_khl_and_nhl_only() -> None:
-    """КХЛ и НХЛ в линии; женский ЧМ и квалификация — нет."""
+def test_default_line_covers_khl_only() -> None:
+    """В линии только КХЛ: НХЛ и хоккей сборных исключены."""
     from app.config import settings
     from app.services.hockey import parse_hockey
 
     matches = parse_hockey(
         _line_packet(), settings.hockey_include_list, settings.hockey_exclude_list
     )
-    assert [m.team_a for m in matches] == ["Авангард", "Монреаль Канадиенс"]
-    assert {m.tournament for m in matches} == {
-        "Фонбет КХЛ. Регулярный сезон", "НХЛ. Регулярный сезон"
-    }
+    assert [m.team_a for m in matches] == ["Авангард"]
+    assert {m.tournament for m in matches} == {"Фонбет КХЛ. Регулярный сезон"}
 
 
 def test_hockey_segments_require_hockey_sport() -> None:
@@ -389,7 +387,7 @@ def test_hockey_market_labels_are_russian() -> None:
 
 # ------------------------------------------------------- авто/ручной расчёт синка
 class _FakeHockeyFeed:
-    """Заглушка хоккейного фида: НХЛ отдаёт счёт, КХЛ — нет."""
+    """Заглушка хоккейного фида: раньше отдавала НХЛ, теперь не нужна."""
 
     def __init__(self, result=None) -> None:
         self.result = result
@@ -406,6 +404,21 @@ class _FakeHockeyFeed:
         return None
 
 
+class _FakeKhlFeed:
+    """Заглушка фида КХЛ: отдаёт KhlResult для пары клубов."""
+
+    def __init__(self, result=None) -> None:
+        self.result = result
+        self.calls = 0
+
+    async def find(self, *args, **kwargs):
+        self.calls += 1
+        return self.result
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.fixture(autouse=True)
 def _quiet_notifications(monkeypatch):
     async def _noop(*args, **kwargs):
@@ -414,21 +427,22 @@ def _quiet_notifications(monkeypatch):
     monkeypatch.setattr("app.services.sync.notify_bettors", _noop)
 
 
-def _syncer(db: Database, feed: _FakeHockeyFeed) -> object:
+def _syncer(db: Database, khl_feed: _FakeKhlFeed) -> object:
     from app.services.sync import MatchSyncer
 
     syncer = MatchSyncer(bot=None, db=db, results=_FakeHockeyFeed())
-    syncer.hockey_results = feed
+    # КХЛ теперь единственный хоккей в линии — результат берётся из фида KHL
+    syncer.khl_results = khl_feed
     return syncer
 
 
 async def _started_hockey(db: Database, *, minutes_ago: int = 150) -> dict:
-    """Матч, который уже прошёл: ставим до старта, потом время уходит вперёд."""
+    """Матч КХЛ, который уже прошёл: ставим до старта, потом время уходит вперёд."""
     fields = {
         "fonbet_id": 4242,
-        "tournament": "НХЛ. Регулярный сезон",
-        "team_a": "Монреаль Канадиенс",
-        "team_b": "Виннипег Джетс",
+        "tournament": "Фонбет КХЛ. Регулярный сезон",
+        "team_a": "Авангард",
+        "team_b": "ЦСКА",
         "odds_a": 2.5,
         "odds_x": 4.3,
         "odds_b": 2.3,
@@ -445,15 +459,15 @@ async def _started_hockey(db: Database, *, minutes_ago: int = 150) -> dict:
     return row
 
 
-async def test_nhl_is_settled_automatically_with_ot_score(db: Database) -> None:
-    """НХЛ: 2:2 в основное и 2:3 в овертайме — «основное» проиграло, «матч» тоже."""
-    from app.services.results import FootballResult
+async def test_khl_is_settled_automatically_with_ot_score(db: Database) -> None:
+    """КХЛ: 2:2 в основное и 2:3 в овертайме — «основное» проиграло, «матч» тоже."""
+    from app.services.khl_results import KhlResult
 
     row = await _started_hockey(db)
-    feed = _FakeHockeyFeed(
-        FootballResult(
-            home="Montreal Canadiens", away="Winnipeg Jets",
-            score_home=2, score_away=2, final_home=2, final_away=3,
+    feed = _FakeKhlFeed(
+        KhlResult(
+            home="Авангард", away="ЦСКА",
+            reg_home=2, reg_away=2, final_home=2, final_away=3,
             status="OT", start_ts=int(time.time()) - 150 * 60,
         )
     )
@@ -468,15 +482,15 @@ async def test_nhl_is_settled_automatically_with_ot_score(db: Database) -> None:
     assert await db.get_balance(1) == 800        # обе ставки проиграли — верно
 
 
-async def test_nhl_settles_winning_final_bet(db: Database) -> None:
+async def test_khl_settles_winning_final_bet(db: Database) -> None:
     """Ставка «победа в матче» заходит, даже если основное время — ничья."""
-    from app.services.results import FootballResult
+    from app.services.khl_results import KhlResult
 
     row = await _started_hockey(db)
-    feed = _FakeHockeyFeed(
-        FootballResult(
-            home="Montreal Canadiens", away="Winnipeg Jets",
-            score_home=1, score_away=1, final_home=2, final_away=1,
+    feed = _FakeKhlFeed(
+        KhlResult(
+            home="Авангард", away="ЦСКА",
+            reg_home=1, reg_away=1, final_home=2, final_away=1,
             status="OT", start_ts=int(time.time()) - 150 * 60,
         )
     )
@@ -508,7 +522,7 @@ async def test_khl_without_feed_waits_for_admin(db: Database, monkeypatch) -> No
     await db.set_status(int(row["id"]), "live")
 
     stats = {"settled": 0, "awaiting": 0}
-    await _syncer(db, _FakeHockeyFeed(None))._settle_hockey([], stats)
+    await _syncer(db, _FakeKhlFeed(None))._settle_hockey([], stats)
 
     assert stats["settled"] == 0 and stats["awaiting"] == 1
     match = await db.get_match(int(row["id"]))
@@ -517,13 +531,13 @@ async def test_khl_without_feed_waits_for_admin(db: Database, monkeypatch) -> No
 
 
 async def test_finished_hockey_match_is_not_settled_twice(db: Database) -> None:
-    from app.services.results import FootballResult
+    from app.services.khl_results import KhlResult
 
     row = await _started_hockey(db)
-    feed = _FakeHockeyFeed(
-        FootballResult(
-            home="Montreal Canadiens", away="Winnipeg Jets",
-            score_home=3, score_away=1, final_home=3, final_away=1,
+    feed = _FakeKhlFeed(
+        KhlResult(
+            home="Авангард", away="ЦСКА",
+            reg_home=3, reg_away=1, final_home=3, final_away=1,
             status="FT", start_ts=int(time.time()) - 150 * 60,
         )
     )
@@ -602,6 +616,80 @@ async def test_express_leg_wins_when_team_wins_in_overtime(db: Database) -> None
     first = next(leg for leg in legs if int(leg["match_id"]) == int(match["id"]))
     assert str(first["result"]) == "won"        # овертайм не превращает ногу в проигрыш
     assert str(express["status"]) == "open"     # вторая нога ещё не сыграна
+
+
+# ------------------------------------------------- архивация НХЛ и сборных
+async def test_archive_nhl_and_national_hockey(db: Database) -> None:
+    """Открытые ставки на НХЛ и сборные выплачиваются; купоны — выигрыш целиком."""
+    # NHL-матч с ординаром
+    nhl, _ = await db.upsert_match(
+        fonbet_id=9001,
+        tournament="НХЛ. Регулярный сезон",
+        team_a="Монреаль Канадиенс",
+        team_b="Виннипег Джетс",
+        start_time=int(time.time()) + 3600,
+        odds_a=2.5, odds_x=4.3, odds_b=2.3,
+        sport="hockey",
+    )
+    await db.place_hockey_bet(int(nhl["id"]), 1, None, "reg", "1", 100)
+    # хоккей сборных с ординаром
+    nat, _ = await db.upsert_match(
+        fonbet_id=9002,
+        tournament="Чемпионат мира. Мужчины",
+        team_a="Россия",
+        team_b="Канада",
+        start_time=int(time.time()) + 3600,
+        odds_a=1.9, odds_x=3.8, odds_b=3.0,
+        sport="hockey",
+    )
+    await db.place_hockey_bet(int(nat["id"]), 2, None, "reg", "2", 100)
+    # КХЛ-матч — не трогает архивация
+    khl, _ = await db.upsert_match(
+        fonbet_id=9003,
+        tournament="Фонбет КХЛ. Регулярный сезон",
+        team_a="Авангард",
+        team_b="ЦСКА",
+        start_time=int(time.time()) + 3600,
+        odds_a=2.95, odds_x=4.2, odds_b=2.1,
+        sport="hockey",
+    )
+    await db.place_hockey_bet(int(khl["id"]), 1, None, "reg", "1", 100)
+    # экспресс с ногой на НХЛ — весь купон выигрыш
+    await db.place_express(
+        1, None, 100,
+        [{"match_id": int(nhl["id"]), "side": "h:reg:1"},
+         {"match_id": int(khl["id"]), "side": "h:reg:1"}],
+    )
+    await db.set_status(int(nhl["id"]), "live")
+    await db.set_status(int(nat["id"]), "live")
+    await db.set_status(int(khl["id"]), "live")
+
+    result = await db.archive_nhl_and_national_hockey()
+    assert result["archived"] == 2
+
+    # NHL-ординар выплачен по кэфу
+    nhl_bet = (await db.match_bets(int(nhl["id"])))[0]
+    assert int(nhl_bet["payout"]) == 250
+    # сборные — по кэфу
+    nat_bet = (await db.match_bets(int(nat["id"])))[0]
+    assert int(nat_bet["payout"]) == 300
+    # КХЛ не трогнут: ставка в игре, матч не рассчитан
+    khl_bet = (await db.match_bets(int(khl["id"])))[0]
+    assert khl_bet["payout"] is None
+    # матчи в статусе finished с archive
+    for match_id in (int(nhl["id"]), int(nat["id"])):
+        m = await db.get_match(match_id)
+        assert str(m["status"]) == "finished"
+        assert m["result_source"] == "archive"
+    khl_match = await db.get_match(int(khl["id"]))
+    assert str(khl_match["status"]) == "live"
+
+    # экспресс с НХЛ-ногой — выигрыш целиком
+    express = (await db.user_open_expresses(1))
+    assert not express, "экспресс с НХЛ-ногой должен быть рассчитан"
+    settled = await db.user_expresses_all(1)
+    won = next(e for e in settled if e["status"] == "won")
+    assert int(won["payout"]) == round(100 * float(won["odds"]))
 
 
 # ------------------------------------------------- матчи, пропавшие из линии

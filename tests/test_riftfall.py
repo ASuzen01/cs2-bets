@@ -119,9 +119,11 @@ async def test_riftfall_api_debits_once_and_returns_server_result(riftfall_api, 
         }
 
     monkeypatch.setattr(riftfall, "spin", fixed_spin)
+    # «Золотой разлом» архивирован: конфигурация из /api/casino не публикуется,
+    # но серверный маршрут /api/casino/play продолжает работать
     state_response = await client.get("/api/casino")
     state = await state_response.json()
-    assert state["riftfall"]["max_cascades"] == 4
+    assert "riftfall" not in state
 
     body = {"game": "riftfall", "selection": "spin", "amount": 100, "token": "riftfall-round-once"}
     first_response = await client.post("/api/casino/play", json=body)

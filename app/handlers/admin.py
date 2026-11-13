@@ -21,6 +21,7 @@
     (файл .json.gz в личку) — восстановить базу из копии
     /results               — матчи, которые ждут подтверждения исхода
     /hockey ID 2:2 3:2     — рассчитать хоккей: счёт основного времени и итоговый
+    /archive_hockey        — архивировать НХЛ и хоккей сборных (ставки — выигрыш)
     /stats                 — короткая сводка по базе
 
 Кнопки «🏆 победитель» / «🚫 матч не состоялся» приходят вместе с уведомлением,
@@ -495,6 +496,30 @@ async def cmd_hockey(message: Message, command: CommandObject, db: Database) -> 
         if chat_id:
             with contextlib.suppress(Exception):
                 await bot.send_message(int(chat_id), texts.express_result(express))
+
+
+@router.message(Command("archive_hockey"))
+async def cmd_archive_hockey(message: Message, db: Database) -> None:
+    """Архивировать НХЛ и хоккей сборных: открытые ставки — выигрыш.
+
+    Матчи этих турниров исключены из линии. Все открытые ординары выплачиваются
+    по кэфу, а весь открытый купон с такой ногой — выигрыш целиком. Команда
+    однократная: после архивации матчи получают статус finished и больше не
+    попадают в линию и в цикл расчёта.
+    """
+    result = await db.archive_nhl_and_national_hockey()
+    if not result["matches"]:
+        await message.answer("Нет открытых матчей НХЛ и сборных — ничего не архивировано ✅")
+        return
+    lines = [
+        f"#{item['id']} {item['team_a']} — {item['team_b']} · {item['tournament']}"
+        f" · ставок {item['bets']}, купонов {item['expresses']}"
+        for item in result["matches"]
+    ]
+    await message.answer(
+        f"Архивировано матчей: <b>{result['archived']}</b>, выплата "
+        f"<b>{texts.money(result['paid'])}</b>.\n" + "\n".join(lines)
+    )
 
 
 @router.message(Command("cleanup"))

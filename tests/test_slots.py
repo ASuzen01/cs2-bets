@@ -207,11 +207,12 @@ async def slot_api_client(tmp_path, monkeypatch):
 
 async def test_slot_api_config_paid_and_free_spin_flow(slot_api_client, monkeypatch: pytest.MonkeyPatch) -> None:
     client, database = slot_api_client
+    # слот-машина архивирована: конфигурация из /api/casino не публикуется,
+    # но серверный маршрут /api/casino/play продолжает работать
     state_response = await client.get("/api/casino")
     assert state_response.status == 200
     state = await state_response.json()
-    assert state["slots"]["ways"] == 243
-    assert state["slot_state"] == {"free_spins": 0, "spin_bet": 0, "bonus": None}
+    assert "slots" not in state and "slot_state" not in state
 
     monkeypatch.setattr(slot_machine, "new_chest_board", lambda: [1.0] * 12)
     results = iter([

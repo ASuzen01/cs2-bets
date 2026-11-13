@@ -95,10 +95,12 @@ async def baccarat_api_client(tmp_path, monkeypatch):
 
 async def test_baccarat_api_state_and_round_record(baccarat_api_client) -> None:
     client, database = baccarat_api_client
+    # баккара архивирована: роспись из /api/casino больше не публикуется,
+    # но серверный маршрут /api/casino/play продолжает работать
     state_response = await client.get("/api/casino")
     assert state_response.status == 200
     state = await state_response.json()
-    assert {item["code"] for item in state["options"]["baccarat"]} == {"player", "banker", "tie"}
+    assert "baccarat" not in state["options"]
 
     response = await client.post(
         "/api/casino/play",

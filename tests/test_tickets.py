@@ -60,7 +60,9 @@ async def test_ticket_appears_in_state(client: TestClient, db: Database) -> None
     assert body["tickets"] == [
         {"id": 1, "amount": 100, "kind": "express", "expires_at": None}
     ]
-    assert body["bonus"]["wheel"]["ticket"] == 100
+    # бонусный payload теперь отдельный ленивый эндпоинт
+    bonus = await (await client.get("/api/bonus")).json()
+    assert bonus["bonus"]["wheel"]["ticket"] == 100
 
 
 async def test_express_paid_by_ticket_keeps_balance(client: TestClient, db: Database) -> None:

@@ -62,11 +62,11 @@ async def test_first_bet_unlocks_achievement(client: TestClient, db: Database) -
     )
     assert response.status == 200
 
-    body = await (await client.get("/api/state")).json()
-    unlocked = {item["code"] for item in body["achievements"]["items"] if item["unlocked"]}
+    body = await (await client.get("/api/achievements")).json()
+    unlocked = {item["code"] for item in body["items"] if item["unlocked"]}
     assert "first_bet" in unlocked
-    assert body["achievements"]["unlocked"] >= 1
-    assert body["achievements"]["total"] == len(achievements_service.ACHIEVEMENTS)
+    assert body["unlocked"] >= 1
+    assert body["total"] == len(achievements_service.ACHIEVEMENTS)
 
 
 async def test_new_achievements_reported_once(client: TestClient, db: Database) -> None:
@@ -77,8 +77,13 @@ async def test_new_achievements_reported_once(client: TestClient, db: Database) 
     codes = {item["code"] for item in (await placed.json())["new_achievements"]}
     assert "first_bet" in codes                 # прилетело вместе со ставкой
 
-    second = await (await client.get("/api/state")).json()
-    assert not any(item["code"] == "first_bet" for item in second["new_achievements"])
+    second = await (await client.get("/api/achievements")).json()
+    # «first_bet» уже открыто — не повторяется как новое достижение
+    first_bet = next(item for item in second["items"] if item["code"] == "first_bet")
+    assert first_bet["unlocked"] is True
+    # повторный sync не выдаёт то же достижение как новое
+    fresh = {item["code"] for item in await achievements_service.sync(db, USER["id"])}
+    assert "first_bet" not in fresh
 
 
 async def test_win_unlocks_first_win_and_odds_achievements(db: Database) -> None:
@@ -169,7 +174,7 @@ async def test_quest_chain_grows_and_pays_chest(client: TestClient, db: Database
 
 
 async def test_state_reports_chain(client: TestClient, db: Database) -> None:
-    body = await (await client.get("/api/state")).json()
+    body = await (await client.get("/api/quests")).json()
     assert body["chain"]["days"] == 0
     assert body["chain"]["next"] == {"days": 3, "reward": 300}
 

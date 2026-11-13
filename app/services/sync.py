@@ -121,7 +121,8 @@ class MatchSyncer:
         self.flashscore_results = flashscore_results or (
             FlashscoreFootballResultsClient() if results is None else None
         )
-        self.hockey_results = ResultsClient(sport="hockey")
+        # КХЛ нет в фиде livescore, поэтому хоккейный ResultsClient не нужен:
+        # НХЛ исключён из линии, КХЛ берётся из фида Flashscore.
         self.khl_results = KhlResultsClient()
         self.cs2_results = cs2_results or Cs2ResultsClient()
         self._feed_checked: dict[int, int] = {}
@@ -156,7 +157,6 @@ class MatchSyncer:
         if self.flashscore_results is not None:
             await self.flashscore_results.close()
         await self.cs2_results.close()
-        await self.hockey_results.close()
         await self.khl_results.close()
 
     async def _run(self) -> None:
@@ -581,12 +581,13 @@ class MatchSyncer:
     async def _settle_hockey(
         self, matches: list[HockeyMatch], stats: dict[str, Any]
     ) -> None:
-        """Считаем хоккей по фиду результатов: НХЛ есть, КХЛ там нет.
+        """Считаем хоккей по фиду результатов: в линии осталась только КХЛ.
 
         По счёту из линии считать нельзя: Fonbet отдаёт итоговый счёт (с овертаймом),
         а для рынка «Основное время» нужен счёт после трёх периодов — в фиде он есть
-        (`Tr1OR`/`Tr2OR`), в линии нет. Поэтому НХЛ закрывается автоматически, а КХЛ
-        ждёт ручного расчёта админом — деньги важнее скорости.
+        (`Tr1OR`/`Tr2OR`), в линии нет. КХЛ закрывается из фида Flashscore, иначе
+        ждёт ручного расчёта админом — деньги важнее скорости. НХЛ и хоккей сборных
+        исключены из линии, их матчи больше не приходят.
         """
         # счёт из линии не используем (см. докстринг), но список событий нужен:
         # по нему видно, какие матчи из линии пропали
@@ -607,9 +608,8 @@ class MatchSyncer:
                 continue
             await self.db.mark_result_check(int(row["id"]), now)
 
-            result = await self._hockey_result_from_feed(row)
-            if result is None and settings.khl_results_enabled:
-                # НХЛ есть в livescore, КХЛ — только в фиде Flashscore
+            if settings.khl_results_enabled:
+                # КХЛ — только в фиде Flashscore
                 khl = await self._khl_result_from_feed(row)
                 if khl is not None:
                     await self._settle_hockey_row(
@@ -617,15 +617,6 @@ class MatchSyncer:
                         khl.final_home, khl.final_away, stats, source="flashscore",
                     )
                     continue
-            if result is not None and result.void:
-                await self._cancel_market_row(row, stats, reason=f"статус {result.status}")
-                continue
-            if result is not None and result.finished:
-                await self._settle_hockey_row(
-                    row, result.score_home, result.score_away,
-                    result.final_home, result.final_away, stats,
-                )
-                continue
 
             if str(row["status"]) != "awaiting":
                 # без кнопок «победила первая/вторая»: у хоккея два счёта,
@@ -639,20 +630,6 @@ class MatchSyncer:
                     "Хоккей #%s %s — %s: результата в фиде нет (КХЛ считает админ)",
                     row["id"], row["team_a"], row["team_b"],
                 )
-
-    async def _hockey_result_from_feed(self, row: Any) -> FootballResult | None:
-        """Счёт из хоккейного фида: reg — основное время, final — с овертаймом."""
-        try:
-            return await self.hockey_results.find(
-                str(row["team_a"]),
-                str(row["team_b"]),
-                int(row["start_time"]),
-                english_a=row["team_a_en"] if "team_a_en" in row.keys() else None,  # noqa: SIM118
-                english_b=row["team_b_en"] if "team_b_en" in row.keys() else None,  # noqa: SIM118
-            )
-        except Exception:
-            log.exception("Не смог получить результат хоккейного матча #%s", row["id"])
-            return None
 
     async def _khl_result_from_feed(self, row: Any) -> KhlResult | None:
         """Счёт КХЛ из фида Flashscore: основное время по периодам и итог с овертаймом."""

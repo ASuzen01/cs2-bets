@@ -35,6 +35,10 @@ RULES: Final[dict[str, tuple[int, int]]] = {
     "/api/bets": (60, 60),
     "/api/history": (60, 60),
     "/api/top": (60, 60),
+    "/api/bonus": (30, 60),
+    "/api/quests": (30, 60),
+    "/api/casino": (30, 60),
+    "/api/blackjack/state": (60, 60),
 }
 # всё остальное под /api/ — общий потолок
 DEFAULT_RULE: Final[tuple[int, int]] = (180, 60)

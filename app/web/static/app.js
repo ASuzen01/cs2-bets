@@ -29,6 +29,8 @@
     segment: "line",                // «Линия» / «Live» внутри вкладки матчей
     bets: [],
     expresses: [],
+    betsCount: 0,                   // счётчик ставок в игре (лёгкий COUNT из /api/state)
+    expressesCount: 0,              // счётчик открытых экспрессов (лёгкий COUNT из /api/state)
     limits: { min_bet: 10, max_legs: 0, max_odds: 0, daily_bonus: 250 },
     cart: readCart(),
     betsView: "all",
@@ -40,11 +42,19 @@
     tab: "matches",
     live: false,
     pending: null,
-    bonus: null,       // ежедневный бонус, колесо и пасхалка (приходит из /api/state)
+    bonus: null,       // ежедневный бонус, колесо и пасхалка (/api/bonus — при открытии вкладки)
+    bonusReady: 0,     // счётчик готовых бонусов (лёгкий из /api/state, для точки в шапке)
     wheelResult: "",   // текст последнего результата: переживает перерисовку
     wheelAngle: 0,     // текущий угол колеса
     wheelBusy: false,
-    quests: boot.quests || [],   // задания дня (приходят из /api/state)
+    quests: [],           // задания дня (/api/quests — при открытии вкладки бонусов)
+    bonusLoaded: false,    // бонусы подгружены
+    questsLoaded: false,   // квесты подгружены
+    betsLoaded: false,     // открытые ставки подгружены (профиль)
+    expressesLoaded: false,// открытые экспрессы подгружены (вкладка экспресса)
+    achievementsLoaded: false,
+    casinoLoaded: false,   // состояние казино подгружено
+    blackjackLoaded: false,
     stats: null,       // итоги игрока для «Я» (/api/stats)
     favorites: readFavorites(),  // любимые команды: живут в localStorage
     onlyFavorites: false,
@@ -476,10 +486,9 @@
   }
 
   function bonusReady() {
-    const bonus = state.bonus;
-    const questsReady = (state.quests || []).filter((quest) => quest.ready).length;
-    if (!bonus) return questsReady;
-    return (bonus.daily.available ? 1 : 0) + (bonus.wheel.available ? 1 : 0) + questsReady;
+    // точка в шапке живёт на лёгком счётчике из /api/state: не тянуть
+    // полный payload бонусов на каждом тики поллинга.
+    return Number(state.bonusReady || 0);
   }
 
   function renderBonusDots() {
@@ -1596,18 +1605,37 @@
     card.append(clear);
     host.append(card);
 
-    if (state.expresses.length) {
-      host.append(el("h2", null, "Открытые экспрессы"));
-      state.expresses.forEach((express) => {
-        const row = el("div", "rowcard");
-        const grow = el("div", "grow");
-        grow.append(el("b", null, `Экспресс #${express.id}`));
-        grow.append(el("span", null, `${money(express.stake)} × ${oddsText(express.odds)}`));
-        row.append(grow);
-        row.append(el("div", "money plus", `Возможная выплата ${money(express.potential)}`));
-        host.append(row);
+    // открытые экспрессы: payload ставок тяжёлый — подгружаем только здесь
+    host.append(el("h2", null, "Открытые экспрессы"));
+    const expressHost = el("div");
+    expressHost.id = "expressList";
+    if (state.expressesLoaded) {
+      renderOpenExpresses(expressHost, state.expresses);
+    } else {
+      expressHost.append(el("div", "skeleton"));
+      host.append(expressHost);
+      loadOpenExpresses().then((expresses) => {
+        if (state.tab !== "express") return;
+        renderOpenExpresses(expressHost, expresses);
       });
     }
+  }
+
+  function renderOpenExpresses(host, expresses) {
+    host.textContent = "";
+    if (!expresses || !expresses.length) {
+      host.append(el("div", "empty", "Открытых экспрессов нет."));
+      return;
+    }
+    expresses.forEach((express) => {
+      const row = el("div", "rowcard");
+      const grow = el("div", "grow");
+      grow.append(el("b", null, `Экспресс #${express.id}`));
+      grow.append(el("span", null, `${money(express.stake)} × ${oddsText(express.odds)}`));
+      row.append(grow);
+      row.append(el("div", "money plus", `Возможная выплата ${money(express.potential)}`));
+      host.append(row);
+    });
   }
 
   function renderTop(rows, mine, season) {
@@ -1737,8 +1765,21 @@
 
   function achievementsCard() {
     const data = state.achievements;
-    if (!data || !data.items) return el("div");
     const box = el("div", "card");
+    if (!data || !data.items) {
+      // достижения подгружаются только при открытии вкладки «Я»
+      box.append(el("h2", null, "Достижения"));
+      box.append(el("div", "skeleton"));
+      if (!state.achievementsLoaded && state.user) loadAchievements().then(() => {
+        if (state.tab !== "me") return;
+        const host = $("#me");
+        if (!host) return;
+        const old = host.querySelector("#achievementsCard");
+        if (old) old.replaceWith(achievementsCard());
+      });
+      return box;
+    }
+    box.id = "achievementsCard";
     const head = el("div", "section-title");
     head.append(el("h2", null, "Достижения"));
     head.append(el("span", "tag", `${data.unlocked} из ${data.total}`));
@@ -1890,8 +1931,8 @@
     };
     kv("Игрок", state.user.name);
     kv("Баланс", money(state.user.balance));
-    kv("Ставок в игре", String(state.bets.length));
-    kv("Экспрессов в игре", String(state.expresses.length));
+    kv("Ставок в игре", String(state.betsCount));
+    kv("Экспрессов в игре", String(state.expressesCount));
     host.append(card);
 
     const notification = el("button", "rowcard");
@@ -1990,18 +2031,17 @@
     gift.addEventListener("click", () => switchTab("bonus"));
     host.append(gift);
 
-    if (state.bets.length) {
-      host.append(el("h2", null, "Ставки в игре"));
-      state.bets.forEach((bet) => {
-        const row = el("div", "rowcard");
-        const grow = el("div", "grow");
-        grow.append(el("b", null, bet.team));
-        grow.append(el("span", null,
-          `${bet.team_a} — ${bet.team_b}` +
-          (bet.market_label ? ` · ${bet.market_label}` : "") +
-          ` · кэф ${oddsText(bet.odds)}`));
-        row.append(grow, el("div", "money", money(bet.amount)));
-        host.append(row);
+    host.append(el("h2", null, "Ставки в игре"));
+    const meBetsHost = el("div");
+    meBetsHost.id = "meBets";
+    if (state.betsLoaded) {
+      renderMeBets(meBetsHost, state.bets);
+    } else {
+      meBetsHost.append(el("div", "skeleton"));
+      host.append(meBetsHost);
+      loadMeBets().then((bets) => {
+        if (state.tab !== "me") return;
+        renderMeBets(meBetsHost, bets);
       });
     }
 
@@ -2023,6 +2063,26 @@
       "Исходов: от 2, потолка по кэфу нет. " +
       `Минимальная ставка — ${money(state.limits.min_bet)}.`));
     host.append(rules);
+  }
+
+  // Размещает открытые ставки на профиле (лениво, при открытии вкладки «Я»).
+  function renderMeBets(host, bets) {
+    host.textContent = "";
+    if (!bets || !bets.length) {
+      host.append(el("div", "empty", "Ставок в игре пока нет."));
+      return;
+    }
+    bets.forEach((bet) => {
+      const row = el("div", "rowcard");
+      const grow = el("div", "grow");
+      grow.append(el("b", null, bet.team));
+      grow.append(el("span", null,
+        `${bet.team_a} — ${bet.team_b}` +
+        (bet.market_label ? ` · ${bet.market_label}` : "") +
+        ` · кэф ${oddsText(bet.odds)}`));
+      row.append(grow, el("div", "money", money(bet.amount)));
+      host.append(row);
+    });
   }
 
   // --------------------------------------------------------------- действия
@@ -2697,7 +2757,20 @@
     if (!host) return;
     host.textContent = "";
 
-    if (!state.user || !state.bonus) {
+    if (!state.user) {
+      host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся бонусы."));
+      return;
+    }
+    if (!state.bonusLoaded) {
+      // бонусы и квесты подгружаются только при открытии вкладки
+      host.append(el("div", "skeleton"), el("div", "skeleton"), el("div", "skeleton"));
+      loadBonus().then(() => {
+        if (state.tab !== "bonus") return;
+        renderBonus();
+      });
+      return;
+    }
+    if (!state.bonus) {
       host.append(el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся бонусы."));
       return;
     }
@@ -3107,7 +3180,16 @@
     });
     if (tab === "bets") loadBets();
     if (tab === "top") loadTop();
-    if (tab === "me") { renderMe(); }
+    if (tab === "me") {
+      renderMe();
+      // профиль держит достижения и открытые ставки — подгружаем по вкладке
+      if (state.user && !state.achievementsLoaded) loadAchievements();
+      if (state.user && !state.betsLoaded) loadMeBets().then((bets) => {
+        if (state.tab !== "me") return;
+        const host = $("#meBets");
+        if (host) renderMeBets(host, bets);
+      });
+    }
     if (tab === "express") renderExpress();
     if (tab === "bonus") renderBonus();
     if (tab === "games") { renderGames(); refreshState({ silent: true }); }
@@ -3415,22 +3497,84 @@
   async function loadBets() {
     const host = $("#bets");
     if (!host) return;
+    // только нужный раздел payload: «В игре» и «История» не тянут оба
+    const section = state.betsView === "settled" ? "settled" : "open";
     try {
-      const data = await api("/api/bets");
+      const data = await api(`/api/bets?section=${section}`);
       state.betsHistory = data;
-      notifySettled(data);
-      state.seenOnce = true;
-      renderBets(data);
-      const dot = $("#betsDot");
-      if (dot) {
-        const openCount = (data.open || []).length;
-        dot.textContent = openCount ? String(openCount) : "0";
-        dot.parentElement.classList.toggle("badge", openCount > 0);
+      if (section === "open") {
+        notifySettled(data);
+        state.seenOnce = true;
+        const dot = $("#betsDot");
+        if (dot) {
+          const openCount = (data.open || []).length;
+          dot.textContent = openCount ? String(openCount) : "0";
+          dot.parentElement.classList.toggle("badge", openCount > 0);
+        }
       }
+      renderBets(data);
     } catch (err) {
       host.textContent = "";
       host.append(el("div", "empty", err.message));
     }
+  }
+
+  // Ленивая загрузка открытых ставок для профиля (вкладка «Я»).
+  async function loadMeBets() {
+    const data = await api("/api/bets?section=open");
+    state.bets = data.open || [];
+    state.betsLoaded = true;
+    return state.bets;
+  }
+
+  // Ленивая загрузка открытых экспрессов — при открытии вкладки экспресса.
+  async function loadOpenExpresses() {
+    const data = await api("/api/bets?section=open");
+    state.expresses = (data.open || []).filter((item) => item.kind === "express");
+    state.expressesLoaded = true;
+    return state.expresses;
+  }
+
+  // Ленивая загрузка бонусов, квестов и цепочки — при открытии вкладки бонусов.
+  async function loadBonus() {
+    const [bonusData, questsData] = await Promise.all([
+      api("/api/bonus"),
+      api("/api/quests"),
+    ]);
+    state.bonus = bonusData.bonus || null;
+    state.quests = questsData.quests || [];
+    state.chain = questsData.chain || null;
+    state.bonusLoaded = true;
+  }
+
+  // Ленивая загрузка достижений — при открытии вкладки «Я».
+  async function loadAchievements() {
+    const data = await api("/api/achievements");
+    state.achievements = data.achievements || null;
+    (data.new_achievements || []).forEach((item, index) => {
+      setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
+    });
+    state.achievementsLoaded = true;
+  }
+
+  // Ленивая загрузка состояния блэкджека — при открытии экрана игры.
+  async function loadBlackjackState() {
+    const data = await api("/api/blackjack/state");
+    state.blackjack = data.blackjack || null;
+  }
+
+  // Ленивая загрузка состояния самолётика — при открытии экрана игры.
+  async function loadCrashState() {
+    const data = await api("/api/crash/state");
+    state.crash = data.game || null;
+    if (data.balance !== undefined) setBalance(data.balance);
+    syncCrashClock(state.crash);
+  }
+
+  // Ленивая загрузка состояния казино (рулетка) — при открытии экрана игр.
+  async function loadCasinoState() {
+    const data = await api("/api/casino");
+    state.casino = data;
   }
 
   async function loadTop() {
@@ -3526,36 +3670,12 @@
       state.hockey = hockey;
       state.liveMatches = liveMatches;
       state.matchesJson = matchesJson;
-      state.bets = data.bets;
-      state.expresses = data.expresses;
       state.limits = data.limits;
-      state.bonus = data.bonus || null;
-      state.quests = data.quests || state.quests;
-      state.chain = data.chain || state.chain;
-      state.achievements = data.achievements || state.achievements;
       state.tickets = Array.isArray(data.tickets) ? data.tickets : (state.tickets || []);
-      state.casino = data.casino || state.casino;
-      state.blackjack = data.blackjack || null;
-      state.ladder = data.ladder || null;
-      state.crash = data.crash || null;
-      if (data.mines && !state.mines) {
-        state.minesCount = Number(data.mines.mine_count) || state.minesCount;
-        state.minesStake = Number(data.mines.stake) || state.minesStake;
-      }
-      state.mines = data.mines || null;
-      state.drunkard = data.drunkard || { incoming: [], outgoing: [], last: null };
-      syncCrashClock(state.crash);
-      // новое достижение — единственный тост, который приятно получить неожиданно
-      (data.new_achievements || []).forEach((item, index) => {
-        setTimeout(() => toast(`${item.icon} Достижение: ${item.title}`, "ok"), index * 2600);
-      });
-      if (state.casino && !(state.casinoStake.roulette > 0)) state.casinoStake.roulette = 50;
-      if (state.casino && Number(state.casino.slot_state && state.casino.slot_state.free_spins) > 0) {
-        state.casinoStake.slots = Number(state.casino.slot_state.spin_bet) || state.casinoStake.slots || 50;
-      }
-      if (state.casino && Number(state.casino.riftfall_state && state.casino.riftfall_state.free_spins) > 0) {
-        state.casinoStake.riftfall = Number(state.casino.riftfall_state.spin_bet) || state.casinoStake.riftfall || 50;
-      }
+      // счётчики открытых ставок/экспрессов — лёгкие COUNT, без загрузки payload
+      state.betsCount = Number(data.bets_count || 0);
+      state.expressesCount = Number(data.expresses_count || 0);
+      state.bonusReady = Number(data.bonus_ready || 0);
       state.live = true;
 
       renderHeader();
@@ -3565,10 +3685,12 @@
       syncCart();  // кэфы в корзине экспресса живут вместе с линией
       if (matchesChanged) renderMatches();  // без изменений не перерисовываем: не мешаем читать
       renderCartBar();
+      // вкладки с тяжёлыми данными подгружаются отдельно при открытии;
+      // здесь перерисовываем только то, что уже загружено
       if (state.tab === "express") renderExpress();
       if (state.tab === "me") renderMe();
       if (state.tab === "bonus") renderBonus();
-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping) renderGames();
+      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy) renderGames();
     } catch (err) {
       if (err.status === 401) {
         state.authPending = false;
@@ -7483,10 +7605,6 @@
     clearCasinoDockTracking();
     const host = $("#games");
     if (!host) return;
-    if (state.riftfallFullscreen && state.game === "riftfall") {
-      syncRiftfallFullscreenHud(state.casinoResults.riftfall);
-      return;
-    }
     const menu = $("#gameSwitch");
     const screen = $("#screen-games");
     if (screen) screen.classList.toggle("catalog-mode", !state.game);
@@ -7507,42 +7625,50 @@
       host.append(gameBackButton(), el("div", "empty", "Открой приложение кнопкой в боте — тогда появятся игры."));
       return;
     }
-    if (state.game === "mines") {
-      renderMines(host);
-      return;
-    }
-    if (state.game === "ladder") {
-      renderLadder(host);
+
+    // Состояние игр подгружается только при открытии экрана: самолётик,
+    // блэкджек и казино (рулетка) — отдельные запросы, не в /api/state.
+    if (state.game === "crash") {
+      if (state.crash) {
+        renderCrash(host);
+      } else {
+        host.textContent = "";
+        host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
+        loadCrashState().then(() => {
+          if (state.tab !== "games" || state.game !== "crash") return;
+          renderCrash(host);
+        });
+      }
       return;
     }
     if (state.game === "blackjack") {
-      renderBlackjack(host);
-      host.prepend(gameBackButton());
+      if (state.blackjackLoaded) {
+        renderBlackjack(host);
+        host.prepend(gameBackButton());
+      } else {
+        host.textContent = "";
+        host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
+        loadBlackjackState().then(() => {
+          if (state.tab !== "games" || state.game !== "blackjack") return;
+          renderBlackjack(host);
+          host.prepend(gameBackButton());
+        });
+      }
       return;
     }
-    if (state.game === "drunkard") {
-      renderDrunkard(host);
-      return;
-    }
-    if (state.game === "crash") {
-      renderCrash(host);
+    if (!state.casinoLoaded) {
+      // рулетка и прочие казино-игры живут в casino-состоянии
+      host.textContent = "";
+      host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
+      loadCasinoState().then(() => {
+        if (state.tab !== "games" || !state.game) return;
+        renderGames();
+      });
       return;
     }
     if (!state.casino) {
       host.textContent = "";
-      host.append(gameBackButton(), el("div", "skeleton"), el("div", "skeleton"));
-      return;
-    }
-    if (state.game === "plinko") {
-      renderPlinko(host);
-      return;
-    }
-    if (state.game === "slots") {
-      renderSlots(host);
-      return;
-    }
-    if (state.game === "riftfall") {
-      renderRiftfall(host);
+      host.append(gameBackButton(), el("div", "empty", "Состояние игр временно недоступно."));
       return;
     }
 

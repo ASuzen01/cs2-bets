@@ -13,10 +13,12 @@ from app.services import drunkard
 from app.web.server import build_app
 
 
-def test_game_catalog_and_controls_expose_requested_options() -> None:
+def test_game_catalog_archives_drunkard() -> None:
+    """Пьяница архивирован: плитки в каталоге нет, серверный код остаётся."""
     html = Path("app/web/index.html").read_text(encoding="utf-8")
     js = Path("app/web/static/app.js").read_text(encoding="utf-8")
-    assert 'data-game="drunkard"' in html and "Пьяница" in html
+    assert 'data-game="drunkard"' not in html and "Пьяница" not in html
+    # серверный маршрут и клиентский код «Пьяницы» остаются работоспособными
     assert "[24, 36, 52]" in js
     assert "[10, 50, 100, 250, 500]" in js
     assert "Игрок по приглашению" in js
@@ -55,8 +57,9 @@ async def test_bot_play_starts_live_game_and_step_finishes_it(game_api, monkeypa
         },
     )
 
+    # «Пьяница» архивирован: состояние не в /api/state, но маршруты работают
     state = await (await client.get("/api/state")).json()
-    assert state["drunkard"] == {"incoming": [], "outgoing": [], "active": None, "last": None}
+    assert "drunkard" not in state
     response = await client.post(
         "/api/drunkard/play", json={"amount": 50, "deck_size": 24, "token": "api-play"}
     )

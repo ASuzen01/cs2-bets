@@ -264,6 +264,55 @@ async def test_bets_endpoint_express(client: TestClient, db: Database, match) ->
     assert item["potential"] == round(50 * 1.65 * 2.0)
 
 
+async def test_bets_section_open_and_settled(client: TestClient, db: Database, match) -> None:
+    """?section=open/settled подгружает только нужный раздел payload."""
+    other, _ = await db.upsert_match(
+        fonbet_id=777,
+        tournament="Counter-Strike. IEM Пекин. Групповой этап. Bo3",
+        team_a="MOUZ",
+        team_b="Vitality",
+        start_time=int(time.time()) + 7200,
+        odds_a=2.0,
+        odds_b=1.8,
+    )
+    # рассчитанная ставка уходит в settled
+    await client.post("/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 100})
+    await db.settle_match(int(match["id"]), "a", source="manual")
+    # открытая ставка — в open
+    await client.post("/api/bet", json={"match_id": int(other["id"]), "side": "a", "amount": 50})
+
+    open_body = await (await client.get("/api/bets?section=open")).json()
+    assert len(open_body["open"]) == 1 and open_body["settled"] == []
+
+    settled_body = await (await client.get("/api/bets?section=settled")).json()
+    assert settled_body["open"] == [] and len(settled_body["settled"]) == 1
+
+
+async def test_state_is_lightweight_without_bets_payload(client: TestClient, match) -> None:
+    """/api/state не тянет тяжёлые разделы — только счётчики."""
+    await client.post("/api/bet", json={"match_id": int(match["id"]), "side": "a", "amount": 100})
+    payload = await (await client.get("/api/state")).json()
+    assert payload["bets_count"] == 1
+    # тяжёлые разделы ушли в отдельные эндпоинты
+    for key in ("bets", "expresses", "bonus", "quests", "casino", "blackjack", "crash"):
+        assert key not in payload
+
+
+async def test_lazy_bonus_and_quests_endpoints(client: TestClient) -> None:
+    """/api/bonus и /api/quests — отдельные ленивые эндпоинты."""
+    bonus = await (await client.get("/api/bonus")).json()
+    assert bonus["ok"] is True and "bonus" in bonus
+    quests = await (await client.get("/api/quests")).json()
+    assert quests["ok"] is True and "quests" in quests and "chain" in quests
+
+
+async def test_lazy_blackjack_state_endpoint(client: TestClient) -> None:
+    """/api/blackjack/state — состояние блэкджека подгружается отдельно."""
+    response = await client.get("/api/blackjack/state")
+    assert response.status == 200
+    assert (await response.json())["blackjack"] is None
+
+
 def test_payload_survives_match_without_odds() -> None:
     """Fonbet снимает кэфы в лайве — карточка обязана отрисоваться, а не падать."""
     from app.web.payloads import match_payload
@@ -353,10 +402,14 @@ async def test_active_bets_include_football(client: TestClient, match, db: Datab
     await db.place_bet(int(match["id"]), USER["id"], None, "a", 100)
     await db.place_football_bet(int(football["id"]), USER["id"], None, "total", "over:2.5", 100)
 
+    # /api/state несёт только лёгкие счётчики; ставки — в /api/bets
     payload = await (await client.get("/api/state")).json()
-    assert len(payload["bets"]) == 2
+    assert payload["bets_count"] == 2
+
+    bets_payload = await (await client.get("/api/bets?section=open")).json()
+    assert len(bets_payload["open"]) == 2
     # и исход CS2, и рынок футбола подписаны по-человечески
-    assert {b["label"] for b in payload["bets"]} == {"Aurora", "ТБ 2.5"}
+    assert {b["team"] for b in bets_payload["open"]} == {"Aurora", "ТБ 2.5"}
 
 
 async def test_map_bet_retry_with_same_token_charges_once(
