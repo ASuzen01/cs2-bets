@@ -296,10 +296,26 @@ def _legal_attack_indices(player: dict[str, Any], state: dict[str, Any], *, open
     return [i for i, card in enumerate(player["hand"]) if int(card["rank_value"]) in ranks]
 
 
-def _transfer_targets(state: dict[str, Any]) -> list[int]:
+def _transfer_target(state: dict[str, Any]) -> int | None:
+    """Return the next defender for a transfer, excluding the attacker and out players."""
     current = int(state["defender"])
     attacker = int(state["attacker"])
-    return [seat for seat in _active(state) if seat not in {current, attacker}]
+    target = _next_defender(state, current)
+    if target in {current, attacker} or target not in _active(state):
+        return None
+    return target
+
+
+def _transfer_is_open(state: dict[str, Any]) -> bool:
+    if state["mode"] != "transfer" or any(entry.get("cover") for entry in state["table"]):
+        return False
+    target = _transfer_target(state)
+    if target is None:
+        return False
+    # The newly assigned defender must have enough cards to take on the
+    # enlarged attack; once transferred, their hand size becomes the new cap.
+    target_cap = min(6, len(state["players"][target]["hand"]))
+    return len(state["table"]) + 1 <= target_cap
 
 
 def legal_actions(state: dict[str, Any], user_id: int) -> dict[str, Any]:
@@ -324,12 +340,7 @@ def legal_actions(state: dict[str, Any], user_id: int) -> dict[str, Any]:
                     if can_beat(card, entry["card"], state["trump_suit"])
                 ]
                 break
-        transfer_open = bool(
-            state["mode"] == "transfer"
-            and _transfer_targets(state)
-            and not any(entry.get("cover") for entry in state["table"])
-            and len(state["table"]) < min(6, int(state.get("defender_hand_cap") or 6))
-        )
+        transfer_open = _transfer_is_open(state)
         if transfer_open:
             rank_values = {int(entry["card"]["rank_value"]) for entry in state["table"]}
             result["transfer_indices"] = [i for i, c in enumerate(player["hand"]) if int(c["rank_value"]) in rank_values]
@@ -397,22 +408,23 @@ def act(state: dict[str, Any], seat: int, action: str, *, card_index: int | None
         return state
 
     if action == "transfer" and state["phase"] == "defend":
-        if not legal_actions(state, int(player.get("user_id") or -1)).get("can_transfer"):
-            # Bot seats have no Telegram id; validate the conditions directly below.
-            if state["mode"] != "transfer" or not _transfer_targets(state) or any(e.get("cover") for e in state["table"]):
-                raise ValueError("Перевод сейчас невозможен")
-        card = _move_card(player, int(card_index if card_index is not None else -1))
+        target_seat = _transfer_target(state)
+        if not _transfer_is_open(state) or target_seat is None:
+            raise ValueError("Перевод невозможен: следующему защитнику не хватит карт")
         ranks = {int(entry["card"]["rank_value"]) for entry in state["table"]}
-        if int(card["rank_value"]) not in ranks:
-            player["hand"].append(card)
+        try:
+            index = int(card_index) if card_index is not None else -1
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Этой карты уже нет на руке") from exc
+        if index < 0 or index >= len(player["hand"]):
+            raise ValueError("Этой карты уже нет на руке")
+        if int(player["hand"][index]["rank_value"]) not in ranks:
             raise ValueError("Для перевода нужна карта такого же достоинства")
-        if len(state["table"]) >= min(6, int(state.get("defender_hand_cap") or 6)):
-            player["hand"].append(card)
-            raise ValueError("Нельзя увеличить число карт в этой атаке")
-        old_defender = int(state["defender"])
+        card = _move_card(player, index)
         state["table"].append({"card": card, "cover": None, "by": int(seat)})
-        state["defender"] = _next_defender(state, old_defender)
-        state["last_event"] = f"{player['name']} переводит атаку на {state['players'][state['defender']]['name']}."
+        state["defender"] = target_seat
+        state["defender_hand_cap"] = min(6, len(state["players"][target_seat]["hand"]))
+        state["last_event"] = f"{player['name']} переводит атаку на {state['players'][target_seat]['name']}."
         _open_throw_window(state)
         return state
 

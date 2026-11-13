@@ -23,7 +23,6 @@ from app.config import settings
 from app.db import Database
 from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
 from app.services import achievements, baccarat, games, riftfall, slot_machine
-from app.services import durak_store
 from app.services import blackjack as blackjack_game
 from app.services import crash as crash_game
 from app.services import ladder as ladder_game
@@ -117,12 +116,6 @@ def register_routes(
     app.router.add_post("/api/drunkard/invite", api_drunkard_invite)
     app.router.add_post("/api/drunkard/accept", api_drunkard_accept)
     app.router.add_post("/api/drunkard/close", api_drunkard_close)
-    app.router.add_get("/api/durak/state", api_durak_state)
-    app.router.add_post("/api/durak/create", api_durak_create)
-    app.router.add_post("/api/durak/join", api_durak_join)
-    app.router.add_post("/api/durak/start", api_durak_start)
-    app.router.add_post("/api/durak/action", api_durak_action)
-    app.router.add_post("/api/durak/cancel", api_durak_cancel)
     app.router.add_post("/api/ladder/start", api_ladder_start)
     app.router.add_post("/api/ladder/pick", api_ladder_pick)
     app.router.add_post("/api/ladder/continue", api_ladder_continue)
@@ -327,7 +320,6 @@ async def api_state(request: web.Request) -> web.Response:
             "crash": await db.crash_state(user_id),
             "mines": await db.mines_state(user_id),
             "drunkard": await db.drunkard_state(user_id),
-            "durak": await durak_store.state(db, user_id),
             "limits": {
                 "min_bet": settings.min_bet,
                 "max_legs": settings.max_express_legs,
@@ -1309,118 +1301,6 @@ async def api_drunkard_close(request: web.Request) -> web.Response:
     except InvalidBet as exc:
         return _bad(str(exc))
     return web.json_response({"ok": True, "game": game, "drunkard": await db.drunkard_state(user_id)})
-
-
-async def api_durak_state(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    return web.json_response({
-        "ok": True,
-        "durak": await durak_store.state(db, user_id),
-        "balance": await db.get_balance(user_id),
-    })
-
-
-async def api_durak_create(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    body = await _json_body(request)
-    try:
-        game = await durak_store.create(
-            db,
-            user_id=user_id,
-            name="Игрок",
-            table_type=str(body.get("table_type") or "bots"),
-            visibility=str(body.get("visibility") or "private"),
-            mode=str(body.get("mode") or "throwin"),
-            deck_size=_as_int(body.get("deck_size")),
-            stake=_as_int(body.get("stake")),
-            player_count=_as_int(body.get("player_count")),
-        )
-    except (InsufficientFunds, InvalidBet) as exc:
-        return _bad(str(exc))
-    return web.json_response({
-        "ok": True,
-        "game": game,
-        "durak": await durak_store.state(db, user_id),
-        "balance": await db.get_balance(user_id),
-    })
-
-
-async def api_durak_join(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    body = await _json_body(request)
-    user = await db.get_user(user_id)
-    name = str((user["full_name"] if user else None) or (f"@{user['username']}" if user and user["username"] else "Игрок"))
-    game_id = _as_int(body.get("game_id")) if body.get("game_id") is not None else None
-    try:
-        game = await durak_store.join(
-            db, user_id=user_id, name=name,
-            game_id=game_id if game_id and game_id > 0 else None,
-            code=str(body.get("code") or "") or None,
-        )
-    except (InsufficientFunds, InvalidBet) as exc:
-        return _bad(str(exc))
-    return web.json_response({
-        "ok": True,
-        "game": game,
-        "durak": await durak_store.state(db, user_id),
-        "balance": await db.get_balance(user_id),
-    })
-
-
-async def api_durak_start(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    game_id = _as_int((await _json_body(request)).get("game_id"))
-    try:
-        game = await durak_store.start(db, user_id=user_id, game_id=game_id)
-    except (InsufficientFunds, InvalidBet) as exc:
-        return _bad(str(exc))
-    return web.json_response({
-        "ok": True,
-        "game": game,
-        "durak": await durak_store.state(db, user_id),
-        "balance": await db.get_balance(user_id),
-    })
-
-
-async def api_durak_action(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    body = await _json_body(request)
-    game_id = _as_int(body.get("game_id"))
-    if game_id <= 0:
-        return _bad("Партия не найдена")
-    raw_index = body.get("card_index")
-    card_index = _as_int(raw_index) if raw_index is not None else None
-    try:
-        result = await durak_store.action(
-            db, user_id=user_id, game_id=game_id,
-            action_name=str(body.get("action") or ""),
-            card_index=card_index, token=body.get("token"),
-        )
-    except (InsufficientFunds, InvalidBet) as exc:
-        return _bad(str(exc))
-    if result.get("finished"):
-        metrics.count_casino()
-    return web.json_response({
-        "ok": True,
-        **result,
-        "durak": await durak_store.state(db, user_id),
-    })
-
-
-async def api_durak_cancel(request: web.Request) -> web.Response:
-    db: Database = request.app[DB_KEY]
-    user_id = int(request[USER_KEY]["user_id"])
-    game_id = _as_int((await _json_body(request)).get("game_id"))
-    try:
-        await durak_store.cancel(db, user_id=user_id, game_id=game_id)
-    except InvalidBet as exc:
-        return _bad(str(exc))
-    return web.json_response({"ok": True, "durak": await durak_store.state(db, user_id)})
 
 
 async def api_ladder_start(request: web.Request) -> web.Response:

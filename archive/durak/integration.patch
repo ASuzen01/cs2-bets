@@ -1,0 +1,2045 @@
+diff --git a/app/db/backends.py b/app/db/backends.py
+index aa32e44..4037217 100644
+--- a/app/db/backends.py
++++ b/app/db/backends.py
+@@ -209,6 +209,21 @@ CREATE INDEX IF NOT EXISTS idx_drunkard_creator ON drunkard_games(creator_id, id
+ CREATE INDEX IF NOT EXISTS idx_drunkard_opponent ON drunkard_games(opponent_id, id);
+ CREATE INDEX IF NOT EXISTS idx_drunkard_status ON drunkard_games(status, created_at);
+ 
++-- Серверные столы «Дурака»: правила и скрытые руки живут только в state_json.
++CREATE TABLE IF NOT EXISTS durak_games (
++    id           INTEGER PRIMARY KEY AUTOINCREMENT,
++    owner_id     INTEGER NOT NULL,
++    room_code    TEXT NOT NULL UNIQUE,
++    visibility   TEXT NOT NULL,
++    status       TEXT NOT NULL,
++    config_json  TEXT NOT NULL,
++    state_json   TEXT NOT NULL,
++    created_at   INTEGER NOT NULL,
++    updated_at   INTEGER NOT NULL
++);
++CREATE INDEX IF NOT EXISTS idx_durak_status_updated ON durak_games(status, updated_at);
++CREATE INDEX IF NOT EXISTS idx_durak_owner ON durak_games(owner_id, id);
++
+ -- незавершённые фри-спины и их зафиксированная ставка хранятся на сервере
+ CREATE TABLE IF NOT EXISTS slot_states (
+     user_id     INTEGER PRIMARY KEY,
+diff --git a/app/db/database.py b/app/db/database.py
+index e9ae7c9..5a240e6 100644
+--- a/app/db/database.py
++++ b/app/db/database.py
+@@ -86,6 +86,7 @@ BACKUP_TABLES: tuple[str, ...] = (
+     "tease_claims",
+     "casino_bets",
+     "drunkard_games",
++    "durak_games",
+     "slot_states",
+     "riftfall_states",
+     "ladder_games",
+@@ -125,6 +126,7 @@ WIDE_COLUMNS: tuple[tuple[str, str], ...] = (
+     ("casino_bets", "user_id"),
+     ("drunkard_games", "creator_id"),
+     ("drunkard_games", "opponent_id"),
++    ("durak_games", "owner_id"),
+     ("slot_states", "user_id"),
+     ("riftfall_states", "user_id"),
+     ("ladder_games", "user_id"),
+@@ -654,7 +656,7 @@ class Database:
+         # Older backups may predate these new game tables; restore those as empty,
+         # while keeping every established table omission strict.
+         legacy_optional = {
+-            "crash_games", "drunkard_games", "mines_games", "match_follows", "user_preferences",
++            "crash_games", "drunkard_games", "durak_games", "mines_games", "match_follows", "user_preferences",
+             "riftfall_states",
+         }
+         if missing and missing <= legacy_optional:
+diff --git a/app/services/durak.py b/app/services/durak.py
+new file mode 100644
+index 0000000..a57cdb2
+--- /dev/null
++++ b/app/services/durak.py
+@@ -0,0 +1,545 @@
++"""Server-authoritative rules and state machine for the multiplayer Durak game."""
++from __future__ import annotations
++
++import secrets
++from typing import Any
++
++SUITS = ("♠", "♥", "♦", "♣")
++SUIT_NAMES = {"♠": "пики", "♥": "черви", "♦": "бубны", "♣": "трефы"}
++RANKS = {6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "В", 12: "Д", 13: "К", 14: "Т"}
++VALID_DECKS = {24, 36, 52}
++VALID_MODES = {"throwin", "transfer", "neighbors"}
++PAYOUT_BPS = {
++    2: (10_000, 0),
++    3: (6_667, 3_333, 0),
++    4: (6_667, 2_222, 1_111, 0),
++    5: (5_000, 3_000, 1_500, 500, 0),
++    6: (5_000, 2_000, 1_500, 1_000, 500, 0),
++}
++
++
++def validate(deck_size: int, mode: str, players: int, stake: int) -> None:
++    if int(deck_size) not in VALID_DECKS:
++        raise ValueError("Выбери колоду на 24, 36 или 52 карты")
++    if str(mode) not in VALID_MODES:
++        raise ValueError("Выбери режим: подкидной, переводной или соседи")
++    if not 2 <= int(players) <= 6:
++        raise ValueError("За столом должно быть от 2 до 6 игроков")
++    if int(stake) < 10:
++        raise ValueError("Минимальная ставка — 10 монет")
++
++
++def _make_deck(size: int) -> list[dict[str, Any]]:
++    low = {24: 9, 36: 6, 52: 2}[int(size)]
++    return [
++        {"rank_value": value, "rank": RANKS.get(value, str(value)), "suit": suit}
++        for value in range(low, 15)
++        for suit in SUITS
++    ]
++
++
++def _active(state: dict[str, Any]) -> list[int]:
++    return [int(p["seat"]) for p in state["players"] if p.get("place") is None]
++
++
++def _next_seat(state: dict[str, Any], seat: int, *, exclude: set[int] | None = None) -> int | None:
++    skipped = exclude or set()
++    active = set(_active(state))
++    count = len(state["players"])
++    for step in range(1, count + 1):
++        candidate = (int(seat) + step) % count
++        if candidate in active and candidate not in skipped:
++            return candidate
++    return None
++
++
++def _clockwise(state: dict[str, Any], start: int, allowed: set[int]) -> list[int]:
++    count = len(state["players"])
++    return [seat for step in range(count) if (seat := (start + step) % count) in allowed]
++
++
++def _card_text(card: dict[str, Any]) -> str:
++    return f"{card['rank']}{card['suit']}"
++
++
++def _low_trump_holder(players: list[dict[str, Any]], trump_suit: str) -> int:
++    choices = [
++        (int(card["rank_value"]), int(player["seat"]))
++        for player in players
++        for card in player["hand"]
++        if card["suit"] == trump_suit
++    ]
++    return min(choices)[1] if choices else secrets.randbelow(len(players))
++
++
++def new_game(
++    participants: list[dict[str, Any]], *, deck_size: int, mode: str, stake: int,
++) -> dict[str, Any]:
++    """Deal a game. Participants carry user_id/name/bot; hands stay server-side."""
++    validate(deck_size, mode, len(participants), stake)
++    deck = _make_deck(int(deck_size))
++    secrets.SystemRandom().shuffle(deck)
++    trump = dict(deck[-1])
++    players = []
++    for seat, source in enumerate(participants):
++        players.append({
++            "seat": seat,
++            "user_id": int(source["user_id"]) if source.get("user_id") is not None else None,
++            "name": str(source.get("name") or ("Игрок" if seat == 0 else f"Игрок {seat + 1}"))[:40],
++            "bot": bool(source.get("bot")),
++            "hand": [],
++            "place": None,
++        })
++    # Keep the face-up trump card at the bottom of the stock until the final draw.
++    initial_hand = min(6, max(0, (len(deck) - 1) // len(players)))
++    for _ in range(initial_hand):
++        for player in players:
++            player["hand"].append(deck.pop(0))
++    attacker = _low_trump_holder(players, trump["suit"])
++    defender = _next_seat({"players": players}, attacker)
++    return {
++        "version": 1,
++        "mode": str(mode),
++        "deck_size": int(deck_size),
++        "stake": int(stake),
++        "players": players,
++        "stock": deck,
++        "trump": trump,
++        "trump_suit": str(trump["suit"]),
++        "discard_count": 0,
++        "table": [],
++        "attacker": int(attacker),
++        "defender": int(defender if defender is not None else attacker),
++        "phase": "lead",
++        "turn": int(attacker),
++        "queue": [],
++        "queue_kind": None,
++        "ranked": [],
++        "seen_positions": [],
++        "draw_reason": None,
++        "round": 1,
++        "last_event": "Козырь открыт. Начинает игрок с младшим козырем.",
++        "last_tokens": {},
++        "finished": False,
++    }
++
++
++def _matching_ranks(state: dict[str, Any]) -> set[int]:
++    ranks = set()
++    for attack in state["table"]:
++        ranks.add(int(attack["card"]["rank_value"]))
++        if attack.get("cover"):
++            ranks.add(int(attack["cover"]["rank_value"]))
++    return ranks
++
++
++def can_beat(card: dict[str, Any], attack: dict[str, Any], trump_suit: str) -> bool:
++    if card["suit"] == attack["suit"]:
++        return int(card["rank_value"]) > int(attack["rank_value"])
++    return card["suit"] == trump_suit and attack["suit"] != trump_suit
++
++
++def _take_from_hand(player: dict[str, Any], index: int) -> dict[str, Any]:
++    try:
++        return player["hand"].pop(int(index))
++    except (IndexError, TypeError, ValueError) as exc:
++        raise ValueError("Этой карты уже нет на руке") from exc
++
++
++def _throw_queue(state: dict[str, Any], *, opening: bool = False) -> list[int]:
++    defender = int(state["defender"])
++    active = set(_active(state)) - {defender}
++    players = state["players"]
++    if opening:
++        return _clockwise(state, (int(state["attacker"]) + 1) % len(players), active)
++    if state["mode"] == "neighbors":
++        left = _next_seat(state, defender)
++        right = None
++        if left is not None:
++            right = _next_seat(state, left, exclude={defender})
++        allowed = {seat for seat in (left, right) if seat is not None and seat in active}
++        return _clockwise(state, (defender + 1) % len(players), allowed)
++    return _clockwise(state, (int(state["attacker"]) + 1) % len(players), active)
++
++
++def _start_defense(state: dict[str, Any]) -> None:
++    state["phase"] = "defend"
++    state["queue"] = []
++    state["queue_kind"] = None
++    state["turn"] = int(state["defender"])
++
++
++def _open_throw_window(state: dict[str, Any], *, opening: bool = False) -> None:
++    queue = _throw_queue(state, opening=opening)
++    # A defender cannot be attacked with more cards than they had when the turn began.
++    hand_cap = int(state.get("defender_hand_cap") or 0)
++    if hand_cap:
++        queue = [seat for seat in queue if len(state["players"][seat]["hand"]) > 0]
++    state["queue"] = queue
++    state["queue_kind"] = "opening" if opening else "neighbors"
++    if queue:
++        state["phase"] = "throw"
++        state["turn"] = queue[0]
++    elif all(entry.get("cover") for entry in state["table"]):
++        _finish_round(state, took=False)
++    else:
++        _start_defense(state)
++
++
++def _advance_queue(state: dict[str, Any]) -> None:
++    if state["queue"]:
++        state["queue"].pop(0)
++    if state["queue"]:
++        state["turn"] = int(state["queue"][0])
++        return
++    if state["queue_kind"] == "opening":
++        _start_defense(state)
++    elif all(entry.get("cover") for entry in state["table"]):
++        _finish_round(state, took=False)
++    else:
++        _start_defense(state)
++
++
++def _next_defender(state: dict[str, Any], old_defender: int) -> int:
++    attacker = int(state["attacker"])
++    next_seat = _next_seat(state, old_defender, exclude={attacker})
++    return int(next_seat if next_seat is not None else old_defender)
++
++
++def _rank_empty_players(state: dict[str, Any]) -> None:
++    if state["stock"]:
++        return
++    start = (int(state["attacker"]) + 1) % len(state["players"])
++    for seat in _clockwise(state, start, set(_active(state))):
++        if not state["players"][seat]["hand"]:
++            state["players"][seat]["place"] = len(state["ranked"]) + 1
++            state["ranked"].append(seat)
++    remaining = _active(state)
++    if len(remaining) <= 1:
++        if remaining:
++            last = remaining[0]
++            state["players"][last]["place"] = len(state["players"])
++            state["ranked"].append(last)
++        elif state["ranked"]:
++            # Degenerate final sweep: retain deterministic seat order, last slot gets last place.
++            last = state["ranked"][-1]
++            state["players"][last]["place"] = len(state["players"])
++        state["finished"] = True
++        state["phase"] = "finished"
++        state["turn"] = None
++        state["queue"] = []
++
++
++def _finish_round(state: dict[str, Any], *, took: bool) -> None:
++    old_defender = int(state["defender"])
++    if took:
++        target = state["players"][old_defender]
++        for entry in state["table"]:
++            target["hand"].append(entry["card"])
++            if entry.get("cover"):
++                target["hand"].append(entry["cover"])
++        state["last_event"] = f"{target['name']} взял карты со стола."
++        new_attacker = old_defender
++    else:
++        state["discard_count"] += sum(1 + int(entry.get("cover") is not None) for entry in state["table"])
++        state["last_event"] = f"{state['players'][old_defender]['name']} отбился."
++        new_attacker = old_defender
++    state["table"] = []
++    state["attacker"] = new_attacker
++    next_defender = _next_seat(state, new_attacker)
++    state["defender"] = int(next_defender if next_defender is not None else new_attacker)
++
++    # Подбор карт: атакующий и дальше по часовой стрелке, до шести карт.
++    draw_order = _clockwise(state, new_attacker, set(_active(state)))
++    for seat in draw_order:
++        hand = state["players"][seat]["hand"]
++        while len(hand) < 6 and state["stock"]:
++            hand.append(state["stock"].pop(0))
++    _rank_empty_players(state)
++    if not state["finished"]:
++        active = set(_active(state))
++        if int(state["attacker"]) not in active:
++            next_attacker = _next_seat(state, int(state["attacker"]))
++            state["attacker"] = int(next_attacker if next_attacker is not None else min(active))
++        if int(state["defender"]) not in active or int(state["defender"]) == int(state["attacker"]):
++            next_defender = _next_seat(state, int(state["attacker"]))
++            state["defender"] = int(next_defender if next_defender is not None else state["attacker"])
++        if not state["stock"]:
++            signature = repr((
++                int(state["attacker"]),
++                int(state["defender"]),
++                tuple((int(p["seat"]), tuple((int(c["rank_value"]), str(c["suit"])) for c in p["hand"])) for p in state["players"]),
++            ))
++            seen = state.setdefault("seen_positions", [])
++            if signature in seen or len(seen) >= 4096:
++                state["finished"] = True
++                state["phase"] = "finished"
++                state["turn"] = None
++                state["draw_reason"] = "cycle" if signature in seen else "safety_limit"
++                state["last_event"] = "Повторилась позиция · ничья, ставки возвращены."
++                return
++            seen.append(signature)
++        state["round"] += 1
++        state["phase"] = "lead"
++        state["turn"] = int(state["attacker"])
++        state["queue"] = []
++        state["queue_kind"] = None
++        state["defender_hand_cap"] = len(state["players"][int(state["defender"])]["hand"])
++
++
++def _legal_attack_indices(player: dict[str, Any], state: dict[str, Any], *, opening: bool) -> list[int]:
++    if opening:
++        return list(range(len(player["hand"])))
++    if len(state["table"]) >= min(6, int(state.get("defender_hand_cap") or 6)):
++        return []
++    ranks = _matching_ranks(state)
++    return [i for i, card in enumerate(player["hand"]) if int(card["rank_value"]) in ranks]
++
++
++def _transfer_target(state: dict[str, Any]) -> int | None:
++    """Return the next defender for a transfer, excluding the attacker and out players."""
++    current = int(state["defender"])
++    attacker = int(state["attacker"])
++    target = _next_defender(state, current)
++    if target in {current, attacker} or target not in _active(state):
++        return None
++    return target
++
++
++def _transfer_is_open(state: dict[str, Any]) -> bool:
++    if state["mode"] != "transfer" or any(entry.get("cover") for entry in state["table"]):
++        return False
++    target = _transfer_target(state)
++    if target is None:
++        return False
++    # The newly assigned defender must have enough cards to take on the
++    # enlarged attack; once transferred, their hand size becomes the new cap.
++    target_cap = min(6, len(state["players"][target]["hand"]))
++    return len(state["table"]) + 1 <= target_cap
++
++
++def legal_actions(state: dict[str, Any], user_id: int) -> dict[str, Any]:
++    seat = next((int(p["seat"]) for p in state["players"] if p.get("user_id") == int(user_id)), None)
++    result = {"is_turn": False, "phase": state.get("phase"), "attack_indices": [], "defend": [], "can_pass": False, "can_take": False, "can_transfer": False}
++    if seat is None or state.get("finished") or seat != state.get("turn"):
++        return result
++    result["is_turn"] = True
++    player = state["players"][seat]
++    if state["phase"] == "lead":
++        result["attack_indices"] = list(range(len(player["hand"])))
++    elif state["phase"] == "throw":
++        result["attack_indices"] = _legal_attack_indices(player, state, opening=False)
++        result["can_pass"] = True
++    elif state["phase"] == "defend":
++        result["can_take"] = True
++        for attack_i, entry in enumerate(state["table"]):
++            if entry.get("cover") is None:
++                result["defend"] = [
++                    {"hand_index": hand_i, "attack_index": attack_i}
++                    for hand_i, card in enumerate(player["hand"])
++                    if can_beat(card, entry["card"], state["trump_suit"])
++                ]
++                break
++        transfer_open = _transfer_is_open(state)
++        if transfer_open:
++            rank_values = {int(entry["card"]["rank_value"]) for entry in state["table"]}
++            result["transfer_indices"] = [i for i, c in enumerate(player["hand"]) if int(c["rank_value"]) in rank_values]
++            result["can_transfer"] = bool(result["transfer_indices"])
++    return result
++
++
++def _move_card(player: dict[str, Any], card_index: int) -> dict[str, Any]:
++    return _take_from_hand(player, card_index)
++
++
++def act(state: dict[str, Any], seat: int, action: str, *, card_index: int | None = None, attack_index: int | None = None) -> dict[str, Any]:
++    """Validate and apply exactly one action. Invalid or out-of-turn actions raise ValueError."""
++    if state.get("finished"):
++        raise ValueError("Партия уже завершена")
++    if int(state.get("turn", -1)) != int(seat):
++        raise ValueError("Сейчас ход другого игрока")
++    player = state["players"][int(seat)]
++    if player.get("place") is not None:
++        raise ValueError("Вы уже завершили партию")
++
++    if action in {"attack", "throw"}:
++        opening = action == "attack" and state["phase"] == "lead"
++        if opening:
++            if int(seat) != int(state["attacker"]):
++                raise ValueError("Первую карту кладёт атакующий")
++        elif action == "throw" and state["phase"] == "throw":
++            legal = _legal_attack_indices(player, state, opening=False)
++            if card_index not in legal:
++                raise ValueError("Подкинуть можно только карту того же достоинства")
++        else:
++            raise ValueError("Сейчас нельзя положить карту")
++        card = _move_card(player, int(card_index if card_index is not None else -1))
++        state["table"].append({"card": card, "cover": None, "by": int(seat)})
++        if opening:
++            defender = int(state["defender"])
++            state["defender_hand_cap"] = min(6, len(state["players"][defender]["hand"]))
++            state["last_event"] = f"{player['name']} начал атаку."
++            _open_throw_window(state, opening=True)
++        else:
++            state["last_event"] = f"{player['name']} подкинул {_card_text(card)}."
++            _advance_queue(state)
++        return state
++
++    if action == "pass" and state["phase"] == "throw":
++        state["last_event"] = f"{player['name']} пропускает подкидывание."
++        _advance_queue(state)
++        return state
++
++    if action == "defend" and state["phase"] == "defend":
++        target = next((entry for entry in state["table"] if entry.get("cover") is None), None)
++        if target is None:
++            raise ValueError("Все карты уже отбиты")
++        card = _move_card(player, int(card_index if card_index is not None else -1))
++        if not can_beat(card, target["card"], state["trump_suit"]):
++            player["hand"].append(card)
++            raise ValueError("Этой картой нельзя отбиться")
++        target["cover"] = card
++        state["last_event"] = f"{player['name']} отбивается картой {_card_text(card)}."
++        _open_throw_window(state)
++        return state
++
++    if action == "take" and state["phase"] == "defend":
++        _finish_round(state, took=True)
++        return state
++
++    if action == "transfer" and state["phase"] == "defend":
++        target_seat = _transfer_target(state)
++        if not _transfer_is_open(state) or target_seat is None:
++            raise ValueError("Перевод невозможен: следующему защитнику не хватит карт")
++        ranks = {int(entry["card"]["rank_value"]) for entry in state["table"]}
++        try:
++            index = int(card_index) if card_index is not None else -1
++        except (TypeError, ValueError) as exc:
++            raise ValueError("Этой карты уже нет на руке") from exc
++        if index < 0 or index >= len(player["hand"]):
++            raise ValueError("Этой карты уже нет на руке")
++        if int(player["hand"][index]["rank_value"]) not in ranks:
++            raise ValueError("Для перевода нужна карта такого же достоинства")
++        card = _move_card(player, index)
++        state["table"].append({"card": card, "cover": None, "by": int(seat)})
++        state["defender"] = target_seat
++        state["defender_hand_cap"] = min(6, len(state["players"][target_seat]["hand"]))
++        state["last_event"] = f"{player['name']} переводит атаку на {state['players'][target_seat]['name']}."
++        _open_throw_window(state)
++        return state
++
++    raise ValueError("Недопустимое действие")
++
++
++def _bot_choice(state: dict[str, Any], seat: int) -> tuple[str, int | None]:
++    player = state["players"][seat]
++    if state["phase"] == "lead":
++        candidates = sorted(range(len(player["hand"])), key=lambda i: (player["hand"][i]["suit"] == state["trump_suit"], player["hand"][i]["rank_value"]))
++        return "attack", candidates[0] if candidates else None
++    if state["phase"] == "throw":
++        legal = _legal_attack_indices(player, state, opening=False)
++        if legal:
++            chosen = min(legal, key=lambda i: (player["hand"][i]["suit"] == state["trump_suit"], player["hand"][i]["rank_value"]))
++            return "throw", chosen
++        return "pass", None
++    if state["phase"] == "defend":
++        attack = next((entry for entry in state["table"] if entry.get("cover") is None), None)
++        if attack:
++            candidates = [i for i, card in enumerate(player["hand"]) if can_beat(card, attack["card"], state["trump_suit"])]
++            if candidates:
++                chosen = min(candidates, key=lambda i: (player["hand"][i]["suit"] == state["trump_suit"], player["hand"][i]["rank_value"]))
++                return "defend", chosen
++        return "take", None
++    raise ValueError("Неизвестный ход бота")
++
++
++def run_bots(state: dict[str, Any], *, limit: int = 200) -> dict[str, Any]:
++    """Automatically resolve consecutive bot turns until a human may act."""
++    steps = 0
++    while not state.get("finished") and steps < limit:
++        seat = state.get("turn")
++        if seat is None or not state["players"][int(seat)].get("bot"):
++            break
++        action, card = _bot_choice(state, int(seat))
++        act(state, int(seat), action, card_index=card)
++        steps += 1
++    return state
++
++
++def public_game(state: dict[str, Any], *, game_id: int, user_id: int, status: str, code: str | None = None, visibility: str = "private") -> dict[str, Any]:
++    own = next((p for p in state["players"] if p.get("user_id") == int(user_id)), None)
++    if own is None:
++        raise ValueError("Вы не участник этой партии")
++    me = int(own["seat"])
++    players = [{
++        "seat": int(p["seat"]),
++        "name": str(p["name"]),
++        "bot": bool(p.get("bot")),
++        "me": int(p["seat"]) == me,
++        "hand_count": len(p["hand"]),
++        "place": p.get("place"),
++    } for p in state["players"]]
++    actions = legal_actions(state, int(user_id)) if status == "active" else {}
++    return {
++        "id": int(game_id),
++        "code": code,
++        "visibility": visibility,
++        "status": status,
++        "mode": str(state["mode"]),
++        "table_type": str(state.get("table_type") or "online"),
++        "deck_size": int(state["deck_size"]),
++        "stake": int(state["stake"]),
++        "players_count": len(state["players"]),
++        "player_count": int(state.get("player_count") or len(state["players"])),
++        "players": players,
++        "your_seat": me,
++        "hand": [{**card, "text": _card_text(card)} for card in own["hand"]] if status == "active" else [],
++        "stock_count": len(state.get("stock") or []),
++        "trump": {**state["trump"], "text": _card_text(state["trump"])} if state.get("trump") else None,
++        "trump_suit": state.get("trump_suit"),
++        "discard_count": int(state.get("discard_count", 0)),
++        "table": [{
++            "card": {**entry["card"], "text": _card_text(entry["card"])},
++            "cover": {**entry["cover"], "text": _card_text(entry["cover"])} if entry.get("cover") else None,
++            "by": int(entry["by"]),
++        } for entry in state.get("table", [])],
++        "attacker": state.get("attacker"),
++        "defender": state.get("defender"),
++        "phase": state.get("phase"),
++        "turn": state.get("turn"),
++        "is_your_turn": status == "active" and state.get("turn") == me,
++        "actions": actions,
++        "round": int(state.get("round", 1)),
++        "last_event": str(state.get("last_event") or ""),
++        "finished": bool(state.get("finished")),
++        "draw_reason": state.get("draw_reason"),
++        "rankings": [{"seat": int(seat), "place": int(state["players"][int(seat)]["place"])} for seat in state.get("ranked", [])],
++        "your_place": own.get("place"),
++        "payout": int((state.get("payouts") or {}).get(str(user_id), 0)),
++        "payouts": None,
++    }
++
++
++def payouts_by_place(player_count: int, stake: int) -> list[int]:
++    """Split the full entry pool; indivisible coins go to largest fractional shares."""
++    count = int(player_count)
++    pool = count * int(stake)
++    numerators = [pool * share for share in PAYOUT_BPS[count]]
++    payouts = [value // 10_000 for value in numerators]
++    remainder = pool - sum(payouts)
++    # Largest-remainder apportionment keeps the integer payouts closest to the
++    # requested percentages. Equal fractions are awarded from the better place.
++    order = sorted(range(count), key=lambda i: (numerators[i] % 10_000, -i), reverse=True)
++    for index in order[:remainder]:
++        payouts[index] += 1
++    return payouts
++
++
++def payout_for_place(player_count: int, stake: int, place: int) -> int:
++    return payouts_by_place(player_count, stake)[int(place) - 1]
++
++
++__all__ = [
++    "PAYOUT_BPS", "SUIT_NAMES", "VALID_DECKS", "VALID_MODES", "act", "can_beat",
++    "new_game", "payout_for_place", "public_game", "run_bots", "validate",
++]
+diff --git a/app/services/durak_store.py b/app/services/durak_store.py
+new file mode 100644
+index 0000000..5f5dd61
+--- /dev/null
++++ b/app/services/durak_store.py
+@@ -0,0 +1,473 @@
++"""Transactional persistence, betting and room matching for Durak."""
++from __future__ import annotations
++
++import json
++import secrets
++import string
++import time
++from typing import Any
++
++from app.db.database import InsufficientFunds, InvalidBet
++from app.services import durak
++
++CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
++BOT_NAMES = ("Леди Пика", "Граф Треф", "Маркиз Бубен", "Барон Червей", "Сеньор Козырь")
++
++
++def _encode(value: Any) -> str:
++    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
++
++
++def _decode(raw: Any) -> dict[str, Any]:
++    try:
++        value = json.loads(str(raw)) if raw else {}
++    except (TypeError, ValueError):
++        value = {}
++    return value if isinstance(value, dict) else {}
++
++
++def _players(state: dict[str, Any]) -> list[dict[str, Any]]:
++    return list(state.get("players") or [])
++
++
++def _has_user(state: dict[str, Any], user_id: int) -> bool:
++    return any(p.get("user_id") is not None and int(p["user_id"]) == int(user_id) for p in _players(state))
++
++
++def _code() -> str:
++    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(6))
++
++
++async def _find_busy(conn: Any, user_id: int, *, exclude_id: int | None = None) -> Any | None:
++    cutoff = int(time.time()) - 24 * 3600
++    rows = await (await conn.execute(
++        "SELECT id, state_json FROM durak_games "
++        "WHERE status = 'active' OR (status = 'waiting' AND updated_at >= ?) "
++        "ORDER BY updated_at DESC LIMIT 100",
++        (cutoff,),
++    )).fetchall()
++    for row in rows:
++        if exclude_id is not None and int(row["id"]) == int(exclude_id):
++            continue
++        if _has_user(_decode(row["state_json"]), user_id):
++            return row
++    return None
++
++
++def _config_of(state: dict[str, Any]) -> dict[str, Any]:
++    return {
++        "table_type": str(state.get("table_type") or "online"),
++        "rule": str(state.get("mode") or "throwin"),
++        "deck_size": int(state.get("deck_size") or 36),
++        "stake": int(state.get("stake") or 10),
++        "player_count": int(state.get("player_count") or len(_players(state)) or 2),
++    }
++
++
++async def _insert_room(
++    conn: Any, *, user_id: int, name: str, visibility: str, config: dict[str, Any], now: int,
++    initial_players: list[dict[str, Any]],
++) -> Any:
++    code = _code()
++    for _ in range(5):
++        row = await (await conn.execute("SELECT id FROM durak_games WHERE room_code = ?", (code,))).fetchone()
++        if row is None:
++            break
++        code = _code()
++    state = {
++        "version": 1,
++        "mode": config["rule"],
++        "deck_size": config["deck_size"],
++        "stake": config["stake"],
++        "player_count": config["player_count"],
++        "table_type": config["table_type"],
++        "players": initial_players,
++        "finished": False,
++    }
++    inserted = await conn.execute(
++        """INSERT INTO durak_games
++           (owner_id, room_code, visibility, status, config_json, state_json, created_at, updated_at)
++           VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?) RETURNING id""",
++        (int(user_id), code, visibility, _encode(config), _encode(state), now, now),
++    )
++    created = await inserted.fetchone()
++    game_id = int(created["id"]) if created is not None else int(inserted.lastrowid or 0)
++    saved = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (game_id,))).fetchone()
++    if saved is None:
++        result = await (await conn.execute("SELECT * FROM durak_games WHERE room_code = ?", (code,))).fetchone()
++        if result is None:
++            raise InvalidBet("Не удалось создать стол")
++        return result
++    return saved
++
++
++async def _start(conn: Any, row: Any, state: dict[str, Any], now: int) -> tuple[Any, dict[str, Any]]:
++    players = _players(state)
++    if len(players) < 2:
++        raise InvalidBet("Для начала партии нужны минимум 2 игрока")
++    if len(players) > 6:
++        raise InvalidBet("За столом может быть не больше 6 игроков")
++    config = _config_of(state)
++    if config["table_type"] == "online" and len(players) != int(config["player_count"]):
++        raise InvalidBet(f"Стол заполнен не полностью: нужно {config['player_count']} игроков")
++    stake = int(config["stake"])
++    humans = [p for p in players if p.get("user_id") is not None]
++    if not humans:
++        raise InvalidBet("За столом нет реальных игроков")
++    for player in humans:
++        user_id = int(player["user_id"])
++        debit = await conn.execute(
++            "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
++            (stake, user_id, stake),
++        )
++        if debit.rowcount == 0:
++            raise InsufficientFunds(f"{player['name']}: недостаточно монет для ставки")
++        await row_db_ledger(conn, user_id, -stake, f"ставка · Дурак · стол #{int(row['id'])}", now)
++
++    game = durak.new_game(
++        players,
++        deck_size=int(config["deck_size"]),
++        mode=str(config["rule"]),
++        stake=stake,
++    )
++    game["player_count"] = len(players)
++    game["table_type"] = str(config["table_type"])
++    game["visibility"] = str(row["visibility"])
++    if config["table_type"] == "bots":
++        durak.run_bots(game)
++    await conn.execute(
++        "UPDATE durak_games SET status = 'active', state_json = ?, updated_at = ? WHERE id = ?",
++        (_encode(game), now, int(row["id"])),
++    )
++    saved = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(row["id"]),))).fetchone()
++    return saved or row, game
++
++
++async def row_db_ledger(conn: Any, user_id: int, delta: int, reason: str, now: int) -> None:
++    await conn.execute(
++        "INSERT INTO ledger (user_id, delta, reason, created_at) VALUES (?, ?, ?, ?)",
++        (int(user_id), int(delta), str(reason), int(now)),
++    )
++
++
++async def _finish(db: Any, conn: Any, row: Any, state: dict[str, Any], now: int) -> None:
++    players = _players(state)
++    count = len(players)
++    stake = int(state["stake"])
++    if state.get("draw_reason"):
++        payouts: dict[str, int] = {}
++        for player in players:
++            user_id = player.get("user_id")
++            if user_id is None:
++                continue
++            payouts[str(int(user_id))] = stake
++            await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (stake, int(user_id)))
++            await row_db_ledger(conn, int(user_id), stake, "возврат ставки · Дурак · ничья", now)
++        state["payouts"] = payouts
++        state["pool"] = stake * count
++        state["status"] = "draw"
++        await conn.execute(
++            "UPDATE durak_games SET status = 'draw', state_json = ?, updated_at = ? WHERE id = ?",
++            (_encode(state), now, int(row["id"])),
++        )
++        return
++    shares = durak.payouts_by_place(count, stake)
++    payouts: dict[str, int] = {}
++    for player in players:
++        user_id = player.get("user_id")
++        if user_id is None:
++            continue
++        place = int(player.get("place") or count)
++        payout = int(shares[place - 1])
++        payouts[str(int(user_id))] = payout
++        if payout:
++            await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, int(user_id)))
++            await row_db_ledger(conn, int(user_id), payout, f"выплата · Дурак · {place}-е место", now)
++        outcome = "win" if payout > stake else "loss" if payout < stake else "draw"
++        summary = {
++            "place": place,
++            "player_count": count,
++            "stake": stake,
++            "pool": stake * count,
++            "payout": payout,
++            "mode": str(state["mode"]),
++            "deck_size": int(state["deck_size"]),
++        }
++        await conn.execute(
++            """INSERT INTO casino_bets
++               (user_id, game, selection, label, amount, odds, outcome, win, payout, result_json, created_at)
++               VALUES (?, 'durak', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
++            (
++                int(user_id), f"place:{place}", f"Дурак · {place}-е место из {count}",
++                stake, (payout / stake if stake else 0), outcome, int(outcome == "win"),
++                payout, _encode(summary), now,
++            ),
++        )
++        await db._bump_quest(conn, int(user_id), "casino", now)
++    state["payouts"] = payouts
++    state["pool"] = stake * count
++    state["status"] = "finished"
++    await conn.execute(
++        "UPDATE durak_games SET status = 'finished', state_json = ?, updated_at = ? WHERE id = ?",
++        (_encode(state), now, int(row["id"])),
++    )
++
++
++def _public(row: Any, state: dict[str, Any], user_id: int) -> dict[str, Any]:
++    payload = durak.public_game(
++        state,
++        game_id=int(row["id"]),
++        user_id=int(user_id),
++        status=str(row["status"]),
++        code=str(row["room_code"]),
++        visibility=str(row["visibility"]),
++    )
++    payload["is_owner"] = int(row["owner_id"]) == int(user_id)
++    return payload
++
++
++async def _expire_stale_games(db: Any, now: int) -> None:
++    cutoff = now - 24 * 3600
++    stale = await db._fetchone(
++        "SELECT id FROM durak_games WHERE status IN ('waiting', 'active') AND updated_at < ? LIMIT 1",
++        (cutoff,),
++    )
++    if stale is None:
++        return
++    async with db.transaction() as conn:
++        rows = await (await conn.execute(
++            "SELECT * FROM durak_games WHERE status IN ('waiting', 'active') AND updated_at < ?",
++            (cutoff,),
++        )).fetchall()
++        for row in rows:
++            raw = _decode(row["state_json"])
++            if str(row["status"]) == "active":
++                stake = int(raw.get("stake") or 0)
++                for player in _players(raw):
++                    player_id = player.get("user_id")
++                    if player_id is None:
++                        continue
++                    await conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (stake, int(player_id)))
++                    await row_db_ledger(conn, int(player_id), stake, "возврат ставки · Дурак · стол без ходов сутки", now)
++            raw["status"] = "cancelled"
++            raw["cancel_reason"] = "inactive"
++            await conn.execute(
++                "UPDATE durak_games SET status = 'cancelled', state_json = ?, updated_at = ? WHERE id = ?",
++                (_encode(raw), now, int(row["id"])),
++            )
++
++
++async def state(db: Any, user_id: int) -> dict[str, Any]:
++    now = int(time.time())
++    await _expire_stale_games(db, now)
++    cutoff = now - 24 * 3600
++    rows = await db._fetchall(
++        "SELECT * FROM durak_games "
++        "WHERE status = 'active' OR (status = 'waiting' AND updated_at >= ?) "
++        "ORDER BY updated_at DESC LIMIT 100",
++        (cutoff,),
++    )
++    mine = None
++    for row in rows:
++        raw = _decode(row["state_json"])
++        if _has_user(raw, user_id):
++            mine = _public(row, raw, user_id)
++            break
++    lobbies = []
++    for row in rows:
++        if str(row["status"]) != "waiting" or str(row["visibility"]) != "public":
++            continue
++        raw = _decode(row["state_json"])
++        if _has_user(raw, user_id):
++            continue
++        config = _config_of(raw)
++        lobbies.append({
++            "id": int(row["id"]),
++            "mode": config["rule"],
++            "deck_size": config["deck_size"],
++            "stake": config["stake"],
++            "players_count": len(_players(raw)),
++            "player_count": config["player_count"],
++            "players": [str(p["name"]) for p in _players(raw)],
++        })
++    last_rows = await db._fetchall(
++        "SELECT * FROM durak_games WHERE status = 'finished' ORDER BY updated_at DESC LIMIT 30"
++    )
++    last = None
++    for row in last_rows:
++        raw = _decode(row["state_json"])
++        if _has_user(raw, user_id):
++            last = _public(row, raw, user_id)
++            break
++    return {"game": mine, "lobbies": lobbies[:20], "last": last}
++
++
++async def create(
++    db: Any, *, user_id: int, name: str, table_type: str, visibility: str,
++    mode: str, deck_size: int, stake: int, player_count: int,
++) -> dict[str, Any]:
++    table_type = str(table_type)
++    visibility = str(visibility)
++    if table_type not in {"bots", "online"}:
++        raise InvalidBet("Выбери игру с ботами или онлайн-стол")
++    if table_type == "online" and visibility not in {"public", "private"}:
++        raise InvalidBet("Выбери открытый или приватный стол")
++    durak.validate(deck_size, mode, player_count, stake)
++    now = int(time.time())
++    config = {
++        "table_type": table_type,
++        "rule": str(mode),
++        "deck_size": int(deck_size),
++        "stake": int(stake),
++        "player_count": int(player_count),
++    }
++    async with db.transaction() as conn:
++        if await _find_busy(conn, user_id) is not None:
++            raise InvalidBet("Сначала завершите или дождитесь текущую партию")
++        user = await (await conn.execute("SELECT username, full_name, balance FROM users WHERE user_id = ?", (int(user_id),))).fetchone()
++        if user is None:
++            raise InvalidBet("Профиль игрока не найден")
++        if int(user["balance"]) < int(stake):
++            raise InsufficientFunds("На балансе меньше выбранной ставки")
++        display_name = str(user["full_name"] or (f"@{user['username']}" if user["username"] else name or "Игрок"))[:40]
++
++        if table_type == "online" and visibility == "public":
++            candidates = await (await conn.execute(
++                "SELECT * FROM durak_games WHERE status = 'waiting' AND visibility = 'public' "
++                "AND updated_at >= ? ORDER BY id DESC LIMIT 50",
++                (now - 24 * 3600,),
++            )).fetchall()
++            for candidate in candidates:
++                raw = _decode(candidate["state_json"])
++                old_config = _config_of(raw)
++                if old_config != config or _has_user(raw, user_id) or len(_players(raw)) >= int(player_count):
++                    continue
++                await _join_in_tx(conn, candidate, raw, user_id, display_name, now)
++                refreshed = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(candidate["id"]),))).fetchone()
++                return _public(refreshed, _decode(refreshed["state_json"]), user_id)
++
++        if table_type == "bots":
++            bots = [
++                {"seat": seat, "user_id": None, "name": BOT_NAMES[(seat - 1) % len(BOT_NAMES)], "bot": True, "hand": [], "place": None}
++                for seat in range(1, int(player_count))
++            ]
++            participants = [{"seat": 0, "user_id": int(user_id), "name": display_name, "bot": False, "hand": [], "place": None}, *bots]
++        else:
++            participants = [{"seat": 0, "user_id": int(user_id), "name": display_name, "bot": False, "hand": [], "place": None}]
++        row = await _insert_room(
++            conn, user_id=user_id, name=display_name,
++            visibility="private" if table_type == "bots" else visibility,
++            config=config, now=now, initial_players=participants,
++        )
++        if table_type == "bots":
++            row, game = await _start(conn, row, _decode(row["state_json"]), now)
++            return _public(row, game, user_id)
++        return _public(row, _decode(row["state_json"]), user_id)
++
++
++async def _join_in_tx(conn: Any, row: Any, raw: dict[str, Any], user_id: int, name: str, now: int) -> None:
++    if now - int(row["updated_at"]) > 24 * 3600:
++        raise InvalidBet("Стол устарел — создай новый")
++    if str(row["status"]) != "waiting":
++        raise InvalidBet("Этот стол уже начался или закрыт")
++    if _has_user(raw, user_id):
++        return
++    if await _find_busy(conn, user_id, exclude_id=int(row["id"])) is not None:
++        raise InvalidBet("Сначала завершите или дождитесь текущую партию")
++    config = _config_of(raw)
++    if len(_players(raw)) >= int(config["player_count"]):
++        raise InvalidBet("За столом уже нет свободных мест")
++    user = await (await conn.execute("SELECT balance FROM users WHERE user_id = ?", (int(user_id),))).fetchone()
++    if user is None or int(user["balance"]) < int(config["stake"]):
++        raise InsufficientFunds("На балансе меньше выбранной ставки")
++    raw["players"].append({
++        "seat": len(raw["players"]), "user_id": int(user_id), "name": str(name)[:40],
++        "bot": False, "hand": [], "place": None,
++    })
++    await conn.execute(
++        "UPDATE durak_games SET state_json = ?, updated_at = ? WHERE id = ?",
++        (_encode(raw), now, int(row["id"])),
++    )
++    if str(row["visibility"]) == "public" and len(raw["players"]) == int(config["player_count"]):
++        refreshed = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(row["id"]),))).fetchone()
++        await _start(conn, refreshed, raw, now)
++
++
++async def join(db: Any, *, user_id: int, name: str, game_id: int | None = None, code: str | None = None) -> dict[str, Any]:
++    now = int(time.time())
++    async with db.transaction() as conn:
++        if game_id is not None:
++            row = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(game_id),))).fetchone()
++        else:
++            row = await (await conn.execute("SELECT * FROM durak_games WHERE room_code = ?", (str(code or "").strip().upper(),))).fetchone()
++        if row is None:
++            raise InvalidBet("Открытый стол или код не найдены")
++        if str(row["visibility"]) == "private" and game_id is not None and int(row["owner_id"]) != int(user_id):
++            # Joining by the share code is the private-room access path.
++            raise InvalidBet("Для приватного стола нужен код приглашения")
++        raw = _decode(row["state_json"])
++        await _join_in_tx(conn, row, raw, user_id, name, now)
++        updated = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(row["id"]),))).fetchone()
++        return _public(updated, _decode(updated["state_json"]), user_id)
++
++
++async def start(db: Any, *, user_id: int, game_id: int) -> dict[str, Any]:
++    now = int(time.time())
++    async with db.transaction() as conn:
++        row = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(game_id),))).fetchone()
++        if row is None or int(row["owner_id"]) != int(user_id):
++            raise InvalidBet("Только создатель стола может начать партию")
++        raw = _decode(row["state_json"])
++        if now - int(row["updated_at"]) > 24 * 3600:
++            raise InvalidBet("Стол устарел — создай новый")
++        if str(row["status"]) != "waiting":
++            raise InvalidBet("Стол уже начат или закрыт")
++        updated, game = await _start(conn, row, raw, now)
++        return _public(updated, game, user_id)
++
++
++async def cancel(db: Any, *, user_id: int, game_id: int) -> None:
++    now = int(time.time())
++    async with db.transaction() as conn:
++        row = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(game_id),))).fetchone()
++        if row is None or int(row["owner_id"]) != int(user_id) or str(row["status"]) != "waiting":
++            raise InvalidBet("Нельзя отменить этот стол")
++        await conn.execute("UPDATE durak_games SET status = 'cancelled', updated_at = ? WHERE id = ?", (now, int(game_id)))
++
++
++async def action(
++    db: Any, *, user_id: int, game_id: int, action_name: str,
++    card_index: int | None = None, token: str | None = None,
++) -> dict[str, Any]:
++    now = int(time.time())
++    tap = db._clean_token(token)
++    async with db.transaction() as conn:
++        row = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(game_id),))).fetchone()
++        if row is None or str(row["status"]) != "active":
++            raise InvalidBet("Активная партия не найдена")
++        raw = _decode(row["state_json"])
++        player = next((p for p in _players(raw) if p.get("user_id") is not None and int(p["user_id"]) == int(user_id)), None)
++        if player is None:
++            raise InvalidBet("Вы не участник этой партии")
++        tokens = raw.setdefault("last_tokens", {})
++        if tap and tokens.get(str(user_id)) == tap:
++            return {"game": _public(row, raw, user_id), "balance": await db._balance_in(conn, user_id)}
++        try:
++            durak.act(raw, int(player["seat"]), str(action_name), card_index=card_index)
++            if raw.get("table_type") == "bots":
++                durak.run_bots(raw)
++        except ValueError as exc:
++            raise InvalidBet(str(exc)) from exc
++        if tap:
++            tokens[str(user_id)] = tap
++        if raw.get("finished"):
++            await _finish(db, conn, row, raw, now)
++            status = "draw" if raw.get("draw_reason") else "finished"
++        else:
++            status = "active"
++            await conn.execute("UPDATE durak_games SET state_json = ?, updated_at = ? WHERE id = ?", (_encode(raw), now, int(game_id)))
++        saved = await (await conn.execute("SELECT * FROM durak_games WHERE id = ?", (int(game_id),))).fetchone()
++        return {"game": _public(saved, raw, user_id), "balance": await db._balance_in(conn, user_id), "finished": status == "finished"}
++
++
++__all__ = ["action", "cancel", "create", "join", "start", "state"]
+diff --git a/app/web/index.html b/app/web/index.html
+index 884241f..0a8f7d7 100644
+--- a/app/web/index.html
++++ b/app/web/index.html
+@@ -153,7 +153,7 @@
+ 
+   <section class="screen catalog-mode" id="screen-games">
+     <div class="game-catalog-head">
+-      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 11 ИГР</span></div>
++      <div class="game-catalog-eyebrow"><span class="catalog-live-dot"></span> КАЗИНО <span>· 12 ИГР</span></div>
+       <h1>Игровой зал</h1>
+       <p>Выбери игру и начинай раунд</p>
+     </div>
+@@ -452,6 +452,37 @@
+         <small class="game-tile-description">Игрок · Банкир · Ничья</small>
+         <span class="game-tile-arrow" aria-hidden="true">↗</span>
+       </button>
++      <button class="game-tile" type="button" data-game="durak" aria-pressed="false">
++        <span class="game-tile-art art-durak" aria-hidden="true">
++          <svg viewBox="0 0 220 210">
++            <defs>
++              <linearGradient id="durak-felt" x1="0" y1="0" x2="1" y2="1">
++                <stop offset="0" stop-color="#244b3c"/><stop offset="1" stop-color="#101713"/>
++              </linearGradient>
++              <linearGradient id="durak-gold" x1="0" y1="0" x2="1" y2="1">
++                <stop offset="0" stop-color="#f1dfa5"/><stop offset=".55" stop-color="#c7a65d"/><stop offset="1" stop-color="#80613a"/>
++              </linearGradient>
++            </defs>
++            <ellipse cx="110" cy="145" rx="87" ry="37" fill="url(#durak-felt)" stroke="#b59a5d" stroke-width="2"/>
++            <circle cx="110" cy="141" r="29" fill="none" stroke="#c2a765" stroke-width="1" opacity=".45"/>
++            <g transform="rotate(-14 84 91)">
++              <rect x="49" y="39" width="69" height="101" rx="9" fill="#f5edda" stroke="url(#durak-gold)" stroke-width="2"/>
++              <text x="60" y="66" fill="#a23f38" font-size="19" font-family="Georgia,serif" font-weight="700">Т</text>
++              <text x="83" y="112" fill="#a23f38" font-size="43" text-anchor="middle">♥</text>
++            </g>
++            <g transform="rotate(13 139 91)">
++              <rect x="103" y="39" width="69" height="101" rx="9" fill="#1d2f29" stroke="url(#durak-gold)" stroke-width="2"/>
++              <rect x="109" y="45" width="57" height="89" rx="5" fill="none" stroke="#d8c17e" stroke-width="1.3"/>
++              <path d="M137 55l22 38-22 38-22-38z" fill="none" stroke="#d8c17e" stroke-width="1.5"/>
++              <text x="137" y="101" fill="#eddb9f" font-size="21" text-anchor="middle">✦</text>
++            </g>
++            <text x="110" y="185" fill="#ddc583" font-size="9" font-family="Arial,sans-serif" font-weight="900" text-anchor="middle" letter-spacing="2">DURAK · CLUB</text>
++          </svg>
++        </span>
++        <b class="game-tile-title">Дурак</b>
++        <small class="game-tile-description">Классика · онлайн · боты</small>
++        <span class="game-tile-arrow" aria-hidden="true">↗</span>
++      </button>
+       <button class="game-tile" type="button" data-game="drunkard" aria-pressed="false">
+         <span class="game-tile-art art-drunkard" aria-hidden="true">
+           <svg viewBox="0 0 220 210">
+diff --git a/app/web/server.py b/app/web/server.py
+index 037ff03..af32ee1 100644
+--- a/app/web/server.py
++++ b/app/web/server.py
+@@ -23,6 +23,7 @@ from app.config import settings
+ from app.db import Database
+ from app.db.database import InsufficientFunds, InvalidBet, MatchNotFound, bonus_amount
+ from app.services import achievements, baccarat, games, riftfall, slot_machine
++from app.services import durak_store
+ from app.services import blackjack as blackjack_game
+ from app.services import crash as crash_game
+ from app.services import ladder as ladder_game
+@@ -116,6 +117,12 @@ def register_routes(
+     app.router.add_post("/api/drunkard/invite", api_drunkard_invite)
+     app.router.add_post("/api/drunkard/accept", api_drunkard_accept)
+     app.router.add_post("/api/drunkard/close", api_drunkard_close)
++    app.router.add_get("/api/durak/state", api_durak_state)
++    app.router.add_post("/api/durak/create", api_durak_create)
++    app.router.add_post("/api/durak/join", api_durak_join)
++    app.router.add_post("/api/durak/start", api_durak_start)
++    app.router.add_post("/api/durak/action", api_durak_action)
++    app.router.add_post("/api/durak/cancel", api_durak_cancel)
+     app.router.add_post("/api/ladder/start", api_ladder_start)
+     app.router.add_post("/api/ladder/pick", api_ladder_pick)
+     app.router.add_post("/api/ladder/continue", api_ladder_continue)
+@@ -320,6 +327,7 @@ async def api_state(request: web.Request) -> web.Response:
+             "crash": await db.crash_state(user_id),
+             "mines": await db.mines_state(user_id),
+             "drunkard": await db.drunkard_state(user_id),
++            "durak": await durak_store.state(db, user_id),
+             "limits": {
+                 "min_bet": settings.min_bet,
+                 "max_legs": settings.max_express_legs,
+@@ -1303,6 +1311,118 @@ async def api_drunkard_close(request: web.Request) -> web.Response:
+     return web.json_response({"ok": True, "game": game, "drunkard": await db.drunkard_state(user_id)})
+ 
+ 
++async def api_durak_state(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    return web.json_response({
++        "ok": True,
++        "durak": await durak_store.state(db, user_id),
++        "balance": await db.get_balance(user_id),
++    })
++
++
++async def api_durak_create(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    body = await _json_body(request)
++    try:
++        game = await durak_store.create(
++            db,
++            user_id=user_id,
++            name="Игрок",
++            table_type=str(body.get("table_type") or "bots"),
++            visibility=str(body.get("visibility") or "private"),
++            mode=str(body.get("mode") or "throwin"),
++            deck_size=_as_int(body.get("deck_size")),
++            stake=_as_int(body.get("stake")),
++            player_count=_as_int(body.get("player_count")),
++        )
++    except (InsufficientFunds, InvalidBet) as exc:
++        return _bad(str(exc))
++    return web.json_response({
++        "ok": True,
++        "game": game,
++        "durak": await durak_store.state(db, user_id),
++        "balance": await db.get_balance(user_id),
++    })
++
++
++async def api_durak_join(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    body = await _json_body(request)
++    user = await db.get_user(user_id)
++    name = str((user["full_name"] if user else None) or (f"@{user['username']}" if user and user["username"] else "Игрок"))
++    game_id = _as_int(body.get("game_id")) if body.get("game_id") is not None else None
++    try:
++        game = await durak_store.join(
++            db, user_id=user_id, name=name,
++            game_id=game_id if game_id and game_id > 0 else None,
++            code=str(body.get("code") or "") or None,
++        )
++    except (InsufficientFunds, InvalidBet) as exc:
++        return _bad(str(exc))
++    return web.json_response({
++        "ok": True,
++        "game": game,
++        "durak": await durak_store.state(db, user_id),
++        "balance": await db.get_balance(user_id),
++    })
++
++
++async def api_durak_start(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    game_id = _as_int((await _json_body(request)).get("game_id"))
++    try:
++        game = await durak_store.start(db, user_id=user_id, game_id=game_id)
++    except (InsufficientFunds, InvalidBet) as exc:
++        return _bad(str(exc))
++    return web.json_response({
++        "ok": True,
++        "game": game,
++        "durak": await durak_store.state(db, user_id),
++        "balance": await db.get_balance(user_id),
++    })
++
++
++async def api_durak_action(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    body = await _json_body(request)
++    game_id = _as_int(body.get("game_id"))
++    if game_id <= 0:
++        return _bad("Партия не найдена")
++    raw_index = body.get("card_index")
++    card_index = _as_int(raw_index) if raw_index is not None else None
++    try:
++        result = await durak_store.action(
++            db, user_id=user_id, game_id=game_id,
++            action_name=str(body.get("action") or ""),
++            card_index=card_index, token=body.get("token"),
++        )
++    except (InsufficientFunds, InvalidBet) as exc:
++        return _bad(str(exc))
++    if result.get("finished"):
++        metrics.count_casino()
++    return web.json_response({
++        "ok": True,
++        **result,
++        "durak": await durak_store.state(db, user_id),
++    })
++
++
++async def api_durak_cancel(request: web.Request) -> web.Response:
++    db: Database = request.app[DB_KEY]
++    user_id = int(request[USER_KEY]["user_id"])
++    game_id = _as_int((await _json_body(request)).get("game_id"))
++    try:
++        await durak_store.cancel(db, user_id=user_id, game_id=game_id)
++    except InvalidBet as exc:
++        return _bad(str(exc))
++    return web.json_response({"ok": True, "durak": await durak_store.state(db, user_id)})
++
++
+ async def api_ladder_start(request: web.Request) -> web.Response:
+     """Начинает «Лесенку»: ставку и призовая дверь фиксирует сервер."""
+     db: Database = request.app[DB_KEY]
+diff --git a/app/web/static/app.css b/app/web/static/app.css
+index 85654fa..793d310 100644
+--- a/app/web/static/app.css
++++ b/app/web/static/app.css
+@@ -1744,3 +1744,19 @@ button:focus-visible{outline-color:#d6b66d}
+ .mines-card .game-history,.mines-card .game-info{margin-top:9px}
+ @media(max-width:360px){.mines-card{padding:15px 11px}.mines-board{gap:5px;padding:7px;border-radius:14px}.mines-cell{border-radius:8px}.mines-presets{gap:4px}.mines-chip{font-size:10px}}
+ @media(prefers-reduced-motion:reduce){.mines-cell{transition:none}}
++
++/* Durak Club — luxury card-table surface */
++.game-tile[data-game="durak"]{--game-accent:#e3c77b;background:radial-gradient(ellipse at 50% 35%,#315242,#121914 72%)}
++.art-durak svg{filter:drop-shadow(0 8px 16px rgba(0,0,0,.34))}
++.durak-panel{position:relative;margin:12px 0;padding:16px;border:1px solid #665637;border-radius:19px;overflow:hidden;background:radial-gradient(ellipse at 50% 0,rgba(190,157,84,.13),transparent 58%),linear-gradient(145deg,#171d19,#111511);box-shadow:0 12px 34px rgba(0,0,0,.22),inset 0 1px 0 rgba(235,213,157,.05)}
++.durak-panel:before{position:absolute;inset:5px;border:1px solid rgba(190,157,84,.13);border-radius:14px;content:"";pointer-events:none}
++.durak-panel>*{position:relative}.durak-kicker{color:#d6bb77;font-size:9px;font-weight:900;letter-spacing:.18em}.durak-title{margin:5px 0;color:#f1e4c0;font-family:Georgia,serif;font-size:26px;font-weight:700}.durak-title.small{font-size:20px}.durak-copy{margin:0 0 13px;color:#b7b09e;font-size:12px;line-height:1.55}
++.durak-setting-block{margin-top:13px}.durak-label{margin:10px 0 7px;color:#cdbd92;font-size:9px;font-weight:900;letter-spacing:.13em}.durak-options{display:grid;gap:6px}.durak-options.three{grid-template-columns:repeat(3,minmax(0,1fr))}.durak-options.five{grid-template-columns:repeat(5,minmax(0,1fr))}.durak-options.two{grid-template-columns:repeat(2,minmax(0,1fr))}
++.durak-option{min-height:38px;padding:7px 5px;border:1px solid #454537;border-radius:10px;color:#d0c7ae;background:linear-gradient(145deg,#202720,#171c18);font-size:11px;font-weight:800;transition:border-color .15s,background .15s,color .15s}.durak-option.active{border-color:#c4a85e;color:#f1dda0;background:linear-gradient(145deg,rgba(178,143,69,.27),rgba(47,49,33,.65));box-shadow:inset 0 0 0 1px rgba(226,203,139,.11)}.durak-option:disabled{opacity:.45}
++.durak-stakes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}.durak-stakes .stake-chip{min-height:34px;padding:5px 2px;font-size:10px}.durak-stake-input{box-sizing:border-box;width:100%;margin-top:8px}.durak-visibility{margin-top:8px}.durak-join-code{display:flex;gap:7px;margin-top:9px}.durak-join-code input{min-width:0;flex:1;text-transform:uppercase}.durak-join-code button{flex-shrink:0;padding:0 12px}.durak-create{display:block;width:100%;margin-top:14px}.durak-payout-note{margin:9px 0 2px;color:#9f9c8f;font-size:10px;line-height:1.5}
++.durak-room-code{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0;padding:11px;border:1px solid rgba(193,165,94,.48);border-radius:12px;background:linear-gradient(135deg,rgba(178,146,72,.13),rgba(16,21,17,.6))}.durak-room-code small{color:#b9ad8b;font-size:8px;font-weight:900;letter-spacing:.13em}.durak-room-code b{color:#f0d991;font-family:Georgia,serif;font-size:22px;letter-spacing:.17em}.durak-room-code button{min-height:34px;padding:0 9px;font-size:10px}.durak-lobby-seats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:11px 0}.durak-lobby-player,.durak-lobby-empty{padding:9px;border:1px solid #3a4238;border-radius:10px;color:#dfd3b0;background:#1a211b;font-size:11px}.durak-lobby-empty{border-style:dashed;color:#77786e;background:transparent}.durak-controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.durak-action{min-height:42px;flex:1;padding:9px 12px}.durak-room-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid rgba(182,157,96,.13);color:#cfc4a5;font-size:11px}.durak-room-row:last-child{border-bottom:0}.durak-room-row button{min-height:34px;padding:7px 10px}
++.durak-board-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.durak-board-head .durak-title{margin:2px 0 8px}.durak-trump-badge{flex-shrink:0;padding:8px 10px;border:1px solid #a88b4d;border-radius:10px;color:#f0d995;background:rgba(169,135,61,.12);font-size:10px;font-weight:900;letter-spacing:.06em}.durak-trump-badge.red{color:#e6a09a}.durak-stock-row{display:flex;justify-content:space-around;gap:4px;padding:9px 5px;border-block:1px solid rgba(184,157,94,.2);color:#aaa58f;font-size:10px;font-weight:750}.durak-seats{display:flex;gap:7px;margin:10px 0;overflow-x:auto;padding:2px 1px 5px;scrollbar-width:thin}.durak-seat{position:relative;display:grid;min-width:78px;flex:1;gap:2px;justify-items:center;padding:8px 5px 7px;border:1px solid #394137;border-radius:12px;background:linear-gradient(145deg,#202720,#171c18);text-align:center}.durak-seat.mine{border-color:#a58a4d}.durak-seat.on-turn{border-color:#e2c57c;box-shadow:0 0 14px rgba(193,162,89,.2)}.durak-seat.out{opacity:.5}.durak-seat-crown{color:#dfc77f;font-size:15px}.durak-seat b{max-width:100%;overflow:hidden;color:#e4dcc4;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.durak-seat small{color:#a7a18f;font-size:8px}.durak-seat i{position:absolute;top:-5px;right:4px;padding:3px 5px;border-radius:5px;color:#151810;background:#d5b866;font-size:7px;font-style:normal;font-weight:900}.durak-seat i.defense{right:auto;left:4px;color:#e0b3a5;background:#542f2b}
++.durak-felt-table{position:relative;min-height:132px;padding:13px 9px 10px;border:1px solid #6f613f;border-radius:15px;background:radial-gradient(ellipse at 50% 45%,#24513d,#143325 69%,#10251c);box-shadow:inset 0 0 0 4px rgba(16,27,21,.55),inset 0 0 0 5px rgba(190,158,84,.2)}.durak-felt-ornament{color:rgba(224,199,126,.55);font-family:Georgia,serif;font-size:8px;font-weight:700;letter-spacing:.2em;text-align:center}.durak-attack-table{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;min-height:74px;margin:9px 0 5px}.durak-card-pair{display:flex;align-items:center;gap:2px;padding:2px;border-radius:8px;background:rgba(5,14,9,.3)}.durak-playing-card{position:relative;display:flex;width:45px;height:64px;flex:0 0 45px;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:2px;padding:5px;border:1px solid #c8b47d;border-radius:7px;color:#25312b;background:linear-gradient(135deg,#fbf5e7,#d9cfb8);box-shadow:0 3px 8px rgba(0,0,0,.2);font-family:Georgia,serif}.durak-playing-card.red{color:#a4413a}.durak-playing-card .durak-card-corner{font-size:12px;font-weight:900}.durak-playing-card .durak-card-suit{align-self:center;margin-top:1px;font-size:27px;line-height:1}.durak-playing-card.back{align-items:center;justify-content:center;color:#ddc37d;background:repeating-linear-gradient(45deg,#25382e 0 4px,#17251d 4px 8px);box-shadow:inset 0 0 0 3px #17251d,inset 0 0 0 4px #9b8149}.durak-card-emblem{font-size:19px}.durak-playing-card:disabled{opacity:1}.durak-playing-card:not(:disabled){cursor:pointer;transform:translateY(-2px);border-color:#e1c574;box-shadow:0 5px 12px rgba(0,0,0,.28),0 0 0 1px rgba(211,185,109,.16)}.durak-playing-card:not(:disabled):active{transform:translateY(1px)}.durak-table-empty{align-self:center;padding-top:22px;color:rgba(227,218,187,.5);font-family:Georgia,serif;font-size:12px;font-style:italic}.durak-event{color:#d3c9a9;font-size:10px;text-align:center}.durak-turn-banner{margin:10px 0;padding:9px;border:1px solid #3f473b;border-radius:9px;color:#c9c1a8;background:#1b211b;font-size:9px;font-weight:900;letter-spacing:.14em;text-align:center}.durak-turn-banner.yours{border-color:#a88d4d;color:#f0d991;background:rgba(174,140,62,.12)}.durak-hand-wrap{margin-top:12px}.durak-hand{display:flex;gap:6px;overflow-x:auto;padding:6px 2px 10px;scrollbar-width:thin}.durak-hand .durak-playing-card{width:49px;height:70px;flex-basis:49px}.durak-hand-empty{padding:20px;color:#8c8a7e;font-size:11px}.durak-inline-hint{align-self:center;color:#b9ad8a;font-size:10px;line-height:1.4;text-align:center}.durak-action.take{border-color:#9b5145;color:#f3d6c9;background:linear-gradient(135deg,#62382f,#36241f)}.durak-finish-note{margin-top:11px;padding:12px;border:1px solid #69413b;border-radius:11px;color:#e0b0a1;background:rgba(101,50,43,.16);font-size:12px;font-weight:850;text-align:center}.durak-finish-note.winner{border-color:#b39858;color:#f0dc9c;background:rgba(170,137,63,.15)}
++.durak-info{margin-top:10px}
++@media(max-width:420px){.durak-panel{padding:14px 11px}.durak-options{gap:4px}.durak-option{font-size:10px}.durak-playing-card{width:40px;height:58px;flex-basis:40px}.durak-hand .durak-playing-card{width:44px;height:64px;flex-basis:44px}.durak-card-pair{gap:1px}.durak-seat{min-width:67px}.durak-room-code b{font-size:18px}}
++@media(prefers-reduced-motion:reduce){.durak-option{transition:none}}
+diff --git a/app/web/static/app.js b/app/web/static/app.js
+index f50b63f..605b71a 100644
+--- a/app/web/static/app.js
++++ b/app/web/static/app.js
+@@ -81,6 +81,10 @@
+     drunkardBusy: false,
+     drunkardTyping: false,
+     drunkardToken: null,
++    durak: null,
++    durakConfig: { deckSize: 36, rule: "throwin", playerCount: 2, stake: 50, tableType: "bots", visibility: "private", code: "" },
++    durakBusy: false,
++    durakTyping: false,
+     crashClock: null,          // серверный множитель, привязанный к монотонным часам браузера
+     crashStake: 50,
+     crashBusy: false,
+@@ -125,6 +129,11 @@
+       refreshState({ silent: true });
+     }
+   }, 15000);
++  window.setInterval(() => {
++    if (state.tab === "games" && state.game === "durak" && !state.durakBusy && !state.durakTyping) {
++      refreshDurak({ silent: true });
++    }
++  }, 3500);
+ 
+   // ---------------------------------------------------------------- утилиты
+   const $ = (sel) => document.querySelector(sel);
+@@ -3544,6 +3553,7 @@
+       }
+       state.mines = data.mines || null;
+       state.drunkard = data.drunkard || { incoming: [], outgoing: [], last: null };
++      state.durak = data.durak || state.durak || { game: null, lobbies: [], last: null };
+       syncCrashClock(state.crash);
+       // новое достижение — единственный тост, который приятно получить неожиданно
+       (data.new_achievements || []).forEach((item, index) => {
+@@ -3568,7 +3578,7 @@
+       if (state.tab === "express") renderExpress();
+       if (state.tab === "me") renderMe();
+       if (state.tab === "bonus") renderBonus();
+-      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping) renderGames();
++      if (state.tab === "games" && !state.casinoBusy && !state.casinoTyping && !state.blackjackBusy && !state.blackjackTyping && !state.crashBusy && !state.minesBusy && !state.minesTyping && !state.drunkardBusy && !state.drunkardTyping && !state.durakBusy && !state.durakTyping) renderGames();
+     } catch (err) {
+       if (err.status === 401) {
+         state.authPending = false;
+@@ -4388,7 +4398,8 @@
+       who.append(el("i", null, row.game === "roulette" ? "рулетка"
+         : row.game === "ladder" ? "лесенка"
+           : row.game === "drunkard" ? "пьяница"
+-            : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
++            : row.game === "durak" ? "дурак"
++              : row.game === "blackjack" ? "блэкджек" : row.game === "crash" ? "самолётик"
+             : row.game === "mines" ? "мины" : row.game === "plinko" ? "плинко" : row.game === "slots" ? "слот-машина"
+               : row.game === "riftfall" ? "Золотой разлом"
+                 : row.game === "baccarat" ? "баккара" : "кости"));
+@@ -4401,6 +4412,7 @@
+               : `${slotResult ? slotResult.win_count : 0} ways${slotResult && slotResult.awarded_free_spins ? ` · +${slotResult.awarded_free_spins} FS` : ""}`)
+             : row.game === "mines" ? row.outcome
+               : row.game === "drunkard" ? (row.outcome === "draw" ? "ничья" : row.outcome === "win" ? "победа" : "поражение")
++                : row.game === "durak" ? `${row.selection.replace("place:", "место ")} · ${row.player_count || "стол"}`
+               : row.game === "ladder" || row.game === "blackjack" || row.game === "crash"
+               ? row.outcome : "сумма " + row.outcome;
+       const tag = el("span", "tag", tagText);
+@@ -4464,6 +4476,10 @@
+       box.append(document.createTextNode("На каждом этаже выбери дверь: за одной спрятан приз. После удачного выбора можно забрать выплату или продолжить; промах завершает игру без выплаты. Число дверей растёт с этажом, выплаты учитывают вероятность прохождения."));
+       box.append(el("span", "edge", "теоретический RTP 95,5 % · исход двери выбирает сервер"));
+       box.append(el("p", null, "Положение приза генерируется сервером криптографическим генератором; браузер не выбирает и не меняет исход."));
++    } else if (game === "durak") {
++      box.append(el("b", null, "Дурак · классические правила, 2–6 мест. "));
++      box.append(document.createTextNode("24 карты — 9–туз, 36 — 6–туз, 52 — 2–туз. Заход определяется младшим козырем. Атакуют картой любого достоинства, подкидывают совпадающие ранги; козырь бьёт любую некозырную масть, карту одной масти бьёт только старшая. В режиме «Соседи» первую заходную карту могут поддержать все игроки по очереди, затем подкидывают только левый и правый от отбивающегося. Перевод возможен картой того же достоинства до первого отбоя. "));
++      box.append(el("p", null, "Все вносят одинаковую ставку от 10 монет; в онлайн-столе взнос удерживается только при старте. Банк распределяется по местам: 2 игрока — 100/0%; 3 — 66,6/33,3/0%; 4 — 66,6/22,2/11,1/0%; 5 — 50/30/15/5/0%; 6 — 50/20/15/10/5/0%. Рука и колода хранятся на сервере; клиент получает только ваши карты."));
+     } else if (game === "drunkard") {
+       box.append(el("b", null, "Пьяница · полная партия, колода пополам. "));
+       box.append(document.createTextNode("24 карты: 9–туз; 36: 6–туз; 52: 2–туз. Туз старше всех карт, включая младшую карту колоды: 9, 6 или 2 соответственно. Остальные ранги сравниваются по обычному порядку, масти равны. Каждый ход нажимай «Открыть следующие карты»: открывается одна пара, а победитель забирает весь спор. При равенстве начинается война: каждый игрок кладёт одну карту рубашкой вверх, затем открывает следующую; сравниваются открытые карты. При новой ничьей война повторяется. Выигранные карты перемешиваются перед тем, как уйти в низ колоды. Игра продолжается ход за ходом до победы или ничьей из-за нехватки карт для войны. Против игрока обе ставки одинаковы; они списываются после принятия вызова."));
+@@ -7479,6 +7495,363 @@
+     host.append(gameInfoNode("drunkard"));
+   }
+ 
++  const DURAK_RULES = [
++    ["throwin", "Подкидной"], ["transfer", "Переводной"], ["neighbors", "Соседи"],
++  ];
++  const DURAK_SHARES = { 2: "100% / 0%", 3: "66,6% / 33,3% / 0%", 4: "66,6% / 22,2% / 11,1% / 0%", 5: "50% / 30% / 15% / 5% / 0%", 6: "50% / 20% / 15% / 10% / 5% / 0%" };
++
++  async function refreshDurak(options) {
++    try {
++      const data = await api("/api/durak/state");
++      state.durak = data.durak || { game: null, lobbies: [], last: null };
++      if (data.balance !== undefined && state.user && Number(data.balance) !== Number(state.user.balance)) {
++        state.user.balance = Number(data.balance);
++        setBalance(data.balance);
++      }
++      if (state.tab === "games" && state.game === "durak" && !state.durakBusy && !state.durakTyping) renderDurak($("#games"));
++    } catch (err) {
++      if (!(options && options.silent)) toast(err.message || "Не удалось обновить стол", "bad");
++    }
++  }
++
++  async function durakRequest(route, payload) {
++    if (state.durakBusy) return;
++    state.durakBusy = true;
++    const host = $("#games");
++    renderDurak(host);
++    try {
++      const data = await api(`/api/durak/${route}`, { method: "POST", body: payload || {} });
++      if (data.durak) state.durak = data.durak;
++      if (data.balance !== undefined && state.user) {
++        state.user.balance = Number(data.balance);
++        setBalance(data.balance);
++      }
++      if (route === "create") toast(payload.table_type === "bots" ? "Стол готов · ходи" : "Стол создан", "ok");
++      else if (route === "join") toast("Вы за столом", "ok");
++      else if (route === "start") toast("Партия началась", "ok");
++      else if (route === "action" && data.finished) toast("Партия завершена · выплаты рассчитаны", "ok");
++      else if (route === "cancel") toast("Стол закрыт");
++      haptic("light");
++      await refreshState({ silent: true });
++    } catch (err) {
++      toast(err.message || "Не удалось выполнить действие", "bad");
++      haptic("bad");
++    } finally {
++      state.durakBusy = false;
++      renderDurak(host);
++    }
++  }
++
++  function durakPayoutNote(count) {
++    return `Призовой фонд распределяется по местам: ${DURAK_SHARES[count] || "по месту"}. Монеты списываются при старте; в онлайн-столе каждый вносит одинаковую ставку.`;
++  }
++
++  function durakCard(card, disabled, label) {
++    const node = el("button", "durak-playing-card" + ((card && ["♥", "♦"].includes(card.suit)) ? " red" : ""));
++    node.type = "button";
++    node.disabled = Boolean(disabled);
++    node.setAttribute("aria-label", label || (card ? card.text : "Карта рубашкой вверх"));
++    if (!card) {
++      node.classList.add("back");
++      node.append(el("span", "durak-card-emblem", "✦"));
++      return node;
++    }
++    node.append(el("small", "durak-card-corner", card.rank), el("span", "durak-card-suit", card.suit));
++    return node;
++  }
++
++  function renderDurakBoard(game) {
++    const panel = el("section", "durak-panel durak-live");
++    const head = el("div", "durak-board-head");
++    const title = el("div", null);
++    title.append(el("div", "durak-kicker", `ПАРТИЯ ${game.id} · РАУНД ${game.round}`), el("h2", "durak-title", "Дурак"));
++    head.append(title);
++    const trump = el("div", "durak-trump-badge", `КОЗЫРЬ ${game.trump ? game.trump.text : "—"}`);
++    if (game.trump && ["♥", "♦"].includes(game.trump.suit)) trump.classList.add("red");
++    head.append(trump);
++    panel.append(head);
++
++    const stats = el("div", "durak-stock-row");
++    stats.append(el("span", null, `В колоде · ${game.stock_count}`), el("span", null, `Сброс · ${game.discard_count}`), el("span", null, `${game.deck_size} карт`));
++    panel.append(stats);
++
++    const seats = el("div", "durak-seats");
++    game.players.forEach((p) => {
++      const item = el("div", "durak-seat" + (p.me ? " mine" : "") + (Number(game.turn) === Number(p.seat) && !game.finished ? " on-turn" : "") + (p.place ? " out" : ""));
++      item.append(el("span", "durak-seat-crown", p.place === 1 ? "♛" : p.bot ? "✦" : "♙"));
++      item.append(el("b", null, p.name));
++      item.append(el("small", null, p.place ? `${p.place}-е место` : `${p.hand_count} карт`));
++      if (Number(game.attacker) === Number(p.seat) && !game.finished) item.append(el("i", null, "АТАКА"));
++      if (Number(game.defender) === Number(p.seat) && !game.finished) item.append(el("i", "defense", "ЗАЩИТА"));
++      seats.append(item);
++    });
++    panel.append(seats);
++
++    const felt = el("div", "durak-felt-table");
++    felt.append(el("div", "durak-felt-ornament", "✦  DURAK CLUB  ✦"));
++    const table = el("div", "durak-attack-table");
++    if (game.table && game.table.length) {
++      game.table.forEach((entry) => {
++        const pair = el("div", "durak-card-pair");
++        pair.append(durakCard(entry.card, true, `Атака ${entry.card.text}`));
++        const cover = entry.cover ? durakCard(entry.cover, true, `Отбито ${entry.cover.text}`) : durakCard(null, true, "Открытая карта атаки");
++        pair.append(cover);
++        table.append(pair);
++      });
++    } else {
++      table.append(el("div", "durak-table-empty", "Стол ждёт первой карты"));
++    }
++    felt.append(table);
++    const event = el("div", "durak-event", game.last_event || "Ожидаем ход…");
++    felt.append(event);
++    panel.append(felt);
++
++    const turn = game.players.find((p) => Number(p.seat) === Number(game.turn));
++    const turnLabel = game.finished ? "ПАРТИЯ ЗАВЕРШЕНА" : game.is_your_turn ? "ВАШ ХОД" : `ХОД · ${turn ? turn.name : "соперника"}`;
++    panel.append(el("div", "durak-turn-banner" + (game.is_your_turn ? " yours" : ""), turnLabel));
++
++    const handWrap = el("div", "durak-hand-wrap");
++    handWrap.append(el("div", "durak-label", game.is_your_turn ? "ВАШИ КАРТЫ · ВЫБЕРИТЕ ДЕЙСТВИЕ" : "ВАШИ КАРТЫ"));
++    const hand = el("div", "durak-hand");
++    const actions = game.actions || {};
++    const attackSet = new Set(actions.attack_indices || []);
++    const defendMap = new Map((actions.defend || []).map((entry) => [Number(entry.hand_index), entry]));
++    const transferSet = new Set(actions.transfer_indices || []);
++    (game.hand || []).forEach((card, index) => {
++      const canAttack = attackSet.has(index);
++      const canDefend = defendMap.has(index);
++      const canTransfer = actions.can_transfer && transferSet.has(index);
++      const active = canAttack || canDefend || canTransfer;
++      const cardButton = durakCard(card, !active, card.text);
++      if (canAttack) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: game.phase === "lead" ? "attack" : "throw", card_index: index, token: newToken() }));
++      else if (canDefend) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "defend", card_index: index, attack_index: defendMap.get(index).attack_index, token: newToken() }));
++      else if (canTransfer) cardButton.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "transfer", card_index: index, token: newToken() }));
++      hand.append(cardButton);
++    });
++    if (!game.hand || !game.hand.length) hand.append(el("div", "durak-hand-empty", "На руке нет карт"));
++    handWrap.append(hand);
++    panel.append(handWrap);
++
++    if (game.is_your_turn && !game.finished) {
++      const controls = el("div", "durak-controls");
++      if (actions.can_take) {
++        const take = el("button", "btn durak-action take", "Взять карты");
++        take.type = "button";
++        take.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "take", token: newToken() }));
++        controls.append(take);
++      }
++      if (actions.can_pass) {
++        const pass = el("button", "btn ghost durak-action", "Пас");
++        pass.type = "button";
++        pass.addEventListener("click", () => durakRequest("action", { game_id: game.id, action: "pass", token: newToken() }));
++        controls.append(pass);
++      }
++      if (actions.can_transfer) controls.append(el("div", "durak-inline-hint", "Можно перевести картой того же достоинства"));
++      if (!controls.children.length && game.is_your_turn) controls.append(el("div", "durak-inline-hint", game.phase === "lead" ? "Выберите карту для захода" : game.phase === "defend" ? "Выберите карту для отбоя или возьмите карты" : "Подкиньте карту того же достоинства или нажмите «Пас»"));
++      panel.append(controls);
++    } else if (!game.finished) {
++      panel.append(el("div", "durak-inline-hint", "Партия обновляется автоматически · ход другого игрока"));
++    }
++
++    if (game.finished) {
++      const place = Number(game.your_place || 0);
++      panel.append(el("div", "durak-finish-note" + (place === 1 ? " winner" : ""), `${place === 1 ? "Вы выиграли стол" : `Ваш результат — ${place}-е место`} · выплата ${money(Number(game.payout || 0))}`));
++    }
++    return panel;
++  }
++
++  function renderDurak(host) {
++    if (!host) return;
++    host.textContent = "";
++    host.append(gameBackButton());
++    const data = state.durak || { game: null, lobbies: [], last: null };
++    const game = data.game;
++    if (game && game.status === "active") {
++      host.append(renderDurakBoard(game));
++      host.append(gameInfoNode("durak"));
++      return;
++    }
++    if (game && game.status === "waiting") {
++      const lobby = el("section", "durak-panel durak-lobby");
++      lobby.append(el("div", "durak-kicker", game.visibility === "private" ? "ПРИВАТНЫЙ СТОЛ" : "ОТКРЫТЫЙ СТОЛ"));
++      lobby.append(el("h2", "durak-title", game.players_count === game.player_count ? "Стол собран" : "Ждём игроков"));
++      lobby.append(el("p", "durak-copy", `${game.deck_size} карт · ${DURAK_RULES.find((r) => r[0] === game.mode)?.[1] || "Подкидной"} · ставка ${money(game.stake)} · мест ${game.players_count}/${game.player_count}`));
++      if (game.visibility === "private") {
++        const code = el("div", "durak-room-code");
++        code.append(el("small", null, "КОД ДЛЯ ПРИГЛАШЕНИЯ"), el("b", null, game.code));
++        const copy = el("button", "btn ghost", "Скопировать код");
++        copy.type = "button";
++        copy.addEventListener("click", async () => {
++          try { await navigator.clipboard.writeText(game.code); toast("Код скопирован", "ok"); }
++          catch (_) { toast(`Код стола: ${game.code}`); }
++        });
++        code.append(copy);
++        lobby.append(code);
++      }
++      const seats = el("div", "durak-lobby-seats");
++      game.players.forEach((p) => seats.append(el("span", "durak-lobby-player", `✦ ${p.name}`)));
++      for (let i = game.players_count; i < game.player_count; i++) seats.append(el("span", "durak-lobby-empty", "Ожидаем игрока"));
++      lobby.append(seats);
++      lobby.append(el("p", "durak-payout-note", durakPayoutNote(game.players_count)));
++      const buttons = el("div", "durak-controls");
++      if (game.is_owner && game.players_count === game.player_count) {
++        const start = el("button", "btn play durak-action", "Начать партию");
++        start.type = "button";
++        start.addEventListener("click", () => durakRequest("start", { game_id: game.id }));
++        buttons.append(start);
++      }
++      if (game.is_owner) {
++        const cancel = el("button", "btn ghost durak-action", "Закрыть стол");
++        cancel.type = "button";
++        cancel.addEventListener("click", () => durakRequest("cancel", { game_id: game.id }));
++        buttons.append(cancel);
++      }
++      lobby.append(buttons);
++      host.append(lobby);
++      return;
++    }
++
++    const setup = el("section", "durak-panel durak-setup");
++    setup.append(el("div", "durak-kicker", "DURAK CLUB · TABLE GAMES"));
++    setup.append(el("h2", "durak-title", "Дурак"));
++    setup.append(el("p", "durak-copy", "Карточная классика за изумрудным сукном. Играйте с ботами или за реальным столом — ставки и выплаты по местам."));
++
++    const deckBlock = el("div", "durak-setting-block");
++    deckBlock.append(el("div", "durak-label", "КОЛОДА"));
++    const decks = el("div", "durak-options three");
++    [24, 36, 52].forEach((size) => {
++      const btn = el("button", "durak-option" + (Number(state.durakConfig.deckSize) === size ? " active" : ""), `${size} карт`);
++      btn.type = "button";
++      btn.addEventListener("click", () => { state.durakConfig.deckSize = size; renderDurak(host); });
++      decks.append(btn);
++    });
++    deckBlock.append(decks);
++    setup.append(deckBlock);
++
++    const rulesBlock = el("div", "durak-setting-block");
++    rulesBlock.append(el("div", "durak-label", "ПРАВИЛА СТОЛА"));
++    const rules = el("div", "durak-options three");
++    DURAK_RULES.forEach(([value, label]) => {
++      const btn = el("button", "durak-option" + (state.durakConfig.rule === value ? " active" : ""), label);
++      btn.type = "button";
++      btn.addEventListener("click", () => { state.durakConfig.rule = value; renderDurak(host); });
++      rules.append(btn);
++    });
++    rulesBlock.append(rules);
++    setup.append(rulesBlock);
++
++    const countBlock = el("div", "durak-setting-block");
++    countBlock.append(el("div", "durak-label", "ИГРОКОВ ЗА СТОЛОМ · ВКЛЮЧАЯ ВАС"));
++    const counts = el("div", "durak-options five");
++    [2, 3, 4, 5, 6].forEach((count) => {
++      const btn = el("button", "durak-option" + (Number(state.durakConfig.playerCount) === count ? " active" : ""), String(count));
++      btn.type = "button";
++      btn.addEventListener("click", () => { state.durakConfig.playerCount = count; renderDurak(host); });
++      counts.append(btn);
++    });
++    countBlock.append(counts);
++    setup.append(countBlock);
++
++    const stakeBlock = el("div", "durak-setting-block");
++    stakeBlock.append(el("div", "durak-label", "ВЗНОС КАЖДОГО ИГРОКА"));
++    const stakes = el("div", "durak-stakes");
++    [10, 50, 100, 500, 1000].forEach((amount) => {
++      const btn = el("button", "stake-chip" + (Number(state.durakConfig.stake) === amount ? " active" : ""), money(amount));
++      btn.type = "button";
++      btn.disabled = amount > balance();
++      btn.addEventListener("click", () => { state.durakConfig.stake = amount; renderDurak(host); });
++      stakes.append(btn);
++    });
++    stakeBlock.append(stakes);
++    const stakeInput = el("input", "stake-input durak-stake-input");
++    stakeInput.type = "number";
++    stakeInput.inputMode = "numeric";
++    stakeInput.min = "10";
++    stakeInput.max = String(balance());
++    stakeInput.step = "1";
++    stakeInput.value = String(state.durakConfig.stake || 50);
++    stakeInput.setAttribute("aria-label", "Размер взноса за партию");
++    stakeInput.addEventListener("focus", () => { state.durakTyping = true; });
++    stakeInput.addEventListener("input", () => { state.durakConfig.stake = Number(stakeInput.value) || 0; syncDurakCreateButtons(); });
++    stakeInput.addEventListener("blur", () => { state.durakTyping = false; });
++    stakeBlock.append(stakeInput, el("div", "durak-payout-note", `Без верхнего лимита: ставка ограничена только вашим балансом (${money(balance())}). ${durakPayoutNote(Number(state.durakConfig.playerCount))}`));
++    setup.append(stakeBlock);
++
++    const modeBlock = el("div", "durak-setting-block");
++    modeBlock.append(el("div", "durak-label", "С КЕМ ИГРАТЬ"));
++    const types = el("div", "durak-options two");
++    [["bots", "С ботами"], ["online", "Онлайн" ]].forEach(([value, label]) => {
++      const btn = el("button", "durak-option" + (state.durakConfig.tableType === value ? " active" : ""), label);
++      btn.type = "button";
++      btn.addEventListener("click", () => { state.durakConfig.tableType = value; renderDurak(host); });
++      types.append(btn);
++    });
++    modeBlock.append(types);
++    if (state.durakConfig.tableType === "online") {
++      const vis = el("div", "durak-options two durak-visibility");
++      [["public", "Открытый подбор"], ["private", "Приватный стол"]].forEach(([value, label]) => {
++        const btn = el("button", "durak-option" + (state.durakConfig.visibility === value ? " active" : ""), label);
++        btn.type = "button";
++        btn.addEventListener("click", () => { state.durakConfig.visibility = value; renderDurak(host); });
++        vis.append(btn);
++      });
++      modeBlock.append(vis);
++      if (state.durakConfig.visibility === "private") {
++        const codeRow = el("div", "durak-join-code");
++        const code = el("input", "stake-input");
++        code.type = "text";
++        code.maxLength = 6;
++        code.autocomplete = "off";
++        code.placeholder = "Код комнаты";
++        code.value = state.durakConfig.code;
++        code.addEventListener("focus", () => { state.durakTyping = true; });
++        code.addEventListener("input", () => { state.durakConfig.code = code.value.toUpperCase(); });
++        code.addEventListener("blur", () => { state.durakTyping = false; });
++        const join = el("button", "btn ghost", "Войти по коду");
++        join.type = "button";
++        join.addEventListener("click", () => durakRequest("join", { code: state.durakConfig.code }));
++        codeRow.append(code, join);
++        modeBlock.append(codeRow);
++      }
++    }
++    setup.append(modeBlock);
++
++    const create = el("button", "btn play durak-create", state.durakBusy ? "Открываем стол…" : state.durakConfig.tableType === "bots" ? "Раздать карты" : state.durakConfig.visibility === "public" ? "Найти открытый стол" : "Создать приватный стол");
++    create.type = "button";
++    create.disabled = state.durakBusy || !Number.isInteger(Number(state.durakConfig.stake)) || Number(state.durakConfig.stake) < 10 || Number(state.durakConfig.stake) > balance();
++    create.addEventListener("click", () => durakRequest("create", {
++      table_type: state.durakConfig.tableType, visibility: state.durakConfig.visibility,
++      mode: state.durakConfig.rule, deck_size: state.durakConfig.deckSize,
++      player_count: state.durakConfig.playerCount, stake: Number(state.durakConfig.stake),
++    }));
++    setup.append(create);
++    setup.append(el("div", "durak-payout-note", "Ставка списывается со всех реальных участников только при старте партии. В открытом подборе стол начнётся при заполнении или по кнопке создателя."));
++    host.append(setup);
++
++    if (state.durakConfig.tableType === "online" && state.durakConfig.visibility === "public" && data.lobbies && data.lobbies.length) {
++      const open = el("section", "durak-panel durak-open-rooms");
++      open.append(el("div", "durak-kicker", "ЗА ОТКРЫТЫМИ СТОЛАМИ"), el("h3", "durak-title small", "Можно присоединиться"));
++      data.lobbies.forEach((room) => {
++        const row = el("div", "durak-room-row");
++        const ruleLabel = DURAK_RULES.find((rule) => rule[0] === room.mode)?.[1] || "Подкидной";
++        row.append(el("div", null, `${room.players_count}/${room.player_count} мест · ${room.deck_size} карт · ${ruleLabel} · ${money(room.stake)}`));
++        const join = el("button", "btn ghost", "Сесть за стол");
++        join.type = "button";
++        join.addEventListener("click", () => durakRequest("join", { game_id: room.id }));
++        row.append(join);
++        open.append(row);
++      });
++      host.append(open);
++    }
++    if (data.last) host.append(renderDurakBoard(data.last));
++    host.append(gameInfoNode("durak"));
++  }
++
++  function syncDurakCreateButtons() {
++    const button = $(".durak-create");
++    if (button) button.disabled = state.durakBusy || !Number.isInteger(Number(state.durakConfig.stake)) || Number(state.durakConfig.stake) < 10 || Number(state.durakConfig.stake) > balance();
++  }
++
+   function renderGames() {
+     clearCasinoDockTracking();
+     const host = $("#games");
+@@ -7520,6 +7893,10 @@
+       host.prepend(gameBackButton());
+       return;
+     }
++    if (state.game === "durak") {
++      renderDurak(host);
++      return;
++    }
+     if (state.game === "drunkard") {
+       renderDrunkard(host);
+       return;
+diff --git a/tests/test_durak_engine.py b/tests/test_durak_engine.py
+new file mode 100644
+index 0000000..5a62a4a
+--- /dev/null
++++ b/tests/test_durak_engine.py
+@@ -0,0 +1,147 @@
++from __future__ import annotations
++
++from app.services import durak
++
++
++def participants(count: int):
++    return [{"user_id": 101, "name": "Гость"}] + [
++        {"name": f"Бот {i}", "bot": True} for i in range(1, count)
++    ]
++
++
++def test_deck_sizes_keep_the_face_up_trump_out_of_hands() -> None:
++    for size, low in ((24, 9), (36, 6), (52, 2)):
++        state = durak.new_game(participants(6), deck_size=size, mode="throwin", stake=10)
++        assert sum(len(player["hand"]) for player in state["players"]) <= size - 1
++        assert state["trump"] not in [card for player in state["players"] for card in player["hand"]]
++        assert min(card["rank_value"] for player in state["players"] for card in player["hand"]) >= low
++        assert state["stock"][-1] == state["trump"]
++
++
++def test_trump_and_suit_rules_for_defending() -> None:
++    attack = {"rank_value": 10, "suit": "♠"}
++    assert durak.can_beat({"rank_value": 11, "suit": "♠"}, attack, "♥")
++    assert not durak.can_beat({"rank_value": 9, "suit": "♠"}, attack, "♥")
++    assert durak.can_beat({"rank_value": 6, "suit": "♥"}, attack, "♥")
++    assert not durak.can_beat({"rank_value": 14, "suit": "♦"}, attack, "♥")
++    assert not durak.can_beat({"rank_value": 9, "suit": "♠"}, {"rank_value": 10, "suit": "♥"}, "♥")
++
++
++def test_neighbor_mode_allows_everyone_on_opening_then_only_defender_neighbors() -> None:
++    state = durak.new_game(participants(4), deck_size=36, mode="neighbors", stake=10)
++    state["attacker"] = 0
++    state["defender"] = 2
++    assert durak._throw_queue(state, opening=True) == [1, 3, 0]
++    assert durak._throw_queue(state, opening=False) == [3, 0]
++
++
++def _transfer_state(target_hand_size: int):
++    state = durak.new_game(participants(3), deck_size=24, mode="transfer", stake=10)
++    state["mode"] = "transfer"
++    state["attacker"] = 0
++    state["defender"] = 1
++    state["turn"] = 1
++    state["phase"] = "defend"
++    state["defender_hand_cap"] = 6
++    state["players"][1]["user_id"] = 202
++    state["players"][1]["hand"] = [
++        {"rank_value": 10, "rank": "10", "suit": "♠"},
++        {"rank_value": 10, "rank": "10", "suit": "♥"},
++    ]
++    state["players"][2]["hand"] = [
++        {"rank_value": 7 + i, "rank": str(7 + i), "suit": "♦"} for i in range(target_hand_size)
++    ]
++    state["table"] = [{
++        "card": {"rank_value": 10, "rank": "10", "suit": "♣"},
++        "cover": None,
++        "by": 0,
++    }]
++    return state
++
++
++def test_transfer_is_disabled_when_next_defender_has_too_few_cards() -> None:
++    state = _transfer_state(target_hand_size=1)
++    actions = durak.legal_actions(state, 202)
++
++    assert actions["is_turn"]
++    assert not actions["can_transfer"]
++    assert actions.get("transfer_indices", []) == []
++    try:
++        durak.act(state, 1, "transfer", card_index=0)
++    except ValueError as exc:
++        assert "не хватит карт" in str(exc)
++    else:
++        raise AssertionError("Transfer must be rejected if the next defender cannot take the attack")
++    assert len(state["table"]) == 1
++    assert len(state["players"][1]["hand"]) == 2
++
++
++def test_transfer_uses_new_defenders_hand_as_the_attack_cap() -> None:
++    state = _transfer_state(target_hand_size=2)
++    actions = durak.legal_actions(state, 202)
++    assert actions["can_transfer"]
++    assert actions["transfer_indices"] == [0, 1]
++
++    durak.act(state, 1, "transfer", card_index=0)
++
++    assert state["defender"] == 2
++    assert state["defender_hand_cap"] == 2
++    assert len(state["table"]) == 2
++    assert durak._legal_attack_indices(state["players"][1], state, opening=False) == []
++
++
++def test_transfer_to_player_with_more_than_six_cards_keeps_six_card_attack_limit() -> None:
++    state = _transfer_state(target_hand_size=8)
++    assert durak.legal_actions(state, 202)["can_transfer"]
++
++    durak.act(state, 1, "transfer", card_index=0)
++
++    assert state["defender"] == 2
++    assert len(state["players"][2]["hand"]) == 8
++    assert state["defender_hand_cap"] == 6
++    while len(state["table"]) < 6:
++        state["table"].append({"card": state["table"][0]["card"], "cover": None, "by": 0})
++    assert durak._legal_attack_indices(state["players"][1], state, opening=False) == []
++
++
++def test_rank_payout_schedules_and_rounding_remainder() -> None:
++    expected = {
++        2: [100, 0],
++        3: [100, 50, 0],
++        4: [133, 45, 22, 0],
++        5: [125, 75, 38, 12, 0],
++        6: [150, 60, 45, 30, 15, 0],
++    }
++    for count, values in expected.items():
++        payouts = durak.payouts_by_place(count, 50)
++        assert payouts == values
++        assert sum(payouts) == count * 50
++
++
++def test_server_bot_players_can_finish_a_full_multiplayer_game() -> None:
++    for count in range(2, 7):
++        for mode in durak.VALID_MODES:
++            state = durak.new_game(
++                [{"name": f"Бот {i + 1}", "bot": True} for i in range(count)],
++                deck_size=24,
++                mode=mode,
++                stake=10,
++            )
++            state["table_type"] = "bots"
++            for _ in range(100):
++                durak.run_bots(state, limit=2_000)
++                if state["finished"]:
++                    break
++            assert state["finished"]
++            if state.get("draw_reason"):
++                assert not state["ranked"]
++                assert state["phase"] == "finished"
++            else:
++                assert sorted(int(player["place"]) for player in state["players"]) == list(range(1, count + 1))
++
++
++def test_public_game_never_exposes_other_hands() -> None:
++    state = durak.new_game(participants(3), deck_size=36, mode="throwin", stake=100)
++    payload = durak.public_game(state, game_id=1, user_id=101, status="active")
++    assert payload["hand"] == [{**card, "text": f"{card['rank']}{card['suit']}"} for card in state["players"][0]["hand"]]
++    assert all("hand" not in player for player in payload["players"])
+diff --git a/tests/test_durak_store.py b/tests/test_durak_store.py
+new file mode 100644
+index 0000000..803b68d
+--- /dev/null
++++ b/tests/test_durak_store.py
+@@ -0,0 +1,126 @@
++from __future__ import annotations
++
++import pytest
++
++from app.db import Database
++from app.db.database import InvalidBet
++from app.services import durak_store
++
++
++@pytest.fixture
++async def db(tmp_path):
++    database = Database(tmp_path / "durak-store.db", start_balance=1000)
++    await database.connect()
++    await database.upsert_user(101, "alice", "Alice")
++    await database.upsert_user(202, "bob", "Bob")
++    await database.upsert_user(303, "carol", "Carol")
++    yield database
++    await database.close()
++
++
++async def test_private_online_room_holds_stakes_only_when_started(db: Database) -> None:
++    room = await durak_store.create(
++        db, user_id=101, name="Alice", table_type="online", visibility="private",
++        mode="transfer", deck_size=36, stake=100, player_count=2,
++    )
++    assert room["status"] == "waiting" and room["players_count"] == 1
++    assert await db.get_balance(101) == 1000
++
++    joined = await durak_store.join(db, user_id=202, name="Bob", code=room["code"])
++    assert joined["status"] == "waiting" and joined["players_count"] == 2
++    started = await durak_store.start(db, user_id=101, game_id=room["id"])
++    assert started["status"] == "active" and started["players_count"] == 2
++    assert await db.get_balance(101) == 900
++    assert await db.get_balance(202) == 900
++
++    state = await durak_store.state(db, 202)
++    assert state["game"]["id"] == room["id"]
++    assert state["game"]["is_owner"] is False
++    assert len(state["game"]["hand"]) > 0
++    assert all("hand" not in seat for seat in state["game"]["players"])
++
++
++async def test_public_matchmaking_joins_matching_room_and_autostarts(db: Database) -> None:
++    first = await durak_store.create(
++        db, user_id=101, name="Alice", table_type="online", visibility="public",
++        mode="neighbors", deck_size=24, stake=10, player_count=2,
++    )
++    second = await durak_store.create(
++        db, user_id=202, name="Bob", table_type="online", visibility="public",
++        mode="neighbors", deck_size=24, stake=10, player_count=2,
++    )
++    assert first["id"] == second["id"]
++    assert second["status"] == "active"
++    assert await db.get_balance(101) == 990
++    assert await db.get_balance(202) == 990
++    assert (await durak_store.state(db, 303))["lobbies"] == []
++
++
++async def test_bots_game_pays_by_final_place_and_records_history(db: Database) -> None:
++    game = await durak_store.create(
++        db, user_id=101, name="Alice", table_type="bots", visibility="private",
++        mode="throwin", deck_size=24, stake=25, player_count=2,
++    )
++    assert game["status"] == "active" and game["players_count"] == 2
++    assert await db.get_balance(101) == 975
++    token_no = 0
++    for _ in range(10_000):
++        if game["status"] == "finished":
++            break
++        assert game["is_your_turn"]
++        actions = game["actions"]
++        if game["phase"] == "lead":
++            action, index = "attack", actions["attack_indices"][0]
++        elif game["phase"] == "throw":
++            if actions["attack_indices"]:
++                action, index = "throw", actions["attack_indices"][0]
++            else:
++                action, index = "pass", None
++        elif game["phase"] == "defend":
++            if actions["defend"]:
++                action, index = "defend", actions["defend"][0]["hand_index"]
++            else:
++                action, index = "take", None
++        else:
++            pytest.fail(f"Unexpected phase: {game['phase']}")
++        token_no += 1
++        result = await durak_store.action(
++            db, user_id=101, game_id=game["id"], action_name=action,
++            card_index=index, token=f"step-{token_no}",
++        )
++        game = result["game"]
++    else:
++        pytest.fail("Bot game did not finish within 10,000 human turns")
++
++    assert game["your_place"] in (1, 2)
++    assert game["payout"] in (0, 50)
++    assert await db.get_balance(101) == 975 + game["payout"]
++    history = await db._fetchall("SELECT * FROM casino_bets WHERE user_id = ? AND game = 'durak'", (101,))
++    assert len(history) == 1 and int(history[0]["payout"]) == game["payout"]
++
++
++async def test_abandoned_active_game_refunds_stakes_after_a_day(db: Database) -> None:
++    game = await durak_store.create(
++        db, user_id=101, name="Alice", table_type="bots", visibility="private",
++        mode="throwin", deck_size=24, stake=100, player_count=2,
++    )
++    assert await db.get_balance(101) == 900
++    await db._write("UPDATE durak_games SET updated_at = ? WHERE id = ?", (1, game["id"]))
++
++    current = await durak_store.state(db, 101)
++
++    assert current["game"] is None
++    assert await db.get_balance(101) == 1000
++    row = await db._fetchone("SELECT status FROM durak_games WHERE id = ?", (game["id"],))
++    assert row["status"] == "cancelled"
++
++
++async def test_player_cannot_join_active_table_by_private_code(db: Database) -> None:
++    room = await durak_store.create(
++        db, user_id=101, name="Alice", table_type="online", visibility="private",
++        mode="throwin", deck_size=24, stake=10, player_count=2,
++    )
++    await durak_store.join(db, user_id=202, name="Bob", code=room["code"])
++    await durak_store.start(db, user_id=101, game_id=room["id"])
++    with pytest.raises(InvalidBet):
++        await durak_store.join(db, user_id=303, name="Carol", code=room["code"])
