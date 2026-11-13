@@ -222,8 +222,17 @@ def render_index(boot: dict[str, Any]) -> str:
     return html.replace("</head>", injection + "</head>")
 
 
+def static_cache_control(suffix: str, requested_version: str | None, active_version: str) -> str:
+    """Cache commit-versioned bundles for a year; keep mutable URLs short-lived."""
+    if suffix in {".css", ".js"} and active_version and requested_version == active_version:
+        return "public, max-age=31536000, immutable"
+    if suffix not in {".css", ".js"}:
+        return "public, max-age=3600"
+    return "no-cache, must-revalidate"
+
+
 async def static_file(request: web.Request) -> web.Response:
-    """Отдаём стили и скрипт без кеша: после деплоя клиент сразу видит новую версию."""
+    """Versioned CSS/JS URLs are immutable, so repeat app opens reuse browser cache."""
     name = request.match_info["name"]
     if not ALLOWED_STATIC.match(name):
         return _bad("Нет такого файла", 404)
@@ -231,7 +240,12 @@ async def static_file(request: web.Request) -> web.Response:
     if not path.is_file():
         return _bad("Нет такого файла", 404)
     suffix = Path(name).suffix
-    headers = {"Cache-Control": "no-cache, must-revalidate"}
+    active_version = (os.getenv("RENDER_GIT_COMMIT") or "")[:12]
+    headers = {
+        "Cache-Control": static_cache_control(
+            suffix, request.query.get("v"), active_version
+        )
+    }
     if suffix in {".css", ".js", ".svg"}:
         content_type = {".css": "text/css", ".js": "application/javascript", ".svg": "image/svg+xml"}[suffix]
         return web.Response(text=path.read_text(encoding="utf-8"), content_type=content_type, headers=headers)

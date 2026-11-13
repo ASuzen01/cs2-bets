@@ -57,6 +57,16 @@ def test_render_index_versions_static_assets(monkeypatch) -> None:
     assert '/static/app.js?v=abcdef123456' in html
 
 
+def test_commit_versioned_static_assets_are_immutable(monkeypatch) -> None:
+    from app.web.server import static_cache_control
+
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef1234567890")
+    active = "abcdef123456"
+    assert static_cache_control(".js", active, active) == "public, max-age=31536000, immutable"
+    assert static_cache_control(".css", "older-version", active) == "no-cache, must-revalidate"
+    assert static_cache_control(".svg", None, active) == "public, max-age=3600"
+
+
 def test_mobile_viewport_does_not_disable_zoom() -> None:
     html = (Path(__file__).resolve().parents[1] / "app/web/index.html").read_text()
     viewport = re.search(r'<meta name="viewport" content="([^"]+)"', html)

@@ -116,7 +116,7 @@
     diceShown: null,
   };
 
-  const POLL_MS = 40000;  // тяжёлые данные профиля/игр обновляем отдельно от линии
+  const POLL_MS = 60000;  // тяжёлое состояние обновляем реже, чем линию матчей
   let lineRefreshInFlight = false;
   let lineRefreshRevision = 0;
   window.setInterval(updateLineFreshness, 15000);
@@ -8170,7 +8170,7 @@
 
     // Профиль и игровые состояния обновляются отдельно от частого polling линии.
     const pollTick = () => {
-      const delay = state.segment === "live" ? Math.round(POLL_MS / 2.5) : POLL_MS;
+      const delay = state.segment === "live" ? Math.round(POLL_MS / 2) : POLL_MS;
       setTimeout(async () => {
         if (!document.hidden) await refreshState({ silent: true });
         pollTick();
@@ -8178,10 +8178,10 @@
     };
     pollTick();
 
-    // Линию обновляем отдельно: в live — каждые 8 с, вне live — каждые 20 с.
-    // Так свежие кэфы не ждут дорогую сборку всех данных профиля и игр.
+    // Линию обновляем отдельно: в live — каждые 15 с, вне live — каждые 30 с.
+    // Так свежие коэффициенты остаются оперативными без лишних повторных ответов сервера.
     const linePollTick = () => {
-      const delay = state.segment === "live" ? 8000 : 20000;
+      const delay = state.segment === "live" ? 15000 : 30000;
       setTimeout(async () => {
         if (!document.hidden && (state.tab === "matches" || state.tab === "express")) {
           await refreshLines();
